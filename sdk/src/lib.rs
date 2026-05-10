@@ -15,7 +15,7 @@ pub mod backend;
 /// using the struct that implements this trait.
 pub trait SdkLogic {
     // user must define inputs and game state
-    type Inputs: Eq + Clone + serde::Serialize;
+    type Inputs: Eq + Clone + Send + Sync + 'static + serde::Serialize;
     type GameState: Clone + serde::Serialize;
 
     // user must provide certain callbacks
@@ -34,7 +34,7 @@ pub struct Client<T: SdkLogic> {
     /// Used to tell the backend to terminate
     pub terminate: Arc<Notify>,
     /// Channel used to set inputs
-    // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state
+    // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send
     pub set_inputs_sender: mpsc::UnboundedSender<T::Inputs>,
     /// Game state to be read by the client
     pub game_state: Arc<Mutex<SdkGameState<T>>>,
@@ -43,7 +43,7 @@ pub struct Client<T: SdkLogic> {
 }
 
 /// The state that is returned by the SDK to your application
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize)]
 pub struct SdkGameState<T: SdkLogic> {
     /// The current state of the simulation, which may be ahead of the server
     pub state: T::GameState,
@@ -53,25 +53,34 @@ pub struct SdkGameState<T: SdkLogic> {
     pub remote_status: LobbyStatus,
 }
 
+impl<T: SdkLogic> Clone for SdkGameState<T> {
+    fn clone(&self) -> Self {
+        SdkGameState {
+            state: self.state.clone(),
+            inputs: self.inputs.clone(),
+            remote_status: self.remote_status.clone(),
+        }
+    }
+}
+
 impl<T: SdkLogic> Client<T> {
     /// Returns the latest state along with other useful information
     pub fn read_state(&self) -> Result<SdkGameState<T>> {
         let state = match self.game_state.lock() {
-            Ok(mut state) => {
+            Ok(state) => {
                 // TODO: in the future, when reading inputs, we need to clear the events
                 // to do that there has to be an on_read() function or something
                 // or let the user do it themselves?? idk how events are going to be handled yet
                 state.clone()
             }
-            Err(e) => {
-                Err(e)?
-            }
+            // cursed since error has a lifetime for whatever reason and anyhow needs 'static
+            Err(e) => return Err(anyhow::anyhow!("{e}")),
         };
 
         Ok(state)
     }
 
-    pub fn set_inputs(&self, inputs: T::Inputs) {
-        todo!()
+    pub fn set_inputs(&self, inputs: T::Inputs) -> Result<()> {
+        Ok(self.set_inputs_sender.send(inputs)?)
     }
 }
