@@ -22,6 +22,7 @@ pub struct Lobby<T: SdkLogic> {
 }
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[derive(Clone)]
 pub enum LobbyStatus {
     NotStarted = 0,
     Started = 1,

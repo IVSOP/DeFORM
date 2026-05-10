@@ -1,10 +1,12 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
+use anyhow::Result;
 
 use tokio::sync::{Notify, mpsc};
 
 use crate::lobby::LobbyStatus;
 
 pub mod lobby;
+pub mod backend;
 
 /// Trait that defines what data types the game uses, as well as the logic functions/callbacks.
 ///
@@ -26,32 +28,22 @@ pub trait SdkLogic {
     fn on_rollback(&mut self) {}
 }
 
-struct QuicBackend<T: SdkLogic> {
-    /// The user-provided logic struct. Used to execute the callbacks.
-    /// Since we store the type, it is also possible for the user
-    /// to pass in some arbitrary data, as well as mutate it inside of the callbacks.
-    user_logic: T,
-
-
-
-    // internal data this needs to have:
-    // per-frame inputs
-    // latest state
-}
-
+/// A [`Client`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
+/// Currently, the client is completely agnostic to the backend.
 pub struct Client<T: SdkLogic> {
-    // send a msg to terminate
+    /// Used to tell the backend to terminate
     pub terminate: Arc<Notify>,
-
-    // send a msg to set inputs
+    /// Channel used to set inputs
     // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state
     pub set_inputs_sender: mpsc::UnboundedSender<T::Inputs>,
-    // game state to be read by the client
+    /// Game state to be read by the client
     pub game_state: Arc<Mutex<SdkGameState<T>>>,
+    /// Set to true by the backend thread when it exits (cleanly or due to error).
+    pub backend_dead: Arc<AtomicBool>,
 }
 
-/// Game state returned by the SDK to your application
-#[derive(serde::Serialize)]
+/// The state that is returned by the SDK to your application
+#[derive(serde::Serialize, Clone)]
 pub struct SdkGameState<T: SdkLogic> {
     /// The current state of the simulation, which may be ahead of the server
     pub state: T::GameState,
@@ -62,19 +54,21 @@ pub struct SdkGameState<T: SdkLogic> {
 }
 
 impl<T: SdkLogic> Client<T> {
-    /// Initializes an offline backend
-    pub fn new_offline() -> Self {
-        todo!()
-    }
-
-    /// Initializes a QUIC backend
-    pub fn new_quic() -> Self {
-        todo!()
-    }
-
     /// Returns the latest state along with other useful information
-    pub fn read_state(&self) -> SdkGameState<T> {
-        todo!()
+    pub fn read_state(&self) -> Result<SdkGameState<T>> {
+        let state = match self.game_state.lock() {
+            Ok(mut state) => {
+                // TODO: in the future, when reading inputs, we need to clear the events
+                // to do that there has to be an on_read() function or something
+                // or let the user do it themselves?? idk how events are going to be handled yet
+                state.clone()
+            }
+            Err(e) => {
+                Err(e)?
+            }
+        };
+
+        Ok(state)
     }
 
     pub fn set_inputs(&self, inputs: T::Inputs) {
