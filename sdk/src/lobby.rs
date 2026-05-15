@@ -2,11 +2,11 @@ use std::collections::HashMap;
 
 use pinocchio::pubkey::Pubkey;
 
-use crate::SdkLogic;
+use crate::UserLogic;
 
 /// Information about a player.
 /// You will probably have per-player information in the GameState, which makes this inneficient, idk how to solve it.
-pub struct PlayerInfo<T: SdkLogic> {
+pub struct PlayerInfo<T: UserLogic> {
     /// Last inputs, used to generate the current [`GameState`]
     pub inputs: T::Inputs,
     pub ephemeral_key: Pubkey,
@@ -14,7 +14,7 @@ pub struct PlayerInfo<T: SdkLogic> {
 }
 
 /// An on-chain lobby account
-pub struct Lobby<T: SdkLogic> {
+pub struct Lobby<T: UserLogic> {
     /// Given a player's main pubkey, corresponds the information about this player
     pub players_info: HashMap<Pubkey, PlayerInfo<T>>,
     pub game_state: T::GameState,

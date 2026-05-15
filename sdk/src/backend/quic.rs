@@ -1,6 +1,6 @@
-use crate::{Client, SdkLogic};
+use crate::{Client, UserLogic};
 
-struct QuicBackend<T: SdkLogic> {
+struct QuicBackend<T: UserLogic> {
     /// The user-provided logic struct. Used to execute the callbacks.
     /// Since we store the type, it is also possible for the user
     /// to pass in some arbitrary data, as well as mutate it inside of the callbacks.
@@ -13,7 +13,7 @@ struct QuicBackend<T: SdkLogic> {
     // latest state
 }
 
-impl<T: SdkLogic> QuicBackend<T> {
+impl<T: UserLogic> QuicBackend<T> {
     pub fn new() -> Client<T> {
         todo!()
     }

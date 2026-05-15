@@ -13,7 +13,7 @@ pub mod backend;
 /// To use this crate, you should start by implementing this type, and then making a [`Client`].
 /// Note that the callbacks have mutable access to `self`, meaning you can provide and mutate your own data,
 /// using the struct that implements this trait.
-pub trait SdkLogic {
+pub trait UserLogic {
     // user must define inputs and game state
     type Inputs: Eq + Clone + Send + Sync + 'static + serde::Serialize;
     type GameState: Clone + serde::Serialize;
@@ -25,12 +25,21 @@ pub trait SdkLogic {
     /// User-provided callback called when a callback is triggered.
     /// 
     /// This could be used, for example, to manually emit events, or log information.
-    fn on_rollback(&mut self) {}
+    fn before_rollback(&mut self) {}
+    fn after_rollback(&mut self) {}
+
+    /// User-provided callback called when a gap is detected.
+    /// A gap happens when, for example, the states received from the server are:
+    /// 0 1 2 3 _ 5 -> gap on `4`
+    /// 
+    /// This could be used, for example, to manually emit events, or log information.
+    fn before_gap(&mut self) {}
+    fn after_gap(&mut self) {}
 }
 
 /// A [`Client`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
 /// Currently, the client is completely agnostic to the backend.
-pub struct Client<T: SdkLogic> {
+pub struct Client<T: UserLogic> {
     /// Used to tell the backend to terminate
     pub terminate: Arc<Notify>,
     /// Channel used to set inputs
@@ -44,7 +53,7 @@ pub struct Client<T: SdkLogic> {
 
 /// The state that is returned by the SDK to your application
 #[derive(serde::Serialize)]
-pub struct SdkGameState<T: SdkLogic> {
+pub struct SdkGameState<T: UserLogic> {
     /// The current state of the simulation, which may be ahead of the server
     pub state: T::GameState,
     /// The previous inputs, which lead to this state
@@ -53,7 +62,7 @@ pub struct SdkGameState<T: SdkLogic> {
     pub remote_status: LobbyStatus,
 }
 
-impl<T: SdkLogic> Clone for SdkGameState<T> {
+impl<T: UserLogic> Clone for SdkGameState<T> {
     fn clone(&self) -> Self {
         SdkGameState {
             state: self.state.clone(),
@@ -63,7 +72,7 @@ impl<T: SdkLogic> Clone for SdkGameState<T> {
     }
 }
 
-impl<T: SdkLogic> Client<T> {
+impl<T: UserLogic> Client<T> {
     /// Returns the latest state along with other useful information
     pub fn read_state(&self) -> Result<SdkGameState<T>> {
         let state = match self.game_state.lock() {
@@ -82,5 +91,9 @@ impl<T: SdkLogic> Client<T> {
 
     pub fn set_inputs(&self, inputs: T::Inputs) -> Result<()> {
         Ok(self.set_inputs_sender.send(inputs)?)
+    }
+
+    pub fn shutdown(&self) {
+        self.terminate.notify_one()
     }
 }
