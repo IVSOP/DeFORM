@@ -36,13 +36,17 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
         inputs: &HashMap<Pubkey, Self::Inputs>,
     ) -> Result<Self::GameState, Self::Error>;
 
-    /// User-provided callback called when a callback is triggered.
+    /// User-provided callback called when a callback is triggered. This happens when a previously computed state (in this case, prediction of inputs) does not match the state received from the server.
     ///
     /// This could be used, for example, to manually emit events, or log information.
-    fn before_rollback(&mut self) -> Result<(), Self::Error> {
-        Ok(())
-    }
-    fn after_rollback(&mut self) -> Result<(), Self::Error> {
+    /// 
+    /// - *old_info* represents the current state (on the most recent tick) before the rollback happened
+    /// - *new_info* represents the new, conflicting state that was received
+    fn on_rollback(
+        &mut self,
+        _old_info: &TickInfo<Self>,
+        _new_info: &TickInfo<Self>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -50,11 +54,31 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     /// A gap happens when, for example, the states received from the server are:
     /// 0 1 2 3 _ 5 -> gap on `4`
     ///
+    /// NOTE: A rollback is also triggered, as it is assumed that there could be state divergences as the inputs cannot be compared, and the missing states are not recomputed, as the new state is now the source of truth.
+    ///
     /// This could be used, for example, to manually emit events, or log information.
-    fn before_gap(&mut self) -> Result<(), Self::Error> {
+    /// If you are certain this is a non issue or can never happen (using websockets, for example), it is safe to ignore it, as a rollback will always be emitted either way.
+    /// 
+    /// - *old_info* represents the state before the gap. It necessarily contains a state that was previously received from the server.
+    /// - *new_info* represents the new state that was received
+    fn on_gap(
+        &mut self,
+        _old_info: &TickInfo<Self>,
+        _new_info: &TickInfo<Self>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
-    fn after_gap(&mut self) -> Result<(), Self::Error> {
+
+    /// User-provided callback when the state is fast-forwarded.
+    /// This happens when the state received from the server is ahead of our own local state. The simulation will not recompute the missing states, and will instead assume the received state as the new source of truth.
+    /// 
+    /// - *old_info* represents the latest state of the simulation before the server state was received
+    /// - *new_info* represents the new state that was received
+    fn on_fast_forward(
+        &mut self,
+        _old_info: &TickInfo<Self>,
+        _new_info: &TickInfo<Self>,
+    ) -> Result<(), Self::Error> {
         Ok(())
     }
 }
