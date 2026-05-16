@@ -8,16 +8,15 @@ crate-type = ["rlib"]
 
 [dependencies]
 deform_core = { path = "../deform_core" }
-anyhow = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 pinocchio = { workspace = true }
-solana-client = { workspace = true } 
-solana-sdk = { workspace = true } 
+solana-client = { workspace = true }
+solana-sdk = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 webpki-roots = { workspace = true}
-wincode = { workspace = true } 
+wincode = { workspace = true }
 glam = { workspace = true }
 
 [features]

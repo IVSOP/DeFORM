@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use pinocchio::pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{DeformGameState, DeformInputs};
+use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, TickInfo};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, Copy, Eq, PartialEq, Default, SchemaRead, SchemaWrite)]
@@ -44,20 +44,24 @@ impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
         pinocchio::pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> wincode::ReadResult<Self> {
-        wincode::deserialize(bytes)
+    pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
+        wincode::deserialize(bytes).map_err(|e| DeformError::DeserializeLobby(e.to_string()))
     }
 
-    pub fn write_into(&self, dst: &mut [u8]) -> wincode::WriteResult<()> {
-        wincode::serialize_into(dst, self)
+    pub fn write_into(&self, dst: &mut [u8]) -> DeformResult<()> {
+        wincode::serialize_into(dst, self).map_err(|e| DeformError::SerializeLobby(e.to_string()))
     }
 }
 
 impl<T: crate::DeformUserLogic> From<Lobby<T::Inputs, T::GameState>> for crate::TickInfo<T> {
     fn from(lobby: Lobby<T::Inputs, T::GameState>) -> Self {
-        crate::TickInfo {
+        TickInfo {
             game_state: lobby.game_state,
-            inputs: lobby.player_infos.into_iter().map(|(k, v)| (k, v.inputs)).collect(),
+            inputs: lobby
+                .player_infos
+                .into_iter()
+                .map(|(k, v)| (k, v.inputs))
+                .collect(),
         }
     }
 }

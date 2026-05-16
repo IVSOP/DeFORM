@@ -1,9 +1,8 @@
-use anyhow::{Result, anyhow};
 use glam::FloatExt;
+use pinocchio::pubkey::Pubkey;
 use quinn::crypto::rustls::QuicClientConfig;
 use solana_client::{rpc_client::RpcClient, rpc_config::CommitmentConfig};
 use solana_sdk::signature::Signature;
-use pinocchio::pubkey::Pubkey;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -20,7 +19,8 @@ use tokio::{
 };
 
 use deform_core::{
-    Client, DeformGameState, DeformInputs, DeformReadState, TickInfo, DeformUserLogic,
+    Client, DeformError, DeformGameState, DeformInputs, DeformReadState, DeformResult,
+    DeformUserLogic, TickInfo,
     lobby::{Lobby, LobbyStatus},
 };
 
@@ -43,7 +43,6 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     pub player: Pubkey,
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
-
     pub terminate: Arc<Notify>,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
     // NOTE: the user-provided struct, which may contain data, is stored here!!!
@@ -55,7 +54,6 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     pub min_ticks_ahead: u64,
     /// If ticks are above this, simulation is stopped; hard limit. It is always at least 5.
     pub max_ticks_ahead: u64,
-
     // /// Cumulative count of datagrams inferred to have been dropped (gaps in received ticks).
     // pub dropped_datagrams: u64,
     // /// Cumulative count of stale/out-of-order datagrams (tick <= remote_tick).
@@ -81,21 +79,32 @@ pub const COMMIT_INPUTS_MICROS: u64 = 16667;
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
 // Helpers for length-prefixed messages on reliable streams
-async fn stream_write_msg(send: &mut quinn::SendStream, data: &[u8]) -> Result<()> {
-    send.write_all(&(data.len() as u32).to_le_bytes()).await?;
-    send.write_all(data).await?;
+async fn stream_write_msg(send: &mut quinn::SendStream, data: &[u8]) -> DeformResult {
+    send.write_all(&(data.len() as u32).to_le_bytes())
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
+    send.write_all(data)
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
     Ok(())
 }
 
-async fn stream_read_msg(recv: &mut quinn::RecvStream) -> Result<Vec<u8>> {
+async fn stream_read_msg(recv: &mut quinn::RecvStream) -> DeformResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
-    recv.read_exact(&mut len_buf).await?;
+    recv.read_exact(&mut len_buf)
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
     let len = u32::from_le_bytes(len_buf) as usize;
     if len > 1024 * 1024 {
-        anyhow::bail!("message too large: {} bytes", len);
+        return Err(DeformError::Protocol(format!(
+            "message too large: {} bytes",
+            len
+        )));
     }
     let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf).await?;
+    recv.read_exact(&mut buf)
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
     Ok(buf)
 }
 
@@ -114,9 +123,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // user_logic: T,
         // initial_game_state: T::GameState,
         // initial_inputs: T::Inputs,
-    ) -> Result<Client<T>> {
+    ) -> DeformResult<Client<T>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let (setup_tx, setup_rx) = oneshot::channel::<Result<()>>();
+        let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
@@ -147,15 +156,17 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     ));
 
                     rt.block_on(async move {
-                        let (lobby, _) = Lobby::<T::Inputs, T::GameState>::find_program_address(lobby_id, &game_program);
+                        let (lobby, _) = Lobby::<T::Inputs, T::GameState>::find_program_address(
+                            lobby_id,
+                            &game_program,
+                        );
 
                         // FIX: make this exit after N retries
                         let lobby_info = loop {
-                            match fetch_lobby::<T::Inputs, T::GameState>(&lobby, &rpc_client).await {
+                            match fetch_lobby::<T::Inputs, T::GameState>(&lobby, &rpc_client).await
+                            {
                                 Ok(infos) => break infos,
                                 Err(_e) => {
-                                    // #[cfg(feature = "log")]
-                                    // error!("Error fetching lobby: {}", _e);
                                     tokio::time::sleep(Duration::from_millis(200)).await;
                                 }
                             }
@@ -163,11 +174,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
                         // --- Build QUIC client endpoint ---
                         let tls_config = if skip_cert_verify {
-                            let crypto = rustls::ClientConfig::builder()
+                            rustls::ClientConfig::builder()
                                 .dangerous()
                                 .with_custom_certificate_verifier(Arc::new(SkipCertVerification))
-                                .with_no_client_auth();
-                            crypto
+                                .with_no_client_auth()
                         } else {
                             let mut roots = rustls::RootCertStore::empty();
                             roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -182,8 +192,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let quic_tls = match QuicClientConfig::try_from(tls_config) {
                             Ok(c) => c,
                             Err(e) => {
-                                let _ = setup_tx
-                                    .send(Err(anyhow!("Failed to build QUIC TLS config: {}", e)));
+                                let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                    "failed to build QUIC TLS config: {e}"
+                                ))));
                                 return;
                             }
                         };
@@ -194,43 +205,41 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             client_config.transport_config(Arc::new(transport));
                         }
 
-                        let bind_addr = match "0.0.0.0:0".parse() {
+                        let bind_addr: std::net::SocketAddr = match "0.0.0.0:0".parse() {
                             Ok(a) => a,
                             Err(e) => {
-                                let _ = setup_tx
-                                    .send(Err(anyhow!("Failed to parse bind address: {}", e)));
+                                let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                    "failed to parse bind address: {e}"
+                                ))));
                                 return;
                             }
                         };
-                        let endpoint = quinn::Endpoint::client(bind_addr)
-                            .map_err(|e| anyhow!("Failed to create QUIC endpoint: {}", e));
-                        let mut endpoint = match endpoint {
+                        let mut endpoint = match quinn::Endpoint::client(bind_addr) {
                             Ok(ep) => ep,
                             Err(e) => {
-                                let _ = setup_tx.send(Err(e));
+                                let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                    "failed to create QUIC endpoint: {e}"
+                                ))));
                                 return;
                             }
                         };
                         endpoint.set_default_client_config(client_config);
 
-                        // Resolve server address (supports both "host:port" and bare IP:port)
+                        // Resolve server address
                         let addr = match tokio::net::lookup_host(&server_addr).await {
                             Ok(mut iter) => match iter.next() {
                                 Some(a) => a,
                                 None => {
-                                    let _ = setup_tx.send(Err(anyhow!(
-                                        "DNS resolved no addresses for '{}'",
-                                        server_addr
-                                    )));
+                                    let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                        "DNS resolved no addresses for '{server_addr}'"
+                                    ))));
                                     return;
                                 }
                             },
                             Err(e) => {
-                                let _ = setup_tx.send(Err(anyhow!(
-                                    "Failed to resolve '{}': {}",
-                                    server_addr,
-                                    e
-                                )));
+                                let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                    "failed to resolve '{server_addr}': {e}"
+                                ))));
                                 return;
                             }
                         };
@@ -240,13 +249,16 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             Ok(connecting) => match connecting.await {
                                 Ok(conn) => conn,
                                 Err(e) => {
-                                    let _ = setup_tx
-                                        .send(Err(anyhow!("QUIC connection failed: {}", e)));
+                                    let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                        "QUIC connection failed: {e}"
+                                    ))));
                                     return;
                                 }
                             },
                             Err(e) => {
-                                let _ = setup_tx.send(Err(anyhow!("QUIC connect error: {}", e)));
+                                let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                    "QUIC connect error: {e}"
+                                ))));
                                 return;
                             }
                         };
@@ -256,8 +268,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         {
                             Ok(streams) => streams,
                             Err(e) => {
-                                let _ = setup_tx
-                                    .send(Err(anyhow!("Failed to open control stream: {}", e)));
+                                let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                                    "failed to open control stream: {e}"
+                                ))));
                                 return;
                             }
                         };
@@ -273,13 +286,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             Ok(bytes) => bytes,
                             Err(e) => {
                                 let _ = setup_tx
-                                    .send(Err(anyhow!("Failed to serialize handshake: {}", e)));
+                                    .send(Err(DeformError::Serialize(format!("handshake: {e:?}"))));
                                 return;
                             }
                         };
 
                         if let Err(e) = stream_write_msg(&mut control_send, &bytes).await {
-                            let _ = setup_tx.send(Err(anyhow!("Failed to send handshake: {}", e)));
+                            let _ = setup_tx.send(Err(e));
                             return;
                         }
 
@@ -287,8 +300,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let response_bytes = match stream_read_msg(&mut control_recv).await {
                             Ok(b) => b,
                             Err(e) => {
-                                let _ = setup_tx
-                                    .send(Err(anyhow!("Failed to read auth response: {}", e)));
+                                let _ = setup_tx.send(Err(e));
                                 return;
                             }
                         };
@@ -297,26 +309,25 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             match wincode::deserialize(&response_bytes) {
                                 Ok(msg) => msg,
                                 Err(e) => {
-                                    let _ = setup_tx
-                                        .send(Err(anyhow!("Failed to parse auth response: {}", e)));
+                                    let _ = setup_tx.send(Err(DeformError::Deserialize(format!(
+                                        "auth response: {e:?}"
+                                    ))));
                                     return;
                                 }
                             };
 
                         match control_msg {
-                            ControlMessage::AuthOk => {
-                                // #[cfg(feature = "log")]
-                                // info!("Auth OK for lobby {}", lobby_id);
-                            }
+                            ControlMessage::AuthOk => {}
                             ControlMessage::Error(e) => {
-                                let _ = setup_tx.send(Err(anyhow!("Server auth error: {}", e)));
+                                let _ = setup_tx.send(Err(DeformError::Protocol(format!(
+                                    "server auth error: {e}"
+                                ))));
                                 return;
                             }
                             other => {
-                                let _ = setup_tx.send(Err(anyhow!(
-                                    "Unexpected control message during auth: {:?}",
-                                    other
-                                )));
+                                let _ = setup_tx.send(Err(DeformError::Protocol(format!(
+                                    "unexpected control message during auth: {other:?}"
+                                ))));
                                 return;
                             }
                         }
@@ -351,7 +362,6 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 player,
                                 // lobby,
                                 // lobby_id,
-
                                 terminate: terminate_clone,
                                 set_inputs_receiver,
                                 sdk_game_state: sdk_game_state_clone,
@@ -375,15 +385,17 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     });
                 }
                 Err(e) => {
-                    let _ = setup_tx.send(Err(anyhow!("{}", e)));
+                    let _ = setup_tx.send(Err(DeformError::Connection(format!(
+                        "failed to build tokio runtime: {e}"
+                    ))));
                 }
             }
             backend_dead_clone.store(true, Ordering::Relaxed);
         });
 
-        setup_rx
-            .blocking_recv()
-            .map_err(|_| anyhow!("Setup thread terminated unexpectedly"))??;
+        setup_rx.blocking_recv().map_err(|_| {
+            DeformError::Connection("setup thread terminated unexpectedly".into())
+        })??;
 
         Ok(Client {
             terminate,
@@ -393,23 +405,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         })
     }
 
-    pub async fn tick_loop(mut self) -> Result<()> {
-        // #[cfg(feature = "log")]
-        // {
-        //     let env_filter = if let Ok(directive) = "info".parse() {
-        //         EnvFilter::from_default_env().add_directive(directive)
-        //     } else {
-        //         EnvFilter::from_default_env()
-        //     };
-        //     let _ = fmt().with_env_filter(env_filter).try_init();
-        // }
-
+    pub async fn tick_loop(mut self) -> DeformResult {
         // FIX: initial state is already in the game state message, read it from there
         let current_tick_info: TickInfo<T> = {
             let shared = self
                 .sdk_game_state
                 .lock()
-                .map_err(|e| anyhow!("Error aquiring mutex: {}", e))?;
+                .map_err(|_| DeformError::LockPoisoned)?;
 
             shared.tick_info.clone()
         };
@@ -681,7 +683,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         Duration::from_micros(micros)
     }
 
-    pub fn advance_local_simulation(&mut self) -> Result<()> {
+    pub fn advance_local_simulation(&mut self) -> DeformResult {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("advance_local_simulation");
 
@@ -699,7 +701,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         let current_info = self
             .info_per_tick
             .get(&current_tick)
-            .ok_or(anyhow!("Slot not found!?!?"))?;
+            .ok_or(DeformError::InvalidState("slot not found"))?;
 
         let mut new_players_inputs: HashMap<Pubkey, T::Inputs> =
             HashMap::with_capacity(current_info.inputs.len());
@@ -733,11 +735,12 @@ impl<T: DeformUserLogic> QuicBackend<T> {
             let mut shared = self
                 .sdk_game_state
                 .lock()
-                .map_err(|e| anyhow!("Error aquiring mutex: {}", e))?;
+                .map_err(|_| DeformError::LockPoisoned)?;
 
             shared
                 .user_logic
-                .advance_frame(&current_info.game_state, &new_players_inputs)?
+                .advance_frame(&current_info.game_state, &new_players_inputs)
+                .map_err(|e| DeformError::UserLogic(Box::new(e)))?
         };
 
         let next_info = TickInfo {
@@ -751,7 +754,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         Ok(())
     }
 
-    pub async fn commit_inputs(&mut self) -> Result<()> {
+    pub async fn commit_inputs(&mut self) -> DeformResult {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("commit_inputs");
 
@@ -762,7 +765,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         let ix = ServerUnreliableInstruction::<T::Inputs>::BatchSetInputs(self.inputs.clone());
         let bytes = wincode::serialize(&ix)?;
 
-        self.connection.send_datagram(bytes.into())?;
+        self.connection
+            .send_datagram(bytes.into())
+            .map_err(|e| DeformError::Connection(e.to_string()))?;
 
         Ok(())
     }
@@ -771,14 +776,14 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         &mut self,
         bytes: &[u8],
         tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> Result<()> {
+    ) -> DeformResult {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("process_server_update");
 
         let message: ServerResponse<T::Inputs, T::GameState> = wincode::deserialize(bytes)?;
         match message {
             ServerResponse::Error(e) => {
-                return Err(anyhow!(e));
+                return Err(DeformError::Protocol(e));
             }
             ServerResponse::NewState(new_lobby_state) => {
                 // #[cfg(feature = "tracy")]
@@ -798,8 +803,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 if matches!(new_remote_status, LobbyStatus::Finished) {
                     self.inputs.clear();
                     self.info_per_tick.clear();
-                    self.info_per_tick
-                        .insert(new_remote_tick, new_tick_info);
+                    self.info_per_tick.insert(new_remote_tick, new_tick_info);
                     self.remote_tick = new_remote_tick;
                     self.local_tick = new_remote_tick;
                     self.last_remote_status = new_remote_status;
@@ -838,8 +842,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     self.remote_tick = new_remote_tick;
                     self.local_tick = new_remote_tick;
                     self.info_per_tick.clear();
-                    self.info_per_tick
-                        .insert(new_remote_tick, new_tick_info);
+                    self.info_per_tick.insert(new_remote_tick, new_tick_info);
                     self.last_remote_status = new_remote_status;
                     self.inputs.clear();
 
@@ -925,15 +928,18 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 let predicted_inputs = &self
                     .info_per_tick
                     .get(&new_remote_tick)
-                    .ok_or(anyhow!("Remote tick has not been predicted!"))?
+                    .ok_or(DeformError::InvalidState(
+                        "remote tick has not been predicted",
+                    ))?
                     .inputs;
 
                 let remote_inputs = &new_tick_info.inputs;
 
                 // compare inputs from all players, and check if they match the ones the server sent
-                for (player, predicted_input) in predicted_inputs.iter()
-                {
-                    let remote_input = remote_inputs.get(player).ok_or(anyhow!("Player not found!"))?;
+                for (player, predicted_input) in predicted_inputs.iter() {
+                    let remote_input = remote_inputs.get(player).ok_or(
+                        DeformError::InvalidState("player not found in remote inputs"),
+                    )?;
 
                     if remote_input != predicted_input {
                         rollback = true;
@@ -984,7 +990,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         new_tick_info: TickInfo<T>,
         new_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> Result<()> {
+    ) -> DeformResult {
         // #[cfg(feature = "tracy")]
         // if let Some(client) = tracy_client::Client::running() {
         //     client.message("rollback", 0);
@@ -1033,9 +1039,11 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 async fn fetch_lobby<I: DeformInputs, G: DeformGameState>(
     lobby: &Pubkey,
     rpc_client: &RpcClient,
-) -> Result<Lobby<I, G>> {
-    let account = rpc_client.get_account(&solana_sdk::pubkey::Pubkey::new_from_array(*lobby))?;
-    Lobby::from_bytes(&account.data).map_err(|e| anyhow!("Failed to deserialize lobby: {}", e))
+) -> DeformResult<Lobby<I, G>> {
+    let account = rpc_client
+        .get_account(&solana_sdk::pubkey::Pubkey::new_from_array(*lobby))
+        .map_err(|e| DeformError::Rpc(e.to_string()))?;
+    Lobby::from_bytes(&account.data).map_err(|e| DeformError::Deserialize(format!("lobby: {e:?}")))
 }
 
 // ---------------------------------------------------------------------------

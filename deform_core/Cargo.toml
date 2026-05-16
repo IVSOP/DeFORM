@@ -7,14 +7,14 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-anyhow = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 pinocchio = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 webpki-roots = { workspace = true}
-wincode = { workspace = true } 
+wincode = { workspace = true }
 glam = { workspace = true }
+thiserror = { workspace = true }
 
 [features]

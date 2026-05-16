@@ -1,4 +1,3 @@
-use anyhow::Result;
 use pinocchio::pubkey::Pubkey;
 use std::{
     collections::HashMap,
@@ -10,7 +9,10 @@ use tokio::sync::{Notify, mpsc};
 
 use crate::lobby::LobbyStatus;
 
+pub mod error;
 pub mod lobby;
+
+pub use error::{DeformError, DeformResult};
 
 /// Trait that defines what data types the game uses, as well as the logic functions/callbacks.
 ///
@@ -23,6 +25,7 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     // user must define inputs and game state
     type Inputs: DeformInputs;
     type GameState: DeformGameState;
+    type Error: std::error::Error + Send + Sync + 'static;
 
     // user must provide certain callbacks
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.
@@ -31,21 +34,29 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
         &mut self,
         state: &Self::GameState,
         inputs: &HashMap<Pubkey, Self::Inputs>,
-    ) -> Result<Self::GameState>;
+    ) -> Result<Self::GameState, Self::Error>;
 
     /// User-provided callback called when a callback is triggered.
     ///
     /// This could be used, for example, to manually emit events, or log information.
-    fn before_rollback(&mut self) {}
-    fn after_rollback(&mut self) {}
+    fn before_rollback(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn after_rollback(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     /// User-provided callback called when a gap is detected.
     /// A gap happens when, for example, the states received from the server are:
     /// 0 1 2 3 _ 5 -> gap on `4`
     ///
     /// This could be used, for example, to manually emit events, or log information.
-    fn before_gap(&mut self) {}
-    fn after_gap(&mut self) {}
+    fn before_gap(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn after_gap(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// A [`Client`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
@@ -93,23 +104,20 @@ pub struct Stats {
 
 impl<T: DeformUserLogic> Client<T> {
     /// Returns the latest state along with other useful information
-    pub fn read_state(&self) -> Result<DeformReadState<T>> {
-        let state = match self.sdk_game_state.lock() {
-            Ok(state) => {
-                // TODO: in the future, when reading inputs, we need to clear the events
-                // to do that there has to be an on_read() function or something
-                // or let the user do it themselves?? idk how events are going to be handled yet
-                state.clone()
-            }
-            // cursed since error has a lifetime for whatever reason and anyhow needs 'static
-            Err(e) => return Err(anyhow::anyhow!("{e}")),
-        };
+    pub fn read_state(&self) -> DeformResult<DeformReadState<T>> {
+        let state = self
+            .sdk_game_state
+            .lock()
+            .map_err(|_| DeformError::LockPoisoned)?
+            .clone();
 
         Ok(state)
     }
 
-    pub fn set_inputs(&self, inputs: T::Inputs) -> Result<()> {
-        Ok(self.set_inputs_sender.send(inputs)?)
+    pub fn set_inputs(&self, inputs: T::Inputs) -> DeformResult {
+        self.set_inputs_sender
+            .send(inputs)
+            .map_err(|_| DeformError::ChannelClosed)
     }
 
     pub fn shutdown(&self) {
@@ -145,5 +153,5 @@ pub trait DeformGameState:
 }
 
 pub trait MaxLen {
-    fn max_len() -> Result<usize>;
+    fn max_len() -> DeformResult<usize>;
 }
