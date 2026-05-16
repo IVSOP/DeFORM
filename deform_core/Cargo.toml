@@ -1,0 +1,20 @@
+[package]
+name = "deform_core"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+anyhow = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+pinocchio = { workspace = true }
+quinn = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true}
+wincode = { workspace = true } 
+glam = { workspace = true }
+
+[features]
