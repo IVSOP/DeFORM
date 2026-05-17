@@ -1045,9 +1045,7 @@ async fn fetch_lobby<I: DeformInputs, G: DeformGameState>(
     rpc_client: &RpcClient,
 ) -> DeformResult<Lobby<I, G>> {
     let account = rpc_client
-        .get_account(&solana_sdk::pubkey::Pubkey::new_from_array(
-            lobby.to_bytes(),
-        ))
+        .get_account(lobby)
         .map_err(|e| DeformError::Rpc(e.to_string()))?;
     Lobby::from_bytes(&account.data).map_err(|e| DeformError::Deserialize(format!("lobby: {e:?}")))
 }
