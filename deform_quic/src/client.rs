@@ -873,10 +873,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 // while these inputs could be correct, the previous missed frames could be wrong, causing divergence.
                 // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
                 if gap {
-                    let old_remote_state = self
-                        .info_per_tick
-                        .get(&old_remote_tick)
-                        .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
+                    // let old_remote_state = self
+                    //     .info_per_tick
+                    //     .get(&old_remote_tick)
+                    //     .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
 
                     // manually_emit_events(
                     //     old_remote_state,
@@ -959,7 +959,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         &mut self,
         // the state that will be used as the new source of truth
         new_tick_info: TickInfo<T>,
-        new_tick: u64,
+        conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> DeformResult {
         // #[cfg(feature = "tracy")]
@@ -968,14 +968,19 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // }
 
         let previous_local_tick = self.local_tick;
-        // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick, so this should always work
-        // if it does not work, smoothing is just not updated
-        // let pre_rollback_state = self.info_per_tick.get(&previous_local_tick).cloned();
+        // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick
+        // by using remove here we avoid a clone
+        // in the (impossible?) case where previous_local_tick == conflicting_tick,
+        // right below a state gets inserted into conflicting_tick so everything should be fine
+        let pre_rollback_info = self
+            .info_per_tick
+            .remove(&previous_local_tick)
+            .ok_or(DeformError::InvalidState("State not found!"))?;
 
         // insert the new state as-is, and update our tick to match it
-        self.info_per_tick.insert(new_tick, new_tick_info);
+        self.info_per_tick.insert(conflicting_tick, new_tick_info);
 
-        self.local_tick = new_tick;
+        self.local_tick = conflicting_tick;
 
         // #[cfg(feature = "log")]
         // warn!(
@@ -984,10 +989,19 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // );
         // run the simulation until we catch up to the current local tick
         // this will automatically reuse any registered inputs, and re-predict as needed
-        for _tick in new_tick..previous_local_tick {
+        for _tick in conflicting_tick..previous_local_tick {
             self.advance_local_simulation()?;
             // finish is handled when server tells us, not here
         }
+
+        let post_rollback_info = self
+            .info_per_tick
+            .get(&self.local_tick)
+            .ok_or(DeformError::InvalidState("State not found!"))?;
+
+        self.user_logic
+            .on_rollback(pre_rollback_info, post_rollback_info)
+            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
 
         // // compute the new offset from previous frame to current frame
         // // uses the state @ current tick before and after rollback (tick is the same!)

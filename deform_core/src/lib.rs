@@ -44,7 +44,8 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     /// - *new_info* represents the new, conflicting state that was received
     fn on_rollback(
         &mut self,
-        _old_info: &TickInfo<Self>,
+        // owned since it has been completely deleted
+        _old_info: TickInfo<Self>,
         _new_info: &TickInfo<Self>,
     ) -> Result<(), Self::Error> {
         Ok(())
@@ -118,7 +119,7 @@ pub struct DeformReadState<T: DeformUserLogic> {
     pub remote_status: LobbyStatus,
     pub stats: Stats,
     /// Your own data, so you can read it back when reading the rest of the state.
-    /// 
+    ///
     /// NOTE: I had a lot of trouble deciding how to do this. The backends need mutable access, so I always have to use a mutex of some sort.
     /// However, running the callbacks inside the lock is bad as I don't know how long the operations being done by the user are taking.
     /// So, the approach I have chosen is to keep an owned T in the backend. After operations are done and the [`DeformReadState`] needs to be updated, it is cloned into here.
@@ -180,9 +181,11 @@ pub trait DeformInputs:
     + MaxLen
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
-    /// 
+    ///
     /// By default, all inputs just get copied.
-    fn predict(&self) -> Self { self.clone() }
+    fn predict(&self) -> Self {
+        self.clone()
+    }
 }
 
 pub trait DeformGameState:
