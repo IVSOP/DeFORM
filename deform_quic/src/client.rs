@@ -131,7 +131,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::default()));
         let backend_dead = Arc::new(AtomicBool::new(false));
 
+        // cursed
         let sdk_game_state_clone = sdk_game_state.clone();
+        let sdk_game_state_clone_2 = sdk_game_state.clone();
+
         let terminate_clone = terminate.clone();
         let backend_dead_clone = backend_dead.clone();
 
@@ -335,8 +338,6 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let _ = setup_tx.send(Ok(()));
 
                         // --- Runtime phase ---
-                        let sdk_game_state_err = sdk_game_state_clone.clone();
-                        let sdk_game_state_panic = sdk_game_state_err.clone();
                         let tick_thread = tokio::spawn(async move {
                             let mut states = HashMap::new();
                             let state = lobby_info.game_state;
@@ -365,7 +366,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 // lobby_id,
                                 terminate: terminate_clone,
                                 set_inputs_receiver,
-                                sdk_game_state: sdk_game_state_clone,
+                                sdk_game_state: sdk_game_state_clone.clone(),
                                 min_ticks_ahead: 4,
                                 max_ticks_ahead: 3 * 4,
 
@@ -377,14 +378,15 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             };
 
                             if let Err(e) = tick_info.tick_loop().await {
-                                if let Ok(mut shared) = sdk_game_state_err.lock() {
+                                if let Ok(mut shared) = sdk_game_state_clone.lock() {
                                     shared.internal_error = Err(e);
                                 }
                             }
                         });
 
                         if let Err(e) = tick_thread.await {
-                            if let Ok(mut shared) = sdk_game_state_panic.lock() {
+                            // if error aquiring lock, there is really no way to report it
+                            if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
                                 shared.internal_error =
                                     Err(DeformError::BackendPanicked(format!("{e:?}")));
                             }
@@ -463,16 +465,19 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     // so clone the state and apply the offsets from the smoother
                     // then write the smoothed state to the shared memory
                     // FIX: MAKE THIS RETURN ERROR
-                    if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
-                        let visual_state = tick_info.clone();
-                        // self.smoother.apply(&mut visual_state);
+                    let current_tick_info = self.info_per_tick.get(&self.local_tick).ok_or(DeformError::InvalidState("State not found!"))?;
 
+                    let visual_state = current_tick_info.clone();
+                    // self.smoother.apply(&mut visual_state);
+
+                    {
                         let mut shared = self.sdk_game_state.lock().map_err(|_| DeformError::LockPoisoned)?;
                         shared.tick_info = visual_state;
                         shared.remote_status = self.last_remote_status;
                         shared.user_logic = self.user_logic.clone();
                         // shared.events.append(&mut self.events_queue);
                     }
+
                     tick_sleep = Box::pin(sleep(self.compute_dilated_tick_interval()));
                 }
 
@@ -563,13 +568,15 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
         if !terminated && self.last_remote_status == LobbyStatus::Finished {
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
-                let mut shared = self
-                    .sdk_game_state
-                    .lock()
-                    .map_err(|_| DeformError::LockPoisoned)?;
-                shared.tick_info = tick_info.clone();
-                shared.remote_status = self.last_remote_status;
-                shared.user_logic = self.user_logic.clone();
+                {
+                    let mut shared = self
+                        .sdk_game_state
+                        .lock()
+                        .map_err(|_| DeformError::LockPoisoned)?;
+                    shared.tick_info = tick_info.clone();
+                    shared.remote_status = self.last_remote_status;
+                    shared.user_logic = self.user_logic.clone();
+                }
             }
             // Wait for termination signal
             self.terminate.notified().await;
@@ -612,11 +619,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         //     }
         // }
 
-        let mut shared = self
-            .sdk_game_state
-            .lock()
-            .map_err(|_| DeformError::LockPoisoned)?;
-        shared.stats.ping_ms = rtt_secs * 1_000.0;
+        {
+            let mut shared = self
+                .sdk_game_state
+                .lock()
+                .map_err(|_| DeformError::LockPoisoned)?;
+            shared.stats.ping_ms = rtt_secs * 1_000.0;
+        }
 
         Ok(())
     }
@@ -704,9 +713,6 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // if let Some(client) = tracy_client::Client::running() {
         //     client.plot(tracy_client::plot_name!("advance_sim"), new_slot as f64);
         // }
-
-        // FIX: need to call the logic function
-        // it needs to determine if the game should end, as well as provide us with a new state to put into next_info, which currently has the old info
 
         let new_state = self
             .user_logic
