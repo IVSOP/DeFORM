@@ -427,6 +427,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         self.info_per_tick.insert(0, current_tick_info);
 
         let mut tick_sleep = Box::pin(sleep(Duration::from_micros(16667)));
+        let mut visual_ticker = interval(Duration::from_micros(16667));
         let mut inputs_ticker = interval(Duration::from_micros(COMMIT_INPUTS_MICROS));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
@@ -434,7 +435,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
         loop {
             tokio::select! {
-                // Tick every ~16ms
+                // Tick every ~16ms (or more, depending on time dilation)
                 _ = &mut tick_sleep => {
                     if self.last_remote_status != LobbyStatus::Finished {
                         let min_target_tick = self.remote_tick + self.min_ticks_ahead;
@@ -458,27 +459,25 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     } else {
                         break;
                     }
-                    // Shrink visual offsets toward zero each frame so corrections blend in
-                    // self.smoother.decay();
-
-                    // we have a source of truth state, but need the smoothed version
-                    // so clone the state and apply the offsets from the smoother
-                    // then write the smoothed state to the shared memory
-                    // FIX: MAKE THIS RETURN ERROR
-                    let current_tick_info = self.info_per_tick.get(&self.local_tick).ok_or(DeformError::InvalidState("State not found!"))?;
-
-                    let visual_state = current_tick_info.clone();
-                    // self.smoother.apply(&mut visual_state);
-
-                    {
-                        let mut shared = self.sdk_game_state.lock().map_err(|_| DeformError::LockPoisoned)?;
-                        shared.tick_info = visual_state;
-                        shared.remote_status = self.last_remote_status;
-                        shared.user_logic = self.user_logic.clone();
-                        // shared.events.append(&mut self.events_queue);
-                    }
 
                     tick_sleep = Box::pin(sleep(self.compute_dilated_tick_interval()));
+                }
+
+                // Visual: fixed 60fps update independent of simulation rate
+                _ = visual_ticker.tick() => {
+                    // tick_info.smoother.decay();
+
+                    // FIX: RETURN ERROR
+                    if let Some(state) = self.info_per_tick.get(&self.local_tick) {
+                        let visual_state = state.clone();
+                        // tick_info.smoother.apply(&mut visual_state);
+                        {
+                            let mut shared = self.sdk_game_state.lock().map_err(|_| DeformError::LockPoisoned)?;
+                            shared.tick_info = visual_state;
+                            shared.remote_status = self.last_remote_status;
+                            // shared.events.append(&mut tick_info.events_queue);
+                        }
+                    }
                 }
 
                 // Commit inputs periodically
@@ -567,13 +566,17 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         }
 
         if !terminated && self.last_remote_status == LobbyStatus::Finished {
+            // // Update shared state one last time (through smoother for consistency)
+            // tick_info.smoother.decay();
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
+                let visual_state = tick_info.clone();
                 {
                     let mut shared = self
                         .sdk_game_state
                         .lock()
                         .map_err(|_| DeformError::LockPoisoned)?;
-                    shared.tick_info = tick_info.clone();
+                    // tick_info.smoother.apply(&mut visual_state);
+                    shared.tick_info = visual_state;
                     shared.remote_status = self.last_remote_status;
                     shared.user_logic = self.user_logic.clone();
                 }
@@ -822,6 +825,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     self.last_remote_status = new_remote_status;
                     self.inputs.clear();
 
+                    // trigger immediate catch-up on the next select iteration
+                    tick_sleep.as_mut().reset(tokio::time::Instant::now());
+
                     return Ok(());
                 }
 
@@ -1019,7 +1025,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
         tick_sleep
             .as_mut()
-            .reset(tokio::time::Instant::now() + Duration::from_micros(16667));
+            .reset(tokio::time::Instant::now() + self.compute_dilated_tick_interval());
         // #[cfg(feature = "log")]
         // warn!("after rollback, ticks is {}", self.local_tick);
 
