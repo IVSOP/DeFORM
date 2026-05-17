@@ -1,7 +1,14 @@
 use pinocchio::program_error::ProgramError;
 use thiserror::Error;
 
-#[derive(Debug, Error)]
+fn serialize_as_display<T: std::fmt::Display, S: serde::Serializer>(
+    value: &T,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    serializer.serialize_str(&value.to_string())
+}
+
+#[derive(Debug, Error, serde::Serialize)]
 #[non_exhaustive]
 pub enum DeformError {
     #[error("serialize: {0}")]
@@ -29,17 +36,26 @@ pub enum DeformError {
     Rpc(String),
 
     #[error("io: {0}")]
-    Io(#[from] std::io::Error),
+    Io(
+        #[serde(serialize_with = "serialize_as_display")]
+        #[from]
+        std::io::Error,
+    ),
 
     // TODO: ugly, but I can't figure out an alternative
     #[error("user logic: {0}")]
-    UserLogic(Box<dyn std::error::Error + Send + Sync>),
+    UserLogic(
+        #[serde(serialize_with = "serialize_as_display")] Box<dyn std::error::Error + Send + Sync>,
+    ),
 
     #[error("serialize lobby: {0}")]
     SerializeLobby(String),
 
     #[error("deserialize lobby: {0}")]
     DeserializeLobby(String),
+
+    #[error("backend panicked: {0}")]
+    BackendPanicked(String),
 }
 
 pub type DeformResult<T = ()> = Result<T, DeformError>;
@@ -59,6 +75,7 @@ impl From<DeformError> for ProgramError {
             DeformError::UserLogic(_) => 10,
             DeformError::SerializeLobby(_) => 11,
             DeformError::DeserializeLobby(_) => 12,
+            DeformError::BackendPanicked(_) => 13,
         })
     }
 }

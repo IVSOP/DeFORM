@@ -336,6 +336,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let _ = setup_tx.send(Ok(()));
 
                         // --- Runtime phase ---
+                        let sdk_game_state_err = sdk_game_state_clone.clone();
+                        let sdk_game_state_panic = sdk_game_state_err.clone();
                         let tick_thread = tokio::spawn(async move {
                             let mut states = HashMap::new();
                             let state = lobby_info.game_state;
@@ -375,12 +377,17 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             };
 
                             if let Err(e) = tick_info.tick_loop().await {
-                                eprintln!("[rss] tick_loop exited with error: {e}");
+                                if let Ok(mut shared) = sdk_game_state_err.lock() {
+                                    shared.internal_error = Err(e);
+                                }
                             }
                         });
 
                         if let Err(e) = tick_thread.await {
-                            eprintln!("[rss] tick_thread panicked: {e:?}");
+                            if let Ok(mut shared) = sdk_game_state_panic.lock() {
+                                shared.internal_error =
+                                    Err(DeformError::BackendPanicked(format!("{e:?}")));
+                            }
                         }
                     });
                 }
@@ -460,12 +467,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let visual_state = tick_info.clone();
                         // self.smoother.apply(&mut visual_state);
 
-                        // this is an std lock, but it shoud be done in microseconds
-                        if let Ok(mut shared) = self.sdk_game_state.lock() {
-                            shared.tick_info = visual_state;
-                            shared.remote_status = self.last_remote_status;
-                            // shared.events.append(&mut self.events_queue);
-                        }
+                        let mut shared = self.sdk_game_state.lock().map_err(|_| DeformError::LockPoisoned)?;
+                        shared.tick_info = visual_state;
+                        shared.remote_status = self.last_remote_status;
+                        // shared.events.append(&mut self.events_queue);
                     }
                     tick_sleep = Box::pin(sleep(self.compute_dilated_tick_interval()));
                 }
@@ -482,10 +487,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         //     }
                         // }
 
-                        if let Err(_e) = self.commit_inputs().await {
-                            // #[cfg(feature = "log")]
-                            // error!("Failed to commit inputs: {}", _e);
-                        }
+                        self.commit_inputs().await?;
                     }
                 }
 
@@ -504,7 +506,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         //     }
                         // }
 
-                        self.update_ticks_ahead();
+                        self.update_ticks_ahead()?;
                     }
                 }
 
@@ -531,55 +533,27 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 // Receive game state updates via unreliable datagrams
                 datagram = self.connection.read_datagram() => {
                     if self.last_remote_status != LobbyStatus::Finished {
-                        match datagram {
-                            Ok(bytes) => {
-                                if let Err(_e) = self.process_server_update(&bytes, &mut tick_sleep).await {
-                                    // #[cfg(feature = "log")]
-                                    // error!("Failed to process server update: {}", _e);
-                                }
-                            }
-                            Err(_e) => {
-                                // #[cfg(feature = "log")]
-                                // error!("Datagram read error: {}", _e);
-                                break;
-                            }
-                        }
+                        let bytes = datagram.map_err(|e| DeformError::Connection(e.to_string()))?;
+                        self.process_server_update(&bytes, &mut tick_sleep).await?;
                     }
                 }
 
                 // Receive control messages on the reliable stream
                 control_msg = stream_read_msg(&mut self.control_recv) => {
-                    match control_msg {
-                        Ok(bytes) => {
-                            match wincode::deserialize::<ControlMessage>(&bytes) {
-                                Ok(ControlMessage::Finish) => {
-                                    // #[cfg(feature = "log")]
-                                    // info!("Server signaled game finish");
-                                    self.last_remote_status = LobbyStatus::Finished;
-                                    // self.events_queue.push(GameEvent::StateTransition {
-                                    //     old: GameStateEnum::Playing,
-                                    //     new: GameStateEnum::Finished,
-                                    // });
-                                    break;
-                                }
-                                Ok(ControlMessage::Error(_e)) => {
-                                    // #[cfg(feature = "log")]
-                                    // error!("Server error: {}", _e);
-                                    break;
-                                }
-                                Ok(_) => {
-                                    // unexpected
-                                }
-                                Err(_e) => {
-                                    // #[cfg(feature = "log")]
-                                    // error!("Failed to parse control message: {}", _e);
-                                }
-                            }
-                        }
-                        Err(_e) => {
-                            // #[cfg(feature = "log")]
-                            // error!("Control stream read error: {}", _e);
+                    let bytes = control_msg?;
+                    match wincode::deserialize::<ControlMessage>(&bytes) {
+                        Ok(ControlMessage::Finish) => {
+                            self.last_remote_status = LobbyStatus::Finished;
                             break;
+                        }
+                        Ok(ControlMessage::Error(e)) => {
+                            return Err(DeformError::Protocol(format!("server error: {e}")));
+                        }
+                        Ok(other) => {
+                            return Err(DeformError::Protocol(format!("unexpected control message: {other:?}")));
+                        }
+                        Err(e) => {
+                            return Err(DeformError::Deserialize(format!("control message: {e:?}")));
                         }
                     }
                 }
@@ -587,13 +561,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         }
 
         if !terminated && self.last_remote_status == LobbyStatus::Finished {
-            // Update shared state one last time
-            // FIX: MAKE THIS RETURN ERROR
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
-                if let Ok(mut shared) = self.sdk_game_state.lock() {
-                    shared.tick_info = tick_info.clone();
-                    shared.remote_status = self.last_remote_status;
-                }
+                let mut shared = self
+                    .sdk_game_state
+                    .lock()
+                    .map_err(|_| DeformError::LockPoisoned)?;
+                shared.tick_info = tick_info.clone();
+                shared.remote_status = self.last_remote_status;
             }
             // Wait for termination signal
             self.terminate.notified().await;
@@ -605,7 +579,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
     }
 
     /// Change our ticks ahead target based on the current RTT
-    pub fn update_ticks_ahead(&mut self) {
+    pub fn update_ticks_ahead(&mut self) -> DeformResult {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("update_ticks_ahead");
 
@@ -636,10 +610,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         //     }
         // }
 
-        // TODO: is this slow??
-        if let Ok(mut shared) = self.sdk_game_state.lock() {
-            shared.stats.ping_ms = rtt_secs * 1_000.0;
-        }
+        let mut shared = self
+            .sdk_game_state
+            .lock()
+            .map_err(|_| DeformError::LockPoisoned)?;
+        shared.stats.ping_ms = rtt_secs * 1_000.0;
+
+        Ok(())
     }
 
     /// Change the time between frames according to how much we are ahead of the simulation.

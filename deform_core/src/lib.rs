@@ -1,7 +1,7 @@
 use pinocchio::pubkey::Pubkey;
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex, atomic::AtomicBool},
+    sync::{Arc, Mutex, MutexGuard, atomic::AtomicBool},
 };
 use wincode::{SchemaRead, SchemaWrite, config::DefaultConfig};
 
@@ -39,7 +39,7 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     /// User-provided callback called when a callback is triggered. This happens when a previously computed state (in this case, prediction of inputs) does not match the state received from the server.
     ///
     /// This could be used, for example, to manually emit events, or log information.
-    /// 
+    ///
     /// - *old_info* represents the current state (on the most recent tick) before the rollback happened
     /// - *new_info* represents the new, conflicting state that was received
     fn on_rollback(
@@ -58,7 +58,7 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     ///
     /// This could be used, for example, to manually emit events, or log information.
     /// If you are certain this is a non issue or can never happen (using websockets, for example), it is safe to ignore it, as a rollback will always be emitted either way.
-    /// 
+    ///
     /// - *old_info* represents the state before the gap. It necessarily contains a state that was previously received from the server.
     /// - *new_info* represents the new state that was received
     fn on_gap(
@@ -71,7 +71,7 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
 
     /// User-provided callback when the state is fast-forwarded.
     /// This happens when the state received from the server is ahead of our own local state. The simulation will not recompute the missing states, and will instead assume the received state as the new source of truth.
-    /// 
+    ///
     /// - *old_info* represents the latest state of the simulation before the server state was received
     /// - *new_info* represents the new state that was received
     fn on_fast_forward(
@@ -111,7 +111,7 @@ pub struct TickInfo<T: DeformUserLogic> {
 }
 
 /// The state that is returned by the SDK to your application
-#[derive(serde::Serialize, Clone, Default)]
+#[derive(serde::Serialize)]
 pub struct DeformReadState<T: DeformUserLogic> {
     pub tick_info: TickInfo<T>,
     /// The last known status the server has sent us
@@ -119,6 +119,19 @@ pub struct DeformReadState<T: DeformUserLogic> {
     pub stats: Stats,
     /// Your own data, so you can read it back when reading the rest of the state
     pub user_logic: T,
+    pub internal_error: DeformResult<()>,
+}
+
+impl<T: DeformUserLogic> Default for DeformReadState<T> {
+    fn default() -> Self {
+        Self {
+            tick_info: Default::default(),
+            remote_status: Default::default(),
+            stats: Default::default(),
+            user_logic: Default::default(),
+            internal_error: Ok(()),
+        }
+    }
 }
 
 #[derive(serde::Serialize, Default, Clone)]
@@ -127,13 +140,14 @@ pub struct Stats {
 }
 
 impl<T: DeformUserLogic> Client<T> {
-    /// Returns the latest state along with other useful information
-    pub fn read_state(&self) -> DeformResult<DeformReadState<T>> {
+    /// Returns the latest state along with other useful information.
+    /// To prevent unecessary cloning (and having to derive Clone), this is just a very thin
+    /// wrapper of locking the mutex. You must drop it as soon as possible to avoid contention.
+    pub fn read_state(&self) -> DeformResult<MutexGuard<'_, DeformReadState<T>>> {
         let state = self
             .sdk_game_state
             .lock()
-            .map_err(|_| DeformError::LockPoisoned)?
-            .clone();
+            .map_err(|_| DeformError::LockPoisoned)?;
 
         Ok(state)
     }
