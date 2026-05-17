@@ -18,5 +18,6 @@ rustls = { workspace = true }
 webpki-roots = { workspace = true}
 wincode = { workspace = true }
 glam = { workspace = true }
+better_tokio_select = { workspace = true }
 
 [features]

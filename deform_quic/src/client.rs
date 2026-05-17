@@ -1,3 +1,4 @@
+use better_tokio_select::tokio_select;
 use glam::FloatExt;
 use pinocchio::pubkey::Pubkey;
 use quinn::crypto::rustls::QuicClientConfig;
@@ -434,9 +435,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         let mut terminated = false;
 
         loop {
-            tokio::select! {
+            tokio_select!(match .. {
                 // Tick every ~16ms (or more, depending on time dilation)
-                _ = &mut tick_sleep => {
+                .. if let _ = &mut tick_sleep => {
                     if self.last_remote_status != LobbyStatus::Finished {
                         let min_target_tick = self.remote_tick + self.min_ticks_ahead;
                         let current_tick = self.local_tick;
@@ -464,7 +465,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Visual: fixed 60fps update independent of simulation rate
-                _ = visual_ticker.tick() => {
+                .. if let _ = visual_ticker.tick() => {
                     // tick_info.smoother.decay();
 
                     // FIX: RETURN ERROR
@@ -472,7 +473,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let visual_state = state.clone();
                         // tick_info.smoother.apply(&mut visual_state);
                         {
-                            let mut shared = self.sdk_game_state.lock().map_err(|_| DeformError::LockPoisoned)?;
+                            let mut shared = self
+                                .sdk_game_state
+                                .lock()
+                                .map_err(|_| DeformError::LockPoisoned)?;
                             shared.tick_info = visual_state;
                             shared.remote_status = self.last_remote_status;
                             // shared.events.append(&mut tick_info.events_queue);
@@ -481,7 +485,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Commit inputs periodically
-                _ = inputs_ticker.tick() => {
+                .. if let _ = inputs_ticker.tick() => {
                     if self.last_remote_status != LobbyStatus::Finished {
                         // #[cfg(feature = "tracy")]
                         // {
@@ -497,7 +501,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Sample RTT from quinn (already an EWMA internally)
-                _ = rtt_ticker.tick() => {
+                .. if let _ = rtt_ticker.tick() => {
                     if self.last_remote_status != LobbyStatus::Finished {
                         self.avg_rtt = self.connection.rtt();
 
@@ -516,7 +520,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Shutdown signal
-                _ = self.terminate.notified() => {
+                .. if let _ = self.terminate.notified() => {
                     // #[cfg(feature = "log")]
                     // warn!("Shutdown signal received; exiting");
                     terminated = true;
@@ -524,17 +528,19 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // New inputs from the game engine
-                new_inputs = self.set_inputs_receiver.recv() => {
+                .. if let new_inputs = self.set_inputs_receiver.recv() => {
                     if new_inputs.is_none() {
                         break;
                     }
-                    if self.last_remote_status != LobbyStatus::Finished && let Some(new_inputs) = new_inputs {
-                            self.inputs.entry(self.local_tick).or_insert(new_inputs);
+                    if self.last_remote_status != LobbyStatus::Finished
+                        && let Some(new_inputs) = new_inputs
+                    {
+                        self.inputs.entry(self.local_tick).or_insert(new_inputs);
                     }
                 }
 
                 // Receive game state updates via unreliable datagrams
-                datagram = self.connection.read_datagram() => {
+                .. if let datagram = self.connection.read_datagram() => {
                     if self.last_remote_status != LobbyStatus::Finished {
                         let bytes = datagram.map_err(|e| DeformError::Connection(e.to_string()))?;
                         self.process_server_update(&bytes, &mut tick_sleep).await?;
@@ -542,7 +548,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Receive control messages on the reliable stream
-                control_msg = stream_read_msg(&mut self.control_recv) => {
+                .. if let control_msg = stream_read_msg(&mut self.control_recv) => {
                     let bytes = control_msg?;
                     match wincode::deserialize::<ControlMessage>(&bytes) {
                         Ok(ControlMessage::Finish) => {
@@ -553,14 +559,18 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             return Err(DeformError::Protocol(format!("server error: {e}")));
                         }
                         Ok(other) => {
-                            return Err(DeformError::Protocol(format!("unexpected control message: {other:?}")));
+                            return Err(DeformError::Protocol(format!(
+                                "unexpected control message: {other:?}"
+                            )));
                         }
                         Err(e) => {
-                            return Err(DeformError::Deserialize(format!("control message: {e:?}")));
+                            return Err(DeformError::Deserialize(format!(
+                                "control message: {e:?}"
+                            )));
                         }
                     }
                 }
-            }
+            });
         }
 
         if !terminated && self.last_remote_status == LobbyStatus::Finished {

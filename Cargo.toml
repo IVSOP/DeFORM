@@ -20,3 +20,4 @@ rustls = { version = "0.23", default-features = false, features = ["ring", "std"
 webpki-roots = { version = "0.26" }
 glam = { version = "0.30.7", default-features = false, features = ["bytemuck", "std", "serde"] } # debug-glam-assert
 thiserror = "2.0.18"
+better_tokio_select = "0.2"
