@@ -377,10 +377,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 // smoother: RollbackSmoother::new(state.players.len()),
                             };
 
-                            if let Err(e) = tick_info.tick_loop().await {
-                                if let Ok(mut shared) = sdk_game_state_clone.lock() {
-                                    shared.internal_error = Err(e);
-                                }
+                            if let Err(e) = tick_info.tick_loop().await
+                                && let Ok(mut shared) = sdk_game_state_clone.lock()
+                            {
+                                shared.internal_error = Err(e);
                             }
                         });
 
@@ -528,10 +528,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     if new_inputs.is_none() {
                         break;
                     }
-                    if self.last_remote_status != LobbyStatus::Finished {
-                        if let Some(new_inputs) = new_inputs {
+                    if self.last_remote_status != LobbyStatus::Finished && let Some(new_inputs) = new_inputs {
                             self.inputs.entry(self.local_tick).or_insert(new_inputs);
-                        }
                     }
                 }
 
