@@ -16,11 +16,11 @@ pub use error::{DeformError, DeformResult};
 
 /// Trait that defines what data types the game uses, as well as the logic functions/callbacks.
 ///
-/// To use this crate, you should start by implementing this type, and then making a [`Client`].
+/// To use this crate, you should start by implementing this type, and then making a [`DeformClient`].
 /// Note that the callbacks have mutable access to `self`, meaning you can provide and mutate your own data,
 /// using the struct that implements this trait.
 ///
-/// Note that while this trait defines [`UserLogic::Inputs`] and [`UserLogic::GameState`], the backend is the one responsible for holding stateful information. You should use the struct that implements this trait to store aditional data that you want to keep out of the [`UserLogic::GameState`].
+/// Note that while this trait defines [`DeformUserLogic::Inputs`] and [`DeformUserLogic::GameState`], the backend is the one responsible for holding stateful information. You should use the struct that implements this trait to store aditional data that you want to keep out of the [`DeformUserLogic::GameState`].
 pub trait DeformUserLogic: Clone + Default + Send + 'static {
     // user must define inputs and game state
     type Inputs: DeformInputs;
@@ -83,9 +83,9 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     }
 }
 
-/// A [`Client`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
+/// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
 /// Currently, the client is completely agnostic to the backend.
-pub struct Client<T: DeformUserLogic> {
+pub struct DeformClient<T: DeformUserLogic> {
     /// Used to tell the backend to terminate
     pub terminate: Arc<Notify>,
     /// Channel used to set inputs
@@ -110,14 +110,18 @@ pub struct TickInfo<T: DeformUserLogic> {
     pub inputs: HashMap<Pubkey, T::Inputs>,
 }
 
-/// The state that is returned by the SDK to your application
+/// The state that is returned by the SDK to your application.
 #[derive(serde::Serialize)]
 pub struct DeformReadState<T: DeformUserLogic> {
     pub tick_info: TickInfo<T>,
     /// The last known status the server has sent us
     pub remote_status: LobbyStatus,
     pub stats: Stats,
-    /// Your own data, so you can read it back when reading the rest of the state
+    /// Your own data, so you can read it back when reading the rest of the state.
+    /// 
+    /// NOTE: I had a lot of trouble deciding how to do this. The backends need mutable access, so I always have to use a mutex of some sort.
+    /// However, running the callbacks inside the lock is bad as I don't know how long the operations being done by the user are taking.
+    /// So, the approach I have chosen is to keep an owned T in the backend. After operations are done and the [`DeformReadState`] needs to be updated, it is cloned into here.
     pub user_logic: T,
     pub internal_error: DeformResult<()>,
 }
@@ -139,7 +143,7 @@ pub struct Stats {
     pub ping_ms: f64,
 }
 
-impl<T: DeformUserLogic> Client<T> {
+impl<T: DeformUserLogic> DeformClient<T> {
     /// Returns the latest state along with other useful information.
     /// To prevent unecessary cloning (and having to derive Clone), this is just a very thin
     /// wrapper of locking the mutex. You must drop it as soon as possible to avoid contention.
@@ -176,7 +180,9 @@ pub trait DeformInputs:
     + MaxLen
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
-    fn predict(&self) -> Self;
+    /// 
+    /// By default, all inputs just get copied.
+    fn predict(&self) -> Self { self.clone() }
 }
 
 pub trait DeformGameState:

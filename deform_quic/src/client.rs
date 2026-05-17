@@ -19,7 +19,7 @@ use tokio::{
 };
 
 use deform_core::{
-    Client, DeformError, DeformGameState, DeformInputs, DeformReadState, DeformResult,
+    DeformClient, DeformError, DeformGameState, DeformInputs, DeformReadState, DeformResult,
     DeformUserLogic, TickInfo,
     lobby::{Lobby, LobbyStatus},
 };
@@ -45,9 +45,8 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     // pub lobby_id: u64,
     pub terminate: Arc<Notify>,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
-    // NOTE: the user-provided struct, which may contain data, is stored here!!!
-    // TODO: putting it behind a mutex is not ideal... should be fine for now
     pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
+    pub user_logic: T,
 
     pub avg_rtt: Duration,
     /// If ticks are below this, simulation is fast forwarded. Also used to compute time dilation.
@@ -123,7 +122,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // user_logic: T,
         // initial_game_state: T::GameState,
         // initial_inputs: T::Inputs,
-    ) -> DeformResult<Client<T>> {
+    ) -> DeformResult<DeformClient<T>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
@@ -371,6 +370,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 max_ticks_ahead: 3 * 4,
 
                                 avg_rtt: Duration::from_millis(50),
+                                user_logic: T::default(),
                                 // dropped_datagrams: 0,
                                 // stale_datagrams: 0,
                                 // smoother: RollbackSmoother::new(state.players.len()),
@@ -404,7 +404,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
             DeformError::Connection("setup thread terminated unexpectedly".into())
         })??;
 
-        Ok(Client {
+        Ok(DeformClient {
             terminate,
             set_inputs_sender,
             sdk_game_state,
@@ -470,6 +470,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         let mut shared = self.sdk_game_state.lock().map_err(|_| DeformError::LockPoisoned)?;
                         shared.tick_info = visual_state;
                         shared.remote_status = self.last_remote_status;
+                        shared.user_logic = self.user_logic.clone();
                         // shared.events.append(&mut self.events_queue);
                     }
                     tick_sleep = Box::pin(sleep(self.compute_dilated_tick_interval()));
@@ -568,6 +569,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     .map_err(|_| DeformError::LockPoisoned)?;
                 shared.tick_info = tick_info.clone();
                 shared.remote_status = self.last_remote_status;
+                shared.user_logic = self.user_logic.clone();
             }
             // Wait for termination signal
             self.terminate.notified().await;
@@ -706,19 +708,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // FIX: need to call the logic function
         // it needs to determine if the game should end, as well as provide us with a new state to put into next_info, which currently has the old info
 
-        // this mutex is bad, but I assume you won't be writing a new frame at the same time you're writing it
-        // TODO: in the future I have two states that switch so I can write to one while the other is being read
-        let new_state = {
-            let mut shared = self
-                .sdk_game_state
-                .lock()
-                .map_err(|_| DeformError::LockPoisoned)?;
-
-            shared
-                .user_logic
-                .advance_frame(&current_info.game_state, &new_players_inputs)
-                .map_err(|e| DeformError::UserLogic(Box::new(e)))?
-        };
+        let new_state = self
+            .user_logic
+            .advance_frame(&current_info.game_state, &new_players_inputs)
+            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
 
         let next_info = TickInfo {
             game_state: new_state,
@@ -880,16 +873,17 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 // while these inputs could be correct, the previous missed frames could be wrong, causing divergence.
                 // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
                 if gap {
-                    // let old_remote_state = self
-                    //     .info_per_tick
-                    //     .get(&old_remote_tick)
-                    //     .ok_or(anyhow!("Remote state not found, wtf"))?;
+                    let old_remote_state = self
+                        .info_per_tick
+                        .get(&old_remote_tick)
+                        .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
 
                     // manually_emit_events(
                     //     old_remote_state,
                     //     &new_lobby_state.game_state,
                     //     &mut self.events_queue,
                     // );
+
                     self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
 
                     // prune

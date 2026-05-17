@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use deform_core::{
-    Client, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::Lobby,
+    DeformClient, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::Lobby,
 };
 use pinocchio::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
@@ -59,7 +59,7 @@ pub fn new_quic_client<T: DeformUserLogic>(
     game_program: Pubkey,
     sig: Signature,
     skip_cert_verify: bool,
-) -> DeformResult<Client<T>> {
+) -> DeformResult<DeformClient<T>> {
     client::QuicBackend::<T>::init(
         rpc_url,
         server_addr,
