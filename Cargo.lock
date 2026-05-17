@@ -846,10 +846,11 @@ name = "deform_core"
 version = "0.1.0"
 dependencies = [
  "glam",
- "pinocchio",
  "quinn",
  "rustls",
  "serde",
+ "solana-address 2.6.0",
+ "solana-program-error",
  "thiserror 2.0.18",
  "tokio",
  "webpki-roots 0.26.11",
@@ -863,10 +864,10 @@ dependencies = [
  "better_tokio_select",
  "deform_core",
  "glam",
- "pinocchio",
  "quinn",
  "rustls",
  "serde",
+ "solana-address 2.6.0",
  "solana-client",
  "solana-sdk",
  "tokio",
@@ -2156,12 +2157,6 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
-
-[[package]]
-name = "pinocchio"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8afe4f39c0e25cc471b35b89963312791a5162d45a86578cbeaad9e5e7d1b3b"
 
 [[package]]
 name = "pkcs8"

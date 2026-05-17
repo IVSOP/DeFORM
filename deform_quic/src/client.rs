@@ -1,6 +1,5 @@
 use better_tokio_select::tokio_select;
 use glam::FloatExt;
-use pinocchio::pubkey::Pubkey;
 use quinn::crypto::rustls::QuicClientConfig;
 use solana_client::{rpc_client::RpcClient, rpc_config::CommitmentConfig};
 use solana_sdk::signature::Signature;
@@ -21,7 +20,7 @@ use tokio::{
 
 use deform_core::{
     DeformClient, DeformError, DeformGameState, DeformInputs, DeformReadState, DeformResult,
-    DeformUserLogic, TickInfo,
+    DeformUserLogic, Pubkey, TickInfo,
     lobby::{Lobby, LobbyStatus},
 };
 
@@ -1046,7 +1045,9 @@ async fn fetch_lobby<I: DeformInputs, G: DeformGameState>(
     rpc_client: &RpcClient,
 ) -> DeformResult<Lobby<I, G>> {
     let account = rpc_client
-        .get_account(&solana_sdk::pubkey::Pubkey::new_from_array(*lobby))
+        .get_account(&solana_sdk::pubkey::Pubkey::new_from_array(
+            lobby.to_bytes(),
+        ))
         .map_err(|e| DeformError::Rpc(e.to_string()))?;
     Lobby::from_bytes(&account.data).map_err(|e| DeformError::Deserialize(format!("lobby: {e:?}")))
 }

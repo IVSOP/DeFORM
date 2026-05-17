@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use pinocchio::pubkey::Pubkey;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, TickInfo};
+use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, Pubkey, TickInfo};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, Copy, Eq, PartialEq, Default, SchemaRead, SchemaWrite)]
@@ -41,7 +40,7 @@ pub struct Lobby<I: DeformInputs, G: DeformGameState> {
 
 impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
     pub fn find_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
-        pinocchio::pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
+        Pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {

@@ -10,12 +10,13 @@ crate-type = ["rlib"]
 deform_core = { path = "../deform_core" }
 tokio = { workspace = true }
 serde = { workspace = true }
-pinocchio = { workspace = true }
+# solana-program-error = { workspace = true }
+solana-address = { workspace = true }
 solana-client = { workspace = true }
 solana-sdk = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
-webpki-roots = { workspace = true}
+webpki-roots = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 better_tokio_select = { workspace = true }

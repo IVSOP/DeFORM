@@ -1,4 +1,3 @@
-use pinocchio::pubkey::Pubkey;
 use std::{
     collections::HashMap,
     sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard},
@@ -13,6 +12,9 @@ pub mod error;
 pub mod lobby;
 
 pub use error::{DeformError, DeformResult};
+
+/// I like calling it a pubkey
+pub type Pubkey = solana_address::Address;
 
 /// Trait that defines what data types the game uses, as well as the logic functions/callbacks.
 ///

@@ -1,4 +1,4 @@
-use pinocchio::program_error::ProgramError;
+use solana_program_error::ProgramError;
 use thiserror::Error;
 
 fn serialize_as_display<T: std::fmt::Display, S: serde::Serializer>(

@@ -1,7 +1,7 @@
 [package]
 name = "deform_core"
 version = "0.1.0"
-edition = "2021" # for solana compat
+edition = "2021"     # for solana compat
 
 [lib]
 crate-type = ["rlib"]
@@ -9,12 +9,13 @@ crate-type = ["rlib"]
 [dependencies]
 tokio = { workspace = true }
 serde = { workspace = true }
-pinocchio = { workspace = true }
+solana-program-error = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
-webpki-roots = { workspace = true}
+webpki-roots = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
+solana-address = { workspace = true }
 
 [features]

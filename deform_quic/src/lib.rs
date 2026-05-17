@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
+use deform_core::Pubkey;
 use deform_core::{
     DeformClient, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::Lobby,
 };
-use pinocchio::pubkey::Pubkey;
 use solana_sdk::signature::Signature;
 use wincode::{SchemaRead, SchemaWrite};
 
