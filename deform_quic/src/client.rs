@@ -888,15 +888,20 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         return Ok(());
                     }
                     ReceivedScenario::FastForward => {
-                        // let last_computed_state = self
-                        //     .info_per_tick
-                        //     .get(&self.local_tick)
-                        //     .ok_or(anyhow!("Local state not found, wtf"))?;
+                        let last_computed_state = self
+                            .info_per_tick
+                            .get(&self.local_tick)
+                            .ok_or(DeformError::InvalidState("Local state not found, wtf"))?;
                         // manually_emit_events(
                         //     last_computed_state,
                         //     &new_lobby_state.game_state,
                         //     &mut self.events_queue,
                         // );
+
+                        self.user_logic
+                            .on_fast_forward(last_computed_state, &new_tick_info)
+                            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+
                         // self.smoother.reset();
                         self.remote_tick = new_remote_tick;
                         self.local_tick = new_remote_tick;
@@ -965,10 +970,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
                     ReceivedScenario::Gap => {
                         // this could be remove() due to all the invariants but whatever, perf should be similar
-                        // let old_remote_state = self
-                        //     .info_per_tick
-                        //     .get(&old_remote_tick)
-                        //     .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
+                        let old_remote_state = self
+                            .info_per_tick
+                            .get(&old_remote_tick)
+                            .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
 
                         // manually_emit_events(
                         //     old_remote_state,
@@ -976,6 +981,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         //     &mut self.events_queue,
                         // );
 
+                        self.user_logic
+                            .on_gap(old_remote_state, &new_tick_info)
+                            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+
+                        // a rollback is always triggered, as it is assumed that the simulation is now out of sync
+                        // so it is resimulated from the new tick up to the current tick
+                        // this also inserts the new state etc
                         self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
                     }
                     ReceivedScenario::Rollback => {
