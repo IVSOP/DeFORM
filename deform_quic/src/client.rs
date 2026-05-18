@@ -803,46 +803,117 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     return Ok(());
                 }
 
-                let mut gap = false;
-                let mut rollback = false;
-
-                // if the old tick is too old or repeated, just leave and do nothing
-                if old_remote_tick >= new_remote_tick {
-                    // TODO: log something
-                    return Ok(());
+                /// Trying to handle all cases was a mess to keep up with all invariants so this makes it cleaner. I assume the compiler will take care of this.
+                /// IMPORTANT: each case is evaluated one after another; this means that the [`ReceivedScenario::Default`] branch will only trigger if all others do not.
+                ///
+                /// NOTE: in the case where there is no gap (`new_remote == old_remote + 1`) but the new remote is exactly equal to the local (`new_remote == local_sim`), then if falls through to the [`ReceivedScenario::Rollback`] and [`ReceivedScenario::Default`] branches.
+                #[derive(Clone, Copy)]
+                enum ReceivedScenario {
+                    /// The received state is too old or a repeat message.
+                    /// `new_remote <= old_remote`
+                    OldOrRepeated,
+                    /// The received state is strictly ahead of our own.
+                    /// `new_remote > local_sim`
+                    FastForward,
+                    /// The received state is ahead of the old remote state by more than one tick.
+                    /// `new_remote > old_remote + 1`
+                    Gap,
+                    /// The predicted inputs do not match the received ones, so we must roll back the simulation.
+                    Rollback,
+                    /// The default, expected scenario, were the remote state advanced by +1
+                    /// and we are still ahead of it, and the inputs match the prediction.
+                    Default,
                 }
 
-                // if the new tick is ahead of our local tick, we have fallen behind the server, and must fast-forward.
-                // the latest state is always under the ID `tick_info.local_tick`, so it will never exist
-                if new_remote_tick > self.local_tick {
-                    // let last_computed_state = self
-                    //     .info_per_tick
-                    //     .get(&self.local_tick)
-                    //     .ok_or(anyhow!("Local state not found, wtf"))?;
-                    // manually_emit_events(
-                    //     last_computed_state,
-                    //     &new_lobby_state.game_state,
-                    //     &mut self.events_queue,
-                    // );
-                    // self.smoother.reset();
-                    self.remote_tick = new_remote_tick;
-                    self.local_tick = new_remote_tick;
-                    self.info_per_tick.clear();
-                    self.info_per_tick.insert(new_remote_tick, new_tick_info);
-                    self.last_remote_status = new_remote_status;
-                    self.inputs.clear();
+                let scenario = if old_remote_tick >= new_remote_tick {
+                    // if the old tick is too old or repeated, just leave and do nothing
+                    ReceivedScenario::OldOrRepeated
+                } else if new_remote_tick > self.local_tick {
+                    // if the new tick is ahead of our local tick, we have fallen behind the server, and must fast-forward.
+                    // the latest state is always under the ID `tick_info.local_tick`, so it will never exist
+                    ReceivedScenario::FastForward
+                } else if new_remote_tick > old_remote_tick + 1 {
+                    // the expected scenario is `new_remote_tick == old_remote_tick + 1`.
+                    // if this does not happen, a gap was detected, and will need to be taken care of.
+                    ReceivedScenario::Gap
+                } else {
+                    // everything was ok, so now we can finally check that the inputs match
+                    // according to the previous checks, the remote tick must exist in a previous predicted state, so error if it doesn't
+                    let predicted_inputs = &self
+                        .info_per_tick
+                        .get(&new_remote_tick)
+                        .ok_or(DeformError::InvalidState(
+                            "remote tick has not been predicted",
+                        ))?
+                        .inputs;
 
-                    // trigger immediate catch-up on the next select iteration
-                    tick_sleep.as_mut().reset(tokio::time::Instant::now());
+                    let remote_inputs = &new_tick_info.inputs;
 
-                    return Ok(());
+                    // compare inputs from all players, and check if they match the ones the server sent
+                    let mut mismatch = false;
+                    for (player, predicted_input) in predicted_inputs.iter() {
+                        let remote_input = remote_inputs.get(player).ok_or(
+                            DeformError::InvalidState("player not found in remote inputs"),
+                        )?;
+
+                        if remote_input != predicted_input {
+                            mismatch = true;
+                            break;
+                        }
+                    }
+
+                    // if !mismatch {
+                    //     // even though absolutely nothing went wrong, PowerupSpawnScheduled is a special case where the server is responsible for spawning powerups.
+                    //     // there is no need to go and check all the other events, just this one.
+                    //     // since handling a rollback also implies manually_emit_events, this is a lazy solution but it will work fine
+
+                    //     if predicted_state.scheduled_powerup.is_none()
+                    //         && new_lobby_state.game_state.scheduled_powerup.is_some()
+                    //     {
+                    //         mismatch = true;
+                    //     }
+                    // }
+
+                    if mismatch {
+                        ReceivedScenario::Rollback
+                    } else {
+                        ReceivedScenario::Default
+                    }
+                };
+
+                // handle early-return scenarios
+                match scenario {
+                    ReceivedScenario::OldOrRepeated => {
+                        // TODO: log something
+                        return Ok(());
+                    }
+                    ReceivedScenario::FastForward => {
+                        // let last_computed_state = self
+                        //     .info_per_tick
+                        //     .get(&self.local_tick)
+                        //     .ok_or(anyhow!("Local state not found, wtf"))?;
+                        // manually_emit_events(
+                        //     last_computed_state,
+                        //     &new_lobby_state.game_state,
+                        //     &mut self.events_queue,
+                        // );
+                        // self.smoother.reset();
+                        self.remote_tick = new_remote_tick;
+                        self.local_tick = new_remote_tick;
+                        self.info_per_tick.clear();
+                        self.info_per_tick.insert(new_remote_tick, new_tick_info);
+                        self.last_remote_status = new_remote_status;
+                        self.inputs.clear();
+
+                        // trigger immediate catch-up on the next select iteration
+                        tick_sleep.as_mut().reset(tokio::time::Instant::now());
+
+                        return Ok(());
+                    }
+                    _ => {}
                 }
 
-                // the expected scenario is `new_remote_tick == old_remote_tick + 1`.
-                // if this does not happen, a gap was detected, and will need to be taken care of.
-                if new_remote_tick > old_remote_tick + 1 {
-                    gap = true;
-                }
+                // --- shared setup for Gap / Rollback / Default ---
 
                 self.last_remote_status = new_remote_status;
                 self.remote_tick = new_remote_tick;
@@ -888,74 +959,35 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 //     );
                 // }
 
-                // if a gap was detected, no need to compare inputs. we have to rollback either way.
-                // while these inputs could be correct, the previous missed frames could be wrong, causing divergence.
-                // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
-                if gap {
-                    // let old_remote_state = self
-                    //     .info_per_tick
-                    //     .get(&old_remote_tick)
-                    //     .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
+                match scenario {
+                    // if a gap was detected, no need to compare inputs. we have to rollback either way.
+                    // while these inputs could be correct, the previous missed frames could be wrong, causing divergence.
+                    // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
+                    ReceivedScenario::Gap => {
+                        // this could be remove() due to all the invariants but whatever, perf should be similar
+                        // let old_remote_state = self
+                        //     .info_per_tick
+                        //     .get(&old_remote_tick)
+                        //     .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
 
-                    // manually_emit_events(
-                    //     old_remote_state,
-                    //     &new_lobby_state.game_state,
-                    //     &mut self.events_queue,
-                    // );
+                        // manually_emit_events(
+                        //     old_remote_state,
+                        //     &new_lobby_state.game_state,
+                        //     &mut self.events_queue,
+                        // );
 
-                    self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
-
-                    // prune
-                    for slot in old_remote_tick..new_remote_tick {
-                        self.info_per_tick.remove(&slot);
+                        self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
                     }
-
-                    return Ok(());
-                }
-
-                // everything was ok, so now we can finally check that the inputs match
-                // according to the previous checks, the remote tick must exist in a previous predicted state, so error if it doesn't
-                let predicted_inputs = &self
-                    .info_per_tick
-                    .get(&new_remote_tick)
-                    .ok_or(DeformError::InvalidState(
-                        "remote tick has not been predicted",
-                    ))?
-                    .inputs;
-
-                let remote_inputs = &new_tick_info.inputs;
-
-                // compare inputs from all players, and check if they match the ones the server sent
-                for (player, predicted_input) in predicted_inputs.iter() {
-                    let remote_input = remote_inputs.get(player).ok_or(
-                        DeformError::InvalidState("player not found in remote inputs"),
-                    )?;
-
-                    if remote_input != predicted_input {
-                        rollback = true;
-                        break;
+                    ReceivedScenario::Rollback => {
+                        // manually_emit_events(
+                        //     predicted_state,
+                        //     &new_lobby_state.game_state,
+                        //     &mut self.events_queue,
+                        // );
+                        self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
                     }
-                }
-
-                // if !rollback {
-                //     // even though absolutely nothing went wrong, PowerupSpawnScheduled is a special case where the server is responsible for spawning powerups.
-                //     // there is no need to go and check all the other events, just this one.
-                //     // since handling a rollback also implies manually_emit_events, this is a lazy solution but it will work fine
-
-                //     if predicted_state.scheduled_powerup.is_none()
-                //         && new_lobby_state.game_state.scheduled_powerup.is_some()
-                //     {
-                //         rollback = true;
-                //     }
-                // }
-
-                if rollback {
-                    // manually_emit_events(
-                    //     predicted_state,
-                    //     &new_lobby_state.game_state,
-                    //     &mut self.events_queue,
-                    // );
-                    self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
+                    ReceivedScenario::Default => {}
+                    _ => unreachable!(),
                 }
 
                 // prune

@@ -62,7 +62,7 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     /// This could be used, for example, to manually emit events, or log information.
     /// If you are certain this is a non issue or can never happen (using websockets, for example), it is safe to ignore it, as a rollback will always be emitted either way.
     ///
-    /// - *old_info* represents the state before the gap. It necessarily contains a state that was previously received from the server.
+    /// - *old_info* is the previous state that has been confirmed by the server
     /// - *new_info* represents the new state that was received
     fn on_gap(
         &mut self,
