@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "deform_core",
+    "deform_derive",
     "deform_quic",
 ]
 exclude = [

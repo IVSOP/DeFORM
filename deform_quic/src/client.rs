@@ -20,7 +20,7 @@ use tokio::{
 
 use deform_core::{
     DeformClient, DeformError, DeformGameState, DeformInputs, DeformReadState, DeformResult,
-    DeformUserLogic, Pubkey, TickInfo,
+    DeformUserLogic, Pubkey, Smooth, TickInfo,
     lobby::{Lobby, LobbyStatus},
 };
 
@@ -47,6 +47,8 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
     pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
     pub user_logic: T,
+
+    pub smoother: T::Smoother,
 
     pub avg_rtt: Duration,
     /// If ticks are below this, simulation is fast forwarded. Also used to compute time dilation.
@@ -370,6 +372,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 min_ticks_ahead: 4,
                                 max_ticks_ahead: 3 * 4,
 
+                                smoother: T::Smoother::default(),
+
                                 avg_rtt: Duration::from_millis(50),
                                 user_logic: T::default(),
                                 // dropped_datagrams: 0,
@@ -465,12 +469,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
                 // Visual: fixed 60fps update independent of simulation rate
                 .. if let _ = visual_ticker.tick() => {
-                    // tick_info.smoother.decay();
-
                     // FIX: RETURN ERROR
                     if let Some(state) = self.info_per_tick.get(&self.local_tick) {
-                        let visual_state = state.clone();
-                        // tick_info.smoother.apply(&mut visual_state);
+                        let mut visual_state = state.clone();
+                        self.smoother.apply(&mut visual_state.game_state);
                         {
                             let mut shared = self
                                 .sdk_game_state
@@ -573,16 +575,14 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         }
 
         if !terminated && self.last_remote_status == LobbyStatus::Finished {
-            // // Update shared state one last time (through smoother for consistency)
-            // tick_info.smoother.decay();
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
-                let visual_state = tick_info.clone();
+                let mut visual_state = tick_info.clone();
+                self.smoother.apply(&mut visual_state.game_state);
                 {
                     let mut shared = self
                         .sdk_game_state
                         .lock()
                         .map_err(|_| DeformError::LockPoisoned)?;
-                    // tick_info.smoother.apply(&mut visual_state);
                     shared.tick_info = visual_state;
                     shared.remote_status = self.last_remote_status;
                     shared.user_logic = self.user_logic.clone();
@@ -902,7 +902,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             .on_fast_forward(last_computed_state, &new_tick_info)
                             .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
 
-                        // self.smoother.reset();
+                        self.smoother.reset();
                         self.remote_tick = new_remote_tick;
                         self.local_tick = new_remote_tick;
                         self.info_per_tick.clear();
@@ -1062,17 +1062,14 @@ impl<T: DeformUserLogic> QuicBackend<T> {
             .get(&self.local_tick)
             .ok_or(DeformError::InvalidState("State not found!"))?;
 
+        self.smoother.on_rollback(
+            &pre_rollback_info.game_state,
+            &post_rollback_info.game_state,
+        );
+
         self.user_logic
             .on_rollback(pre_rollback_info, post_rollback_info)
             .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
-
-        // // compute the new offset from previous frame to current frame
-        // // uses the state @ current tick before and after rollback (tick is the same!)
-        // if let Some(pre) = pre_rollback_state.as_ref() {
-        //     if let Some(post) = self.states.get(&self.local_tick) {
-        //         self.smoother.on_rollback(pre, post);
-        //     }
-        // }
 
         tick_sleep
             .as_mut()

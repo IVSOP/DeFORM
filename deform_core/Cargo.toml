@@ -7,6 +7,7 @@ edition = "2021"     # for solana compat
 crate-type = ["rlib"]
 
 [dependencies]
+deform_derive = { path = "../deform_derive" }
 tokio = { workspace = true }
 serde = { workspace = true }
 solana-program-error = { workspace = true }

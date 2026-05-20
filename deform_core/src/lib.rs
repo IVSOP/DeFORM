@@ -8,10 +8,14 @@ use tokio::sync::{mpsc, Notify};
 
 use crate::lobby::LobbyStatus;
 
+pub use deform_derive::Smooth;
+
 pub mod error;
 pub mod lobby;
+pub mod smooth;
 
 pub use error::{DeformError, DeformResult};
+pub use smooth::Smooth;
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
@@ -27,6 +31,7 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     // user must define inputs and game state
     type Inputs: DeformInputs;
     type GameState: DeformGameState;
+    type Smoother: Smooth<Self::GameState>;
     type Error: std::error::Error + Send + Sync + 'static;
 
     // user must provide certain callbacks

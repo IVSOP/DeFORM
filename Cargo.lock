@@ -845,6 +845,7 @@ checksum = "a4ae5f15dda3c708c0ade84bfee31ccab44a3da4f88015ed22f63732abe300c8"
 name = "deform_core"
 version = "0.1.0"
 dependencies = [
+ "deform_derive",
  "glam",
  "quinn",
  "rustls",
@@ -855,6 +856,15 @@ dependencies = [
  "tokio",
  "webpki-roots 0.26.11",
  "wincode",
+]
+
+[[package]]
+name = "deform_derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
