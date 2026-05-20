@@ -8,3 +8,4 @@ deform_core = { path = "../../deform_core" }
 glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }
+bevy = { workspace = true }
