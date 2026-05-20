@@ -2197,6 +2197,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "pong"
+version = "0.1.0"
+dependencies = [
+ "deform_core",
+ "glam",
+ "serde",
+ "wincode",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

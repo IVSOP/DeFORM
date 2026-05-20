@@ -15,7 +15,7 @@ pub mod lobby;
 pub mod smooth;
 
 pub use error::{DeformError, DeformResult};
-pub use smooth::Smooth;
+pub use smooth::{NoopSmoother, Smooth, SmoothableField};
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
