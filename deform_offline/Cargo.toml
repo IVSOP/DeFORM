@@ -8,7 +8,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 deform_core = { path = "../deform_core" }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread"] }
 serde = { workspace = true }
 solana-address = { workspace = true }
 wincode = { workspace = true }

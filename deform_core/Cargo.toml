@@ -8,7 +8,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 deform_derive = { path = "../deform_derive" }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
 serde = { workspace = true }
 solana-program-error = { workspace = true }
 quinn = { workspace = true }
