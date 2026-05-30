@@ -1,3 +1,11 @@
+/// Parameters controlling smoothing behavior.
+#[derive(Clone, Copy, Debug)]
+pub struct SmoothParams {
+    pub decay: f32,
+    pub max_offset_sq: f32,
+    pub min_offset_sq: f32,
+}
+
 /// Trait defining how the [`DeformUserLogic::GameState`] should be smoothed.
 /// Use `#[derive(Smooth)]` on your game state to generate an implementation, or [`NoopSmoother`] to disable smoothing.
 pub trait Smooth<G>: Default + Send {
@@ -11,10 +19,19 @@ pub trait Smooth<G>: Default + Send {
 
     /// Decays offsets toward zero then applies them to the game state for rendering.
     fn apply(&mut self, game_state: &mut G);
+
+    /// Override the smoothing parameters. Used by `#[smooth(map)]` to inherit the parent's config.
+    fn set_params(&mut self, _params: SmoothParams) {}
+}
+
+/// Trait linking a type to its derived smoother.
+/// Automatically implemented by `#[derive(Smooth)]`.
+pub trait Smoothable: Sized {
+    type Smoother: Smooth<Self> + Clone;
 }
 
 /// A no-op smoother implementation
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct NoopSmoother;
 
 impl<G> Smooth<G> for NoopSmoother {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use bevy::math::Vec2;
 use deform_core::{
@@ -23,6 +23,19 @@ pub const BALL_HALF: f32 = BALL_SIZE / 2.0;
 pub const BALL_SPEED: f32 = 10.0;
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
+pub struct PlayerState {
+    #[smooth]
+    pub paddle_y: f32,
+    pub score: u32,
+}
+
+impl MaxLen for PlayerState {
+    fn max_len() -> DeformResult<usize> {
+        Ok(size_of::<Self>())
+    }
+}
+
+#[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
 #[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
 pub struct PongGameState {
     #[smooth]
@@ -30,12 +43,8 @@ pub struct PongGameState {
     pub ball_pos: Vec2,
     #[wincode(with = "PodVec2")]
     pub ball_vel: Vec2,
-    #[smooth]
-    pub paddle_left_y: f32,
-    #[smooth]
-    pub paddle_right_y: f32,
-    pub score_left: u32,
-    pub score_right: u32,
+    #[smooth(map)]
+    pub players: HashMap<Pubkey, PlayerState>,
 }
 
 impl PongGameState {
@@ -46,17 +55,39 @@ impl PongGameState {
     }
 }
 
-impl DeformGameState for PongGameState {}
+impl DeformGameState for PongGameState {
+    fn new(players: &HashSet<Pubkey>) -> Self {
+        let mut state = Self::new_empty();
+        for player in players {
+            state.add_player(player.clone());
+        }
+        state
+    }
+
+    fn new_empty() -> Self {
+        Self {
+            ball_pos: Vec2::new(FIELD_W / 2.0, FIELD_H / 2.0),
+            ball_vel: Vec2::ZERO,
+            players: HashMap::new(),
+        }
+    }
+
+    fn add_player(&mut self, player: Pubkey) {
+        self.players.entry(player).or_insert(PlayerState {
+            paddle_y: FIELD_H / 2.0,
+            score: 0,
+        });
+    }
+}
 
 impl MaxLen for PongGameState {
     fn max_len() -> DeformResult<usize> {
-        Ok(size_of::<Self>())
+        Ok(size_of::<Vec2>() * 2 + 4 + 2 * (size_of::<Pubkey>() + size_of::<PlayerState>()))
     }
 }
 
 #[derive(Default, Clone, Eq, PartialEq, serde::Serialize, SchemaRead, SchemaWrite)]
 pub struct PongInputs {
-    /// -100 to +100
     pub direction: i8,
 }
 
@@ -84,31 +115,27 @@ impl DeformUserLogic for PongGame {
     ) -> Result<Self::GameState, Self::Error> {
         let mut new = state.clone();
 
-        // First frame: initialize positions
         if new.ball_vel == Vec2::ZERO {
-            new.paddle_left_y = FIELD_H / 2.0;
-            new.paddle_right_y = FIELD_H / 2.0;
             new.reset_ball(1.0);
             return Ok(new);
         }
 
         // Sort players by pubkey for deterministic left/right assignment
-        let mut players: Vec<_> = inputs.keys().collect();
-        players.sort();
+        let mut sorted: Vec<_> = inputs.keys().collect();
+        sorted.sort();
 
-        if let Some(input) = players.first().and_then(|k| inputs.get(k)) {
-            new.paddle_left_y += (input.direction as f32 / 100.0) * PADDLE_SPEED;
-        }
-        if let Some(input) = players.get(1).and_then(|k| inputs.get(k)) {
-            new.paddle_right_y += (input.direction as f32 / 100.0) * PADDLE_SPEED;
-        }
+        let left_pk = sorted.first().copied();
+        let right_pk = sorted.get(1).copied();
 
-        new.paddle_left_y = new
-            .paddle_left_y
-            .clamp(PADDLE_HALF_H, FIELD_H - PADDLE_HALF_H);
-        new.paddle_right_y = new
-            .paddle_right_y
-            .clamp(PADDLE_HALF_H, FIELD_H - PADDLE_HALF_H);
+        // Apply inputs
+        for pk in [left_pk, right_pk].into_iter().flatten() {
+            if let Some(input) = inputs.get(pk) {
+                if let Some(ps) = new.players.get_mut(pk) {
+                    ps.paddle_y += (input.direction as f32 / 100.0) * PADDLE_SPEED;
+                    ps.paddle_y = ps.paddle_y.clamp(PADDLE_HALF_H, FIELD_H - PADDLE_HALF_H);
+                }
+            }
+        }
 
         // Move ball
         new.ball_pos += new.ball_vel;
@@ -122,16 +149,25 @@ impl DeformUserLogic for PongGame {
             new.ball_vel.y = -new.ball_vel.y.abs();
         }
 
+        let left_paddle_y = left_pk
+            .and_then(|pk| new.players.get(pk))
+            .map(|ps| ps.paddle_y)
+            .unwrap_or(FIELD_H / 2.0);
+        let right_paddle_y = right_pk
+            .and_then(|pk| new.players.get(pk))
+            .map(|ps| ps.paddle_y)
+            .unwrap_or(FIELD_H / 2.0);
+
         // Left paddle collision
         let left_x = PADDLE_MARGIN;
         if new.ball_vel.x < 0.0
             && new.ball_pos.x - BALL_HALF <= left_x + PADDLE_HALF_W
             && new.ball_pos.x + BALL_HALF >= left_x - PADDLE_HALF_W
-            && new.ball_pos.y + BALL_HALF >= new.paddle_left_y - PADDLE_HALF_H
-            && new.ball_pos.y - BALL_HALF <= new.paddle_left_y + PADDLE_HALF_H
+            && new.ball_pos.y + BALL_HALF >= left_paddle_y - PADDLE_HALF_H
+            && new.ball_pos.y - BALL_HALF <= left_paddle_y + PADDLE_HALF_H
         {
             new.ball_pos.x = left_x + PADDLE_HALF_W + BALL_HALF;
-            let hit_offset = (new.ball_pos.y - new.paddle_left_y) / PADDLE_HALF_H;
+            let hit_offset = (new.ball_pos.y - left_paddle_y) / PADDLE_HALF_H;
             new.ball_vel = Vec2::new(1.0, hit_offset).normalize() * BALL_SPEED;
         }
 
@@ -140,20 +176,28 @@ impl DeformUserLogic for PongGame {
         if new.ball_vel.x > 0.0
             && new.ball_pos.x + BALL_HALF >= right_x - PADDLE_HALF_W
             && new.ball_pos.x - BALL_HALF <= right_x + PADDLE_HALF_W
-            && new.ball_pos.y + BALL_HALF >= new.paddle_right_y - PADDLE_HALF_H
-            && new.ball_pos.y - BALL_HALF <= new.paddle_right_y + PADDLE_HALF_H
+            && new.ball_pos.y + BALL_HALF >= right_paddle_y - PADDLE_HALF_H
+            && new.ball_pos.y - BALL_HALF <= right_paddle_y + PADDLE_HALF_H
         {
             new.ball_pos.x = right_x - PADDLE_HALF_W - BALL_HALF;
-            let hit_offset = (new.ball_pos.y - new.paddle_right_y) / PADDLE_HALF_H;
+            let hit_offset = (new.ball_pos.y - right_paddle_y) / PADDLE_HALF_H;
             new.ball_vel = Vec2::new(-1.0, hit_offset).normalize() * BALL_SPEED;
         }
 
         // Goals
         if new.ball_pos.x - BALL_HALF <= 0.0 {
-            new.score_right += 1;
+            if let Some(pk) = right_pk {
+                if let Some(ps) = new.players.get_mut(pk) {
+                    ps.score += 1;
+                }
+            }
             new.reset_ball(-1.0);
         } else if new.ball_pos.x + BALL_HALF >= FIELD_W {
-            new.score_left += 1;
+            if let Some(pk) = left_pk {
+                if let Some(ps) = new.players.get_mut(pk) {
+                    ps.score += 1;
+                }
+            }
             new.reset_ball(1.0);
         }
 

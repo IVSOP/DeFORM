@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard},
 };
 use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
@@ -15,7 +15,7 @@ pub mod lobby;
 pub mod smooth;
 
 pub use error::{DeformError, DeformResult};
-pub use smooth::{NoopSmoother, Smooth, SmoothableField};
+pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
@@ -105,7 +105,7 @@ pub struct DeformClient<T: DeformUserLogic> {
     pub backend_dead: Arc<AtomicBool>,
 }
 
-#[derive(serde::Serialize, Clone, Default)]
+#[derive(serde::Serialize, Clone)]
 pub struct TickInfo<T: DeformUserLogic> {
     /// The current game state at this tick
     pub game_state: T::GameState,
@@ -134,15 +134,42 @@ pub struct DeformReadState<T: DeformUserLogic> {
     pub internal_error: DeformResult<()>,
 }
 
-impl<T: DeformUserLogic> Default for DeformReadState<T> {
-    fn default() -> Self {
+impl<T: DeformUserLogic> DeformReadState<T> {
+    /// Create a new state when players are known
+    pub fn new(players: &HashSet<Pubkey>) -> Self {
+        let game_state = T::GameState::new(players);
+        let mut inputs = HashMap::new();
+        for player in players.iter() {
+            inputs.insert(player.clone(), T::Inputs::default());
+        }
+        let tick_info = TickInfo { game_state, inputs };
+
         Self {
-            tick_info: Default::default(),
+            tick_info,
             remote_status: Default::default(),
             stats: Default::default(),
             user_logic: Default::default(),
             internal_error: Ok(()),
         }
+    }
+
+    /// Used to create a new state when no players are available
+    pub fn new_empty() -> Self {
+        Self {
+            tick_info: TickInfo {
+                game_state: T::GameState::new_empty(),
+                inputs: HashMap::new(),
+            },
+            remote_status: Default::default(),
+            stats: Default::default(),
+            user_logic: Default::default(),
+            internal_error: Ok(()),
+        }
+    }
+
+    pub fn add_player(&mut self, player: Pubkey) {
+        self.tick_info.game_state.add_player(player.clone());
+        self.tick_info.inputs.insert(player, T::Inputs::default());
     }
 }
 
@@ -189,21 +216,26 @@ pub trait DeformInputs:
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
     ///
-    /// By default, all inputs just get copied.
+    /// By default, all inputs just get cloned.
     fn predict(&self) -> Self {
         self.clone()
     }
 }
 
 pub trait DeformGameState:
-    Default
-    + Clone
+    Clone
     + Send
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
     + MaxLen
 {
+    fn new(players: &HashSet<Pubkey>) -> Self;
+
+    /// Used to create a new state when no players are available
+    fn new_empty() -> Self;
+
+    fn add_player(&mut self, player: Pubkey);
 }
 
 pub trait MaxLen {

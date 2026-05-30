@@ -59,8 +59,6 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     // pub dropped_datagrams: u64,
     // /// Cumulative count of stale/out-of-order datagrams (tick <= remote_tick).
     // pub stale_datagrams: u64,
-    // TODO:
-    // pub smoother: RollbackSmoother,
 }
 
 pub const COMMIT_INPUTS_MICROS: u64 = 16667;
@@ -130,7 +128,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::default()));
+        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new_empty()));
         let backend_dead = Arc::new(AtomicBool::new(false));
 
         // cursed
@@ -175,6 +173,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 }
                             }
                         };
+
+                        // insert all players into the game state
+                        if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
+                            for player in lobby_info.player_infos.keys() {
+                                shared.add_player(player.clone());
+                            }
+                        }
 
                         // --- Build QUIC client endpoint ---
                         let tls_config = if skip_cert_verify {
@@ -341,14 +346,14 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
                         // --- Runtime phase ---
                         let tick_thread = tokio::spawn(async move {
-                            let mut states = HashMap::new();
-                            let state = lobby_info.game_state;
+                            // let mut states = HashMap::new();
+                            // let state = lobby_info.game_state;
 
                             // state.reset_ball();
                             // state.position_p0();
                             // state.position_p1();
 
-                            states.insert(lobby_info.tick, state.clone());
+                            // states.insert(lobby_info.tick, state.clone());
 
                             let tick_info = QuicBackend {
                                 info_per_tick: HashMap::new(),
@@ -419,7 +424,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
     }
 
     pub async fn tick_loop(mut self) -> DeformResult {
-        // FIX: initial state is already in the game state message, read it from there
+        // read the first tick from the sdk_game_state
+        // TODO: do this above, at setup??
         let current_tick_info: TickInfo<T> = {
             let shared = self
                 .sdk_game_state
@@ -701,11 +707,10 @@ impl<T: DeformUserLogic> QuicBackend<T> {
             .get(&current_tick)
             .ok_or(DeformError::InvalidState("slot not found"))?;
 
-        let mut new_players_inputs: HashMap<Pubkey, T::Inputs> =
-            HashMap::with_capacity(current_info.inputs.len());
+        // clone the old array so that we have the correct pubkeys
+        // the inputs will be overwritten
+        let mut new_players_inputs: HashMap<Pubkey, T::Inputs> = current_info.inputs.clone();
 
-        // ainda por cima acho que ele nunca era pruned sequer...
-        // NOTE: we are already iterating the new array, which is cloned from the previous, so we can just edit in-place
         for (player, inputs) in new_players_inputs.iter_mut() {
             *inputs = if *player == self.player {
                 // for our own player: try to get from the map. else, copy previous value, pruning it
