@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 deform_core = { path = "../../deform_core" }
+deform_offline = { path = "../../deform_offline" }
 glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }

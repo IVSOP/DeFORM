@@ -208,7 +208,7 @@ impl DeformUserLogic for PongGame {
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins,))
-        .add_systems(Startup, setup);
+        .add_systems(Startup, setup_entities);
     app.add_systems(
         Update,
         rotate.run_if(input_toggle_active(false, KeyCode::KeyR)),
@@ -223,7 +223,7 @@ pub struct LeftPlayer;
 #[derive(Component)]
 pub struct RightPlayer;
 
-fn setup(
+fn setup_entities(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -255,6 +255,10 @@ fn setup(
         MeshMaterial2d(material),
         Transform::from_translation(Vec3::new(400.0, 0.0, 0.0)),
     ));
+}
+
+fn init_offline() {
+    
 }
 
 fn rotate(mut query: Query<&mut Transform, With<Mesh2d>>, time: Res<Time>) {

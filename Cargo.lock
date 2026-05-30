@@ -5445,6 +5445,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "deform_core",
+ "deform_offline",
  "glam",
  "serde",
  "wincode",

@@ -41,7 +41,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
     pub fn init(player: Pubkey) -> DeformResult<DeformClient<T>> {
         let mut players = HashSet::new();
         players.insert(Pubkey::new_from_array([0; 32]));
-        players.insert(player);
+        players.insert(player.clone());
 
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
