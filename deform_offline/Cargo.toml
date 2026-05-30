@@ -1,0 +1,18 @@
+[package]
+name = "deform_offline"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+deform_core = { path = "../deform_core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+solana-address = { workspace = true }
+wincode = { workspace = true }
+glam = { workspace = true }
+better_tokio_select = { workspace = true }
+
+[features]

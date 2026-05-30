@@ -4,6 +4,7 @@ members = [
     "deform_core",
     "deform_derive",
     "deform_quic",
+    "deform_offline",
     "examples/*",
 ]
 exclude = [
