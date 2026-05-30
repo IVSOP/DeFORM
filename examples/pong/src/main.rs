@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::math::Vec2;
+use bevy::{input::common_conditions::input_toggle_active, prelude::*};
 use deform_core::{
     DeformGameState, DeformInputs, DeformResult, DeformUserLogic, MaxLen, Pubkey, Smooth,
 };
@@ -205,4 +205,60 @@ impl DeformUserLogic for PongGame {
     }
 }
 
-fn main() {}
+fn main() {
+    let mut app = App::new();
+    app.add_plugins((DefaultPlugins,))
+        .add_systems(Startup, setup);
+    app.add_systems(
+        Update,
+        rotate.run_if(input_toggle_active(false, KeyCode::KeyR)),
+    );
+    app.run();
+}
+
+#[derive(Component)]
+pub struct Ball;
+#[derive(Component)]
+pub struct LeftPlayer;
+#[derive(Component)]
+pub struct RightPlayer;
+
+fn setup(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<ColorMaterial>>,
+) {
+    commands.spawn(Camera2d);
+
+    let ball_shape = meshes.add(Circle::new(BALL_HALF));
+    let player_shape = meshes.add(Rectangle::new(PADDLE_W, PADDLE_H));
+
+    let material = materials.add(Color::LinearRgba(LinearRgba::GREEN));
+
+    commands.spawn((
+        Ball,
+        Mesh2d(ball_shape),
+        MeshMaterial2d(material.clone()),
+        Transform::default(),
+    ));
+
+    commands.spawn((
+        LeftPlayer,
+        Mesh2d(player_shape.clone()),
+        MeshMaterial2d(material.clone()),
+        Transform::from_translation(Vec3::new(-400.0, 0.0, 0.0)),
+    ));
+
+    commands.spawn((
+        RightPlayer,
+        Mesh2d(player_shape),
+        MeshMaterial2d(material),
+        Transform::from_translation(Vec3::new(400.0, 0.0, 0.0)),
+    ));
+}
+
+fn rotate(mut query: Query<&mut Transform, With<Mesh2d>>, time: Res<Time>) {
+    for mut transform in &mut query {
+        transform.rotate_z(time.delta_secs() / 2.0);
+    }
+}
