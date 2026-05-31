@@ -233,6 +233,22 @@ pub struct Player(Pubkey);
 #[repr(transparent)]
 pub struct PlayerEntities(HashMap<Pubkey, Entity>);
 
+fn pong_bot(state: &PongGameState, bot: &Pubkey) -> PongInputs {
+    if state.ball_vel.x <= 0.0 {
+        return PongInputs::default();
+    }
+    let paddle_y = state.players.get(bot).map(|p| p.paddle_y).unwrap_or(0.0);
+    let diff = state.ball_pos.y - paddle_y;
+    let direction = if diff.abs() < PADDLE_SPEED {
+        0
+    } else if diff > 0.0 {
+        100
+    } else {
+        -100
+    };
+    PongInputs { direction }
+}
+
 /// A wrapper struct is made for the multiplayer client. This makes it so that I don't have to have a bevy feature and/or dependency, and that would mean every time bevy updates, it would most likely be broken.
 #[derive(Resource)]
 #[repr(transparent)]
@@ -280,7 +296,8 @@ fn setup_offline(
         .id();
 
     let players = HashSet::from([main_player_pubkey.clone(), bot_player_pubkey.clone()]);
-    let client = new_offline_client::<PongGame>(main_player_pubkey.clone(), players)?;
+    let client =
+        new_offline_client::<PongGame>(main_player_pubkey.clone(), players, pong_bot)?;
     commands.insert_resource(MultiplayerClient(client));
 
     let mut player_entities = HashMap::new();

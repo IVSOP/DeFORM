@@ -35,10 +35,17 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
     pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
     pub user_logic: T,
+    pub bot_fn: Arc<dyn Fn(&T::GameState, &Pubkey) -> T::Inputs + Send + Sync>,
 }
 
 impl<T: DeformUserLogic> OfflineBackend<T> {
-    pub fn init(player: Pubkey, players: HashSet<Pubkey>) -> DeformResult<DeformClient<T>> {
+    pub fn init(
+        player: Pubkey,
+        players: HashSet<Pubkey>,
+        bot_fn: impl Fn(&T::GameState, &Pubkey) -> T::Inputs + Send + Sync + 'static,
+    ) -> DeformResult<DeformClient<T>> {
+        let bot_fn: Arc<dyn Fn(&T::GameState, &Pubkey) -> T::Inputs + Send + Sync> =
+            Arc::new(bot_fn);
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());
@@ -98,6 +105,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                                 set_inputs_receiver,
                                 sdk_game_state: sdk_game_state_clone.clone(),
                                 user_logic: T::default(),
+                                bot_fn,
                             };
 
                             if let Err(e) = tick_info.tick_loop().await
@@ -202,8 +210,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                 // for our own player: get the last inputs from the map
                 self.player_input.clone()
             } else {
-                // FIX: have a bot function to produce new inputs
-                inputs.predict()
+                (self.bot_fn)(current_state, player)
             }
         }
 
