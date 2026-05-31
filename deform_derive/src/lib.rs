@@ -49,6 +49,28 @@ use syn::{
 /// }
 /// ```
 ///
+/// ## `#[smooth(nested)]` — delegate to a child smoother
+///
+/// Delegates smoothing to the field's own derived smoother. The field type must
+/// also derive `Smooth` (i.e. implement [`Smoothable`]). Parameter inheritance
+/// flows through via [`Smooth::set_params`].
+///
+/// ```ignore
+/// #[derive(Smooth)]
+/// struct PlayerState {
+///     #[smooth]
+///     position: Vec2,
+///     score: u32,
+/// }
+///
+/// #[derive(Smooth)]
+/// #[smooth(decay = 0.9)]
+/// struct GameState {
+///     #[smooth(nested)]
+///     player: PlayerState,
+/// }
+/// ```
+///
 /// ## `#[smooth(map)]` — per-entry smoothing for `HashMap` fields
 ///
 /// Smooths each entry of a `HashMap<K, V>` independently. `V` must also derive
@@ -75,8 +97,9 @@ use syn::{
 ///
 /// # Parameter inheritance
 ///
-/// When a struct is used as a map value via `#[smooth(map)]`, the parent's
-/// smoothing parameters are passed down through [`Smooth::set_params`].
+/// When a struct is used as a `#[smooth(nested)]` field or a `#[smooth(map)]`
+/// value, the parent's smoothing parameters are passed down through
+/// [`Smooth::set_params`].
 ///
 /// - If the child has **no** `#[smooth(...)]`, it inherits the parent's parameters.
 /// - If the child has **its own** `#[smooth(...)]`, it keeps them — `set_params` is a no-op.
@@ -156,25 +179,28 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
     };
 
     let mut direct_fields = Vec::new();
+    let mut nested_fields = Vec::new();
     let mut map_fields = Vec::new();
 
     for field in fields.iter() {
         if let Some(attr) = field.attrs.iter().find(|a| a.path().is_ident("smooth")) {
-            let is_map = if let syn::Meta::List(_) = &attr.meta {
-                let mut found = false;
+            let mut is_map = false;
+            let mut is_nested = false;
+            if let syn::Meta::List(_) = &attr.meta {
                 let _ = attr.parse_nested_meta(|meta| {
                     if meta.path.is_ident("map") {
-                        found = true;
+                        is_map = true;
+                    } else if meta.path.is_ident("nested") {
+                        is_nested = true;
                     }
                     Ok(())
                 });
-                found
-            } else {
-                false
-            };
+            }
 
             if is_map {
                 map_fields.push(field);
+            } else if is_nested {
+                nested_fields.push(field);
             } else {
                 direct_fields.push(field);
             }
@@ -187,6 +213,14 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         let name = &f.ident;
         let ty = &f.ty;
         quote! { pub #name: #ty }
+    });
+
+    let nested_field_defs = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        let ty = &f.ty;
+        quote! {
+            pub #name: <#ty as ::deform_core::Smoothable>::Smoother
+        }
     });
 
     let map_field_defs = map_fields.iter().map(|f| {
@@ -204,6 +238,11 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         quote! { #name: Default::default() }
     });
 
+    let nested_field_defaults = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! { #name: Default::default() }
+    });
+
     let map_field_defaults = map_fields.iter().map(|f| {
         let name = &f.ident;
         quote! { #name: Default::default() }
@@ -214,6 +253,11 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
     let direct_reset = direct_fields.iter().map(|f| {
         let name = &f.ident;
         quote! { self.#name = Default::default(); }
+    });
+
+    let nested_reset = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! { ::deform_core::Smooth::reset(&mut self.#name); }
     });
 
     let map_reset = map_fields.iter().map(|f| {
@@ -234,6 +278,13 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
                     self.#name = Default::default();
                 }
             }
+        }
+    });
+
+    let nested_rollback = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! {
+            ::deform_core::Smooth::on_rollback(&mut self.#name, &old.#name, &new.#name);
         }
     });
 
@@ -272,6 +323,13 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         }
     });
 
+    let nested_apply = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! {
+            ::deform_core::Smooth::apply(&mut self.#name, &mut state.#name);
+        }
+    });
+
     let map_apply = map_fields.iter().map(|f| {
         let name = &f.ident;
         quote! {
@@ -283,10 +341,13 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         }
     });
 
+    let nested_set_params_names: Vec<_> = nested_fields.iter().map(|f| &f.ident).collect();
+
     let expanded = quote! {
         #[derive(Clone)]
         #vis struct #smoother_name {
             #(#direct_field_defs,)*
+            #(#nested_field_defs,)*
             #(#map_field_defs,)*
             __params: ::deform_core::SmoothParams,
             __custom_params: bool,
@@ -296,6 +357,7 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
             fn default() -> Self {
                 Self {
                     #(#direct_field_defaults,)*
+                    #(#nested_field_defaults,)*
                     #(#map_field_defaults,)*
                     __params: ::deform_core::SmoothParams {
                         decay: #decay,
@@ -310,16 +372,19 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         impl ::deform_core::Smooth<#name> for #smoother_name {
             fn reset(&mut self) {
                 #(#direct_reset)*
+                #(#nested_reset)*
                 #(#map_reset)*
             }
 
             fn on_rollback(&mut self, old: &#name, new: &#name) {
                 #(#direct_rollback)*
+                #(#nested_rollback)*
                 #(#map_rollback)*
             }
 
             fn apply(&mut self, state: &mut #name) {
                 #(#direct_apply)*
+                #(#nested_apply)*
                 #(#map_apply)*
             }
 
@@ -327,6 +392,7 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
                 if !self.__custom_params {
                     self.__params = params;
                 }
+                #(::deform_core::Smooth::set_params(&mut self.#nested_set_params_names, params);)*
             }
         }
 
