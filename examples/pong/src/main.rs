@@ -277,7 +277,16 @@ fn setup_offline(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) -> Result<()> {
-    commands.spawn(Camera2d);
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(OrthographicProjection {
+            scaling_mode: bevy::camera::ScalingMode::AutoMin {
+                min_width: FIELD_W,
+                min_height: FIELD_H,
+            },
+            ..OrthographicProjection::default_2d()
+        }),
+    ));
 
     let border_thickness = 4.0;
     let border_material = materials.add(Color::LinearRgba(LinearRgba::WHITE));
