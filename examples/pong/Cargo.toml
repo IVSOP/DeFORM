@@ -10,3 +10,6 @@ glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }
 bevy = { workspace = true }
+solana-address = { workspace = true, features = ["decode"] }
+anyhow = "1.0.102"
+ 

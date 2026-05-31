@@ -38,11 +38,7 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
 }
 
 impl<T: DeformUserLogic> OfflineBackend<T> {
-    pub fn init(player: Pubkey) -> DeformResult<DeformClient<T>> {
-        let mut players = HashSet::new();
-        players.insert(Pubkey::new_from_array([0; 32]));
-        players.insert(player.clone());
-
+    pub fn init(player: Pubkey, players: HashSet<Pubkey>) -> DeformResult<DeformClient<T>> {
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());

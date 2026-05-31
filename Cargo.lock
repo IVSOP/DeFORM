@@ -5443,11 +5443,13 @@ dependencies = [
 name = "pong"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bevy",
  "deform_core",
  "deform_offline",
  "glam",
  "serde",
+ "solana-address 2.6.0",
  "wincode",
 ]
 
