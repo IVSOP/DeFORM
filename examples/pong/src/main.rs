@@ -261,6 +261,23 @@ fn setup_offline(
 ) -> Result<()> {
     commands.spawn(Camera2d);
 
+    let border_thickness = 4.0;
+    let border_material = materials.add(Color::LinearRgba(LinearRgba::WHITE));
+    let h_border = meshes.add(Rectangle::new(FIELD_W + border_thickness, border_thickness));
+    let v_border = meshes.add(Rectangle::new(border_thickness, FIELD_H + border_thickness));
+    for (mesh, x, y) in [
+        (h_border.clone(), 0.0, FIELD_H / 2.0),
+        (h_border, 0.0, -FIELD_H / 2.0),
+        (v_border.clone(), -FIELD_W / 2.0, 0.0),
+        (v_border, FIELD_W / 2.0, 0.0),
+    ] {
+        commands.spawn((
+            Mesh2d(mesh),
+            MeshMaterial2d(border_material.clone()),
+            Transform::from_translation(Vec3::new(x, y, 0.0)),
+        ));
+    }
+
     let ball_shape = meshes.add(Circle::new(BALL_HALF));
     let player_shape = meshes.add(Rectangle::new(PADDLE_W, PADDLE_H));
 
