@@ -233,20 +233,38 @@ pub struct Player(Pubkey);
 #[repr(transparent)]
 pub struct PlayerEntities(HashMap<Pubkey, Entity>);
 
-fn pong_bot(state: &PongGameState, bot: &Pubkey) -> PongInputs {
-    if state.ball_vel.x <= 0.0 {
-        return PongInputs::default();
+fn pong_bot() -> impl Fn(&PongGameState, &Pubkey) -> PongInputs + Send + Sync {
+    let prev_direction = std::sync::Mutex::new(0i8);
+
+    move |state: &PongGameState, bot: &Pubkey| -> PongInputs {
+        let prev = *prev_direction.lock().unwrap();
+
+        if state.ball_vel.x <= 0.0 {
+            *prev_direction.lock().unwrap() = 0;
+            return PongInputs::default();
+        }
+
+        let paddle_y = state.players.get(bot).map(|p| p.paddle_y).unwrap_or(0.0);
+        let diff = state.ball_pos.y - paddle_y;
+
+        // Larger dead zone to release a held direction, smaller to start moving
+        let threshold = if (prev > 0 && diff > 0.0) || (prev < 0 && diff < 0.0) {
+            PADDLE_SPEED * 0.25
+        } else {
+            PADDLE_SPEED * 1.5
+        };
+
+        let direction = if diff.abs() < threshold {
+            0
+        } else if diff > 0.0 {
+            100
+        } else {
+            -100
+        };
+
+        *prev_direction.lock().unwrap() = direction;
+        PongInputs { direction }
     }
-    let paddle_y = state.players.get(bot).map(|p| p.paddle_y).unwrap_or(0.0);
-    let diff = state.ball_pos.y - paddle_y;
-    let direction = if diff.abs() < PADDLE_SPEED {
-        0
-    } else if diff > 0.0 {
-        100
-    } else {
-        -100
-    };
-    PongInputs { direction }
 }
 
 /// A wrapper struct is made for the multiplayer client. This makes it so that I don't have to have a bevy feature and/or dependency, and that would mean every time bevy updates, it would most likely be broken.
@@ -313,8 +331,7 @@ fn setup_offline(
         .id();
 
     let players = HashSet::from([main_player_pubkey.clone(), bot_player_pubkey.clone()]);
-    let client =
-        new_offline_client::<PongGame>(main_player_pubkey.clone(), players, pong_bot)?;
+    let client = new_offline_client::<PongGame>(main_player_pubkey.clone(), players, pong_bot())?;
     commands.insert_resource(MultiplayerClient(client));
 
     let mut player_entities = HashMap::new();
