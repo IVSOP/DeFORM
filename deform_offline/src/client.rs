@@ -14,8 +14,8 @@ use tokio::{
 };
 
 use deform_core::{
-    DeformClient, DeformError, DeformInputs, DeformReadState, DeformResult, DeformUserLogic,
-    Pubkey, TickInfo, lobby::LobbyStatus,
+    DeformClient, DeformError, DeformReadState, DeformResult, DeformUserLogic, Pubkey, TickInfo,
+    lobby::LobbyStatus,
 };
 
 pub(crate) struct OfflineBackend<T: DeformUserLogic> {

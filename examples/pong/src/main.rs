@@ -239,7 +239,14 @@ fn pong_bot(state: &PongGameState, bot: &Pubkey, prev_inputs: &PongInputs) -> Po
     }
 
     let paddle_y = state.players.get(bot).map(|p| p.paddle_y).unwrap_or(0.0);
-    let diff = state.ball_pos.y - paddle_y;
+
+    // Predict where the ball will be when it reaches our paddle
+    let t = (PADDLE_X - state.ball_pos.x) / state.ball_vel.x;
+    // Small deterministic offset so the bot doesn't always return the ball dead-center
+    let offset = (state.ball_vel.y * 100.0).sin() * PADDLE_HALF_H * 0.4;
+    let target_y = state.ball_pos.y + state.ball_vel.y * t + offset;
+
+    let diff = target_y - paddle_y;
     let prev = prev_inputs.direction;
 
     let threshold = if (prev > 0 && diff > 0.0) || (prev < 0 && diff < 0.0) {
