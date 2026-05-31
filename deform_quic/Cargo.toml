@@ -12,8 +12,7 @@ tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "net"
 serde = { workspace = true }
 # solana-program-error = { workspace = true }
 solana-address = { workspace = true }
-solana-client = { workspace = true }
-solana-sdk = { workspace = true }
+solana-signature = { workspace = true } 
 quinn = { workspace = true }
 rustls = { workspace = true }
 webpki-roots = { workspace = true }

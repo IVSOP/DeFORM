@@ -60,26 +60,22 @@ impl PongGameState {
 
 impl DeformGameState for PongGameState {
     fn new(players: &HashSet<Pubkey>) -> Self {
-        let mut state = Self::new_empty();
-        for player in players {
-            state.add_player(player.clone());
+        let mut state_players = HashMap::new();
+        for player in players.iter() {
+            state_players.insert(
+                player.clone(),
+                PlayerState {
+                    paddle_y: 0.0,
+                    score: 0,
+                },
+            );
         }
-        state
-    }
 
-    fn new_empty() -> Self {
         Self {
             ball_pos: Vec2::ZERO,
             ball_vel: Vec2::ZERO,
-            players: HashMap::new(),
+            players: state_players,
         }
-    }
-
-    fn add_player(&mut self, player: Pubkey) {
-        self.players.entry(player).or_insert(PlayerState {
-            paddle_y: 0.0,
-            score: 0,
-        });
     }
 }
 

@@ -14,8 +14,9 @@ exclude = [
 [workspace.dependencies]
 wincode = { version = "0.5.4", default-features = false, features = ["alloc", "std", "derive"] }
 solana-program-error = "3.0.1"
-solana-address = { version = "2.6.0", features = ["wincode", "serde", "curve25519"] }
+solana-address = { version = "2.6.0", features = ["wincode", "serde", "curve25519", "copy"] }
 solana-client = "3.1.14"
+solana-signature = "3.4.0"
 serde = { version = "1.0.228", features = ["serde_derive"] }
 tokio = { version = "1.48.0", default-features = false }
 solana-sdk = { version = "4.0.1", default-features = false, features = ["full", "solana-signature"] } # "borsh"

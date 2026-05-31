@@ -152,25 +152,6 @@ impl<T: DeformUserLogic> DeformReadState<T> {
             internal_error: Ok(()),
         }
     }
-
-    /// Used to create a new state when no players are available
-    pub fn new_empty() -> Self {
-        Self {
-            tick_info: TickInfo {
-                game_state: T::GameState::new_empty(),
-                inputs: HashMap::new(),
-            },
-            remote_status: Default::default(),
-            stats: Default::default(),
-            user_logic: Default::default(),
-            internal_error: Ok(()),
-        }
-    }
-
-    pub fn add_player(&mut self, player: Pubkey) {
-        self.tick_info.game_state.add_player(player.clone());
-        self.tick_info.inputs.insert(player, T::Inputs::default());
-    }
 }
 
 #[derive(serde::Serialize, Default, Clone)]
@@ -231,11 +212,6 @@ pub trait DeformGameState:
     + MaxLen
 {
     fn new(players: &HashSet<Pubkey>) -> Self;
-
-    /// Used to create a new state when no players are available
-    fn new_empty() -> Self;
-
-    fn add_player(&mut self, player: Pubkey);
 }
 
 pub trait MaxLen {

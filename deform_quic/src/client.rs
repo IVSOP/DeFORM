@@ -1,10 +1,9 @@
 use better_tokio_select::tokio_select;
 use glam::FloatExt;
 use quinn::crypto::rustls::QuicClientConfig;
-use solana_client::{rpc_client::RpcClient, rpc_config::CommitmentConfig};
-use solana_sdk::signature::Signature;
+use solana_signature::Signature;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     pin::Pin,
     sync::{
         Arc,
@@ -19,9 +18,8 @@ use tokio::{
 };
 
 use deform_core::{
-    DeformClient, DeformError, DeformGameState, DeformInputs, DeformReadState, DeformResult,
-    DeformUserLogic, Pubkey, Smooth, TickInfo,
-    lobby::{Lobby, LobbyStatus},
+    DeformClient, DeformError, DeformInputs, DeformReadState, DeformResult, DeformUserLogic,
+    Pubkey, Smooth, TickInfo, lobby::LobbyStatus,
 };
 
 use crate::{ALPN_PROTOCOL, ControlMessage, ServerResponse, ServerUnreliableInstruction};
@@ -109,26 +107,21 @@ async fn stream_read_msg(recv: &mut quinn::RecvStream) -> DeformResult<Vec<u8>> 
 
 impl<T: DeformUserLogic> QuicBackend<T> {
     pub fn init(
-        rpc_url: String,
         server_addr: String,
         server_name: String,
         lobby_id: u64,
         player: Pubkey,
-        game_program: Pubkey,
+        players: HashSet<Pubkey>,
         // TODO: abstract signature and auth in general!!!!!
         sig: Signature,
         skip_cert_verify: bool,
-        // these are now passed in by using default!!
-        // user_logic: T,
-        // initial_game_state: T::GameState,
-        // initial_inputs: T::Inputs,
     ) -> DeformResult<DeformClient<T>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new_empty()));
+        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new(&players)));
         let backend_dead = Arc::new(AtomicBool::new(false));
 
         // cursed
@@ -152,35 +145,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 .build()
             {
                 Ok(rt) => {
-                    let rpc_client = Arc::new(RpcClient::new_with_commitment(
-                        rpc_url,
-                        CommitmentConfig::confirmed(),
-                    ));
-
                     rt.block_on(async move {
-                        let (lobby, _) = Lobby::<T::Inputs, T::GameState>::find_program_address(
-                            lobby_id,
-                            &game_program,
-                        );
-
-                        // FIX: make this exit after N retries
-                        let lobby_info = loop {
-                            match fetch_lobby::<T::Inputs, T::GameState>(&lobby, &rpc_client).await
-                            {
-                                Ok(infos) => break infos,
-                                Err(_e) => {
-                                    tokio::time::sleep(Duration::from_millis(200)).await;
-                                }
-                            }
-                        };
-
-                        // insert all players into the game state
-                        if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
-                            for player in lobby_info.player_infos.keys() {
-                                shared.add_player(player.clone());
-                            }
-                        }
-
                         // --- Build QUIC client endpoint ---
                         let tls_config = if skip_cert_verify {
                             rustls::ClientConfig::builder()
@@ -287,7 +252,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         // Send handshake
                         let handshake_message = ControlMessage::Handshake {
                             lobby_id,
-                            player_pubkey: player,
+                            player_pubkey: player.clone(),
                             sig,
                         };
 
@@ -357,8 +322,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
                             let tick_info = QuicBackend {
                                 info_per_tick: HashMap::new(),
-                                local_tick: lobby_info.tick,
-                                remote_tick: lobby_info.tick,
+                                local_tick: 0,
+                                remote_tick: 0,
                                 // events_queue: Vec::new(),
                                 last_remote_status: LobbyStatus::NotStarted,
                                 inputs: HashMap::new(),
@@ -1086,15 +1051,15 @@ impl<T: DeformUserLogic> QuicBackend<T> {
     }
 }
 
-async fn fetch_lobby<I: DeformInputs, G: DeformGameState>(
-    lobby: &Pubkey,
-    rpc_client: &RpcClient,
-) -> DeformResult<Lobby<I, G>> {
-    let account = rpc_client
-        .get_account(lobby)
-        .map_err(|e| DeformError::Rpc(e.to_string()))?;
-    Lobby::from_bytes(&account.data).map_err(|e| DeformError::Deserialize(format!("lobby: {e:?}")))
-}
+// async fn fetch_lobby<I: DeformInputs, G: DeformGameState>(
+//     lobby: &Pubkey,
+//     rpc_client: &RpcClient,
+// ) -> DeformResult<Lobby<I, G>> {
+//     let account = rpc_client
+//         .get_account(lobby)
+//         .map_err(|e| DeformError::Rpc(e.to_string()))?;
+//     Lobby::from_bytes(&account.data).map_err(|e| DeformError::Deserialize(format!("lobby: {e:?}")))
+// }
 
 // ---------------------------------------------------------------------------
 // Certificate verification bypass for dev mode

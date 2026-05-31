@@ -1,10 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use deform_core::Pubkey;
 use deform_core::{
     DeformClient, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::Lobby,
 };
-use solana_sdk::signature::Signature;
+use solana_signature::Signature;
 use wincode::{SchemaRead, SchemaWrite};
 
 mod client;
@@ -51,22 +51,20 @@ pub enum ServerResponse<I: DeformInputs, G: DeformGameState> {
 }
 
 pub fn new_quic_client<T: DeformUserLogic>(
-    rpc_url: String,
     server_addr: String,
     server_name: String,
     lobby_id: u64,
     player: Pubkey,
-    game_program: Pubkey,
+    players: HashSet<Pubkey>,
     sig: Signature,
     skip_cert_verify: bool,
 ) -> DeformResult<DeformClient<T>> {
     client::QuicBackend::<T>::init(
-        rpc_url,
         server_addr,
         server_name,
         lobby_id,
         player,
-        game_program,
+        players,
         sig,
         skip_cert_verify,
     )
