@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anyhow::anyhow;
 use bevy::prelude::*;
+use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use deform_core::{DeformClient, Pubkey};
 use deform_offline::new_offline_client;
 
@@ -10,11 +11,25 @@ mod pong_logic;
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins,))
-        .add_systems(Startup, setup_offline);
-    // TODO: figure out the best order
-    app.add_systems(Update, (update_inputs, send_inputs).chain());
-    app.add_systems(PostUpdate, update_state);
-    app.run();
+        .add_plugins(EguiPlugin::default())
+        .init_state::<AppState>()
+        .add_systems(Startup, setup_offline)
+        // TODO: figure out the best order
+        .add_systems(
+            Update,
+            (update_inputs, send_inputs)
+                .chain()
+                .run_if(in_state(AppState::InGame)),
+        )
+        .add_systems(
+            EguiPrimaryContextPass,
+            (
+                egui_in_menu.run_if(in_state(AppState::MainMenu)),
+                egui_in_game.run_if(in_state(AppState::InGame)),
+            ),
+        )
+        .add_systems(PostUpdate, update_state.run_if(in_state(AppState::InGame)))
+        .run();
 }
 
 use pong_logic::*;
@@ -35,6 +50,14 @@ pub struct MultiplayerClient(DeformClient<PongGame>);
 #[derive(Resource)]
 #[repr(transparent)]
 pub struct PlayerEntities(HashMap<Pubkey, Entity>);
+
+/// Not the state of the game itself, but of the entire app
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default, States)]
+enum AppState {
+    #[default]
+    MainMenu,
+    InGame,
+}
 
 fn setup_offline(
     mut commands: Commands,
@@ -161,5 +184,40 @@ fn update_state(
 
     ball.into_inner().translation = state.ball_pos.extend(0.0);
 
+    Ok(())
+}
+
+fn egui_in_menu(mut contexts: EguiContexts, mut next_state: ResMut<NextState<AppState>>) -> Result {
+    egui::Window::new("Pong").show(contexts.ctx_mut()?, |ui| {
+        ui.heading("Pong");
+        ui.add_space(10.0);
+        if ui.button("Play").clicked() {
+            next_state.set(AppState::InGame);
+        }
+    });
+    Ok(())
+}
+
+fn egui_in_game(mut contexts: EguiContexts, client: Res<MultiplayerClient>) -> Result {
+    let state = {
+        let shared = client.0.read_state()?;
+        shared.tick_info.game_state.clone()
+    };
+
+    let mut sorted: Vec<_> = state.players.iter().collect();
+    sorted.sort_by_key(|(pk, _)| *pk);
+
+    egui::Window::new("Scoreboard").show(contexts.ctx_mut()?, |ui| {
+        for (i, (_pk, ps)) in sorted.iter().enumerate() {
+            let label = if i == 0 {
+                "Player 1 (Left)"
+            } else {
+                "Player 2 (Right)"
+            };
+            ui.horizontal(|ui| {
+                ui.label(format!("{}: {}", label, ps.score));
+            });
+        }
+    });
     Ok(())
 }
