@@ -2350,14 +2350,11 @@ version = "0.1.0"
 dependencies = [
  "deform_derive",
  "glam",
- "quinn",
- "rustls",
  "serde",
  "solana-address",
  "solana-program-error",
  "thiserror 2.0.18",
  "tokio",
- "webpki-roots 0.26.11",
  "wincode",
 ]
 

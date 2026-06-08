@@ -8,15 +8,14 @@ crate-type = ["rlib"]
 
 [dependencies]
 deform_derive = { path = "../deform_derive" }
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync"], optional = true }
 serde = { workspace = true }
 solana-program-error = { workspace = true }
-quinn = { workspace = true }
-rustls = { workspace = true }
-webpki-roots = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
 solana-address = { workspace = true }
 
 [features]
+default = ["client"]
+client = ["dep:tokio"]
