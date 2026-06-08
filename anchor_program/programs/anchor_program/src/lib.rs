@@ -23,4 +23,8 @@ pub mod anchor_program {
     pub fn join_lobby(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
         join_lobby::handler(ctx, id)
     }
+
+    pub fn ready(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
+        ready::handler(ctx, id)
+    }
 }

@@ -14,4 +14,8 @@ pub enum ErrorCode {
     PlayerAlreadyInLobby,
     #[msg("Lobby is not accepting players")]
     LobbyNotJoinable,
+    #[msg("Player not in lobby")]
+    PlayerNotInLobby,
+    #[msg("Player already ready")]
+    PlayerAlreadyReady,
 }
