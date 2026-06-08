@@ -10,11 +10,13 @@ name = "pong"
 required-features = ["client"]
 
 [features]
-default = ["client"]
+default = ["client", "anchor"]
 client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:anyhow"]
+anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 
 [dependencies]
-deform_core = { path = "../../deform_core", default-features = false }
+anchor-lang = { workspace = true, optional = true }
+deform_core = { path = "../../deform_core" }
 deform_offline = { path = "../../deform_offline", optional = true }
 glam = { workspace = true }
 serde = { workspace = true }

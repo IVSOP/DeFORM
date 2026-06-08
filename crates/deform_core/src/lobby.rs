@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, Pubkey, TickInfo};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
 #[derive(Clone, Copy, Eq, PartialEq, Default, SchemaRead, SchemaWrite)]
 pub enum LobbyStatus {
     #[default]
@@ -13,6 +15,8 @@ pub enum LobbyStatus {
     Finished = 2,
 }
 
+#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
 #[derive(Clone, Copy, Eq, PartialEq, Default, SchemaRead, SchemaWrite)]
 pub enum PLayerStatus {
     #[default]
@@ -20,22 +24,22 @@ pub enum PLayerStatus {
     Ready = 1,
 }
 
+#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct PlayerInfo<I: DeformInputs> {
     pub status: PLayerStatus,
     pub inputs: I,
 }
 
-/// An on-chain lobby account
-// NOTE: Having a hashmap here is not really that efficient as you will also prob have one inside the gamestate. idk how to fix
+/// An on-chain lobby account.
+/// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
 #[derive(Clone, SchemaRead, SchemaWrite)]
-// derive breaks if this is just DeformUserLogic
 pub struct Lobby<I: DeformInputs, G: DeformGameState> {
     pub tick: u64,
     pub status: LobbyStatus,
     pub game_state: G,
-    // TODO: serde correct serialization of pubkey
-    pub player_infos: HashMap<Pubkey, PlayerInfo<I>>,
+    // FIX: serde correct serialization of pubkey
+    pub player_infos: BTreeMap<Pubkey, PlayerInfo<I>>,
 }
 
 impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
@@ -51,6 +55,7 @@ impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
         wincode::serialize_into(dst, self).map_err(|e| DeformError::SerializeLobby(e.to_string()))
     }
 }
+
 
 impl<T: crate::DeformUserLogic> From<Lobby<T::Inputs, T::GameState>> for crate::TickInfo<T> {
     fn from(lobby: Lobby<T::Inputs, T::GameState>) -> Self {

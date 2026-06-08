@@ -1,0 +1,12 @@
+[package]
+name = "tests"
+version = "0.1.0"
+description = "Created with Anchor"
+edition = "2021"
+rust-version = "1.89.0"
+
+[dependencies]
+anchor-client = "1.0.2"
+anchor_program = { version = "0.1.0", path = "../programs/anchor_program" }
+solana-keypair = "3.0.0"
+solana-pubkey = "3.0.0"

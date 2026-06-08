@@ -7,6 +7,7 @@ edition = "2021"     # for solana compat
 crate-type = ["rlib"]
 
 [dependencies]
+anchor-lang = { workspace = true, optional = true }
 deform_derive = { path = "../deform_derive" }
 tokio = { workspace = true, features = ["sync"], optional = true }
 serde = { workspace = true }
@@ -19,3 +20,4 @@ solana-address = { workspace = true }
 [features]
 default = ["client"]
 client = ["dep:tokio"]
+anchor = ["solana-address/borsh", "dep:anchor-lang"]

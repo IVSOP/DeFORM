@@ -105,6 +105,18 @@ pub struct TickInfo<T: DeformUserLogic> {
     pub inputs: HashMap<Pubkey, T::Inputs>,
 }
 
+/// Trait that does nothing except require anchor ser and deser when the feature is active
+pub trait Anchor {}
+
+#[cfg(feature = "anchor")]
+impl<T> Anchor for T
+where
+    T: anchor_lang::AnchorSerialize + anchor_lang::AnchorDeserialize,
+{}
+
+#[cfg(not(feature = "anchor"))]
+impl<T> Anchor for T {}
+
 pub trait DeformInputs:
     Default
     + Eq
@@ -116,6 +128,7 @@ pub trait DeformInputs:
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
     + MaxLen
+    + Anchor
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
     ///
