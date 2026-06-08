@@ -3,13 +3,23 @@ name = "pong"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+
+[[bin]]
+name = "pong"
+required-features = ["client"]
+
+[features]
+default = ["client"]
+client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:anyhow"]
+
 [dependencies]
-deform_core = { path = "../../deform_core" }
-deform_offline = { path = "../../deform_offline" }
+deform_core = { path = "../../deform_core", default-features = false }
+deform_offline = { path = "../../deform_offline", optional = true }
 glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }
-bevy = { workspace = true }
-bevy_egui = { workspace = true }
+bevy = { workspace = true, optional = true }
+bevy_egui = { workspace = true, optional = true }
 solana-address = { workspace = true, features = ["decode"] }
-anyhow = "1.0.102"
+anyhow = { version = "1.0.102", optional = true }

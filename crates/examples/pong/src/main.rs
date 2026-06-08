@@ -6,8 +6,6 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use deform_core::{DeformClient, Pubkey};
 use deform_offline::new_offline_client;
 
-mod pong_logic;
-
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins,))
@@ -32,7 +30,7 @@ fn main() {
         .run();
 }
 
-use pong_logic::*;
+use pong::*;
 
 #[derive(Component)]
 pub struct Ball;

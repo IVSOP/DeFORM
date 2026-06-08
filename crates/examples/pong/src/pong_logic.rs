@@ -1,9 +1,9 @@
 use std::collections::{HashMap, HashSet};
 
-use bevy::prelude::*;
 use deform_core::{
     DeformGameState, DeformInputs, DeformResult, DeformUserLogic, MaxLen, Pubkey, Smooth,
 };
+use glam::Vec2;
 use wincode::{SchemaRead, SchemaWrite};
 
 wincode::pod_wrapper! {
@@ -82,7 +82,8 @@ impl MaxLen for PongGameState {
     }
 }
 
-#[derive(Default, Clone, Eq, PartialEq, serde::Serialize, SchemaRead, SchemaWrite, Component)]
+#[derive(Default, Clone, Eq, PartialEq, serde::Serialize, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "client", derive(bevy::prelude::Component))]
 pub struct PongInputs {
     pub direction: i8,
 }
