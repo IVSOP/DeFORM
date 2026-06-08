@@ -54,6 +54,10 @@ impl PongGameState {
         self.ball_vel =
             Vec2::new(direction * BALL_SPEED, 0.3 * BALL_SPEED).normalize() * BALL_SPEED;
     }
+
+    pub fn add_user(&mut self, pubkey: Pubkey) {
+        self.players.insert(pubkey, PlayerState::default());
+    }
 }
 
 impl DeformGameState for PongGameState {

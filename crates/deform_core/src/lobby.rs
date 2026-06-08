@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -36,10 +36,13 @@ pub struct PlayerInfo<I: DeformInputs> {
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct Lobby<I: DeformInputs, G: DeformGameState> {
     pub tick: u64,
+    pub creator: Pubkey,
     pub status: LobbyStatus,
+    // TODO: for web2, is game state needed?
+    // it would mostly just be used for selected powerups, skins, etc...
     pub game_state: G,
     // FIX: serde correct serialization of pubkey
-    pub player_infos: BTreeMap<Pubkey, PlayerInfo<I>>,
+    pub player_infos: HashMap<Pubkey, PlayerInfo<I>>,
 }
 
 impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {

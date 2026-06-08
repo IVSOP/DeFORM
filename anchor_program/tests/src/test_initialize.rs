@@ -1,8 +1,5 @@
-use anchor_client::{
-    CommitmentConfig,
-    Client, Cluster,
-};
-use solana_keypair::{read_keypair_file};
+use anchor_client::{Client, Cluster, CommitmentConfig};
+use solana_keypair::read_keypair_file;
 use solana_pubkey::Pubkey;
 
 #[test]

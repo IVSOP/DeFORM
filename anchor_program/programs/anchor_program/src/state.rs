@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use deform_core::lobby::Lobby;
+use deform_core::{lobby::Lobby, DeformError, DeformResult};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::deform::{GameState, Inputs};
@@ -20,5 +20,20 @@ pub enum AccountTypes {
 #[derive(SchemaRead, SchemaWrite)]
 pub struct LobbyAccount {
     pub account_type: AccountTypes,
-    pub lobby: Lobby<Inputs, GameState>
+    pub bump: u8,
+    pub lobby: Lobby<Inputs, GameState>,
+}
+
+impl LobbyAccount {
+    pub fn find_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
+        Lobby::<Inputs, GameState>::find_program_address(id, game)
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
+        wincode::deserialize(bytes).map_err(|e| DeformError::DeserializeLobby(e.to_string()))
+    }
+
+    pub fn write_into(&self, dst: &mut [u8]) -> DeformResult<()> {
+        wincode::serialize_into(dst, self).map_err(|e| DeformError::SerializeLobby(e.to_string()))
+    }
 }
