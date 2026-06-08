@@ -19,4 +19,8 @@ pub mod anchor_program {
     pub fn create_lobby(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
         create_lobby::handler(ctx, id)
     }
+
+    pub fn join_lobby(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
+        join_lobby::handler(ctx, id)
+    }
 }

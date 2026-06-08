@@ -29,6 +29,11 @@ impl LobbyAccount {
         Lobby::<Inputs, GameState>::find_program_address(id, game)
     }
 
+    pub fn create_program_address(id: u64, bump: u8, game: &Pubkey) -> anchor_lang::Result<Pubkey> {
+        Lobby::<Inputs, GameState>::create_program_address(id, game, bump)
+            .map_err(|_| anchor_lang::error::ErrorCode::ConstraintSeeds.into())
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
         wincode::deserialize(bytes).map_err(|e| DeformError::DeserializeLobby(e.to_string()))
     }

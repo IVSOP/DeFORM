@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use solana_address::error::AddressError;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, Pubkey, TickInfo};
@@ -48,6 +49,10 @@ pub struct Lobby<I: DeformInputs, G: DeformGameState> {
 impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
     pub fn find_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
         Pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
+    }
+
+    pub fn create_program_address(id: u64, game: &Pubkey, bump: u8) -> Result<Pubkey, AddressError> {
+        Pubkey::create_program_address(&[b"lobby", &id.to_le_bytes(), &[bump]], game)
     }
 
     pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
