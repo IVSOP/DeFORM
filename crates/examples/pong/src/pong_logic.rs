@@ -104,6 +104,8 @@ impl DeformUserLogic for PongGame {
     type Smoother = PongGameStateSmoother;
     type Error = std::convert::Infallible;
 
+    const TICK_RATE_MICROS: u64 = 16667;
+
     fn advance_frame(
         &mut self,
         state: &Self::GameState,

@@ -34,6 +34,9 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     type Smoother: Smooth<Self::GameState>;
     type Error: std::error::Error + Send + Sync + 'static;
 
+    /// Microseconds per simulation tick. For 60 fps, use `16667`.
+    const TICK_RATE_MICROS: u64;
+
     // user must provide certain callbacks
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.
     // NOTE: I'm not using TickInfo here to not make it more confusing to the user

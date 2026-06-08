@@ -144,12 +144,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
     }
 
     pub async fn tick_loop(mut self) -> DeformResult {
-        let mut tick_sleep = interval(Duration::from_micros(16667));
+        let mut tick_sleep = interval(Duration::from_micros(T::TICK_RATE_MICROS));
         let mut terminated = false;
 
         loop {
             tokio_select!(match .. {
-                // Tick every 16ms
                 .. if let _ = tick_sleep.tick() => {
                     if self.last_status != LobbyStatus::Finished {
                         self.advance_local_simulation()?;

@@ -59,8 +59,6 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     // pub stale_datagrams: u64,
 }
 
-pub const COMMIT_INPUTS_MICROS: u64 = 16667;
-
 /// How long to wait before using the RTT value to update how far ahead the simulation is.
 ///
 /// High value:
@@ -401,9 +399,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         };
         self.info_per_tick.insert(0, current_tick_info);
 
-        let mut tick_sleep = Box::pin(sleep(Duration::from_micros(16667)));
-        let mut visual_ticker = interval(Duration::from_micros(16667));
-        let mut inputs_ticker = interval(Duration::from_micros(COMMIT_INPUTS_MICROS));
+        let mut tick_sleep = Box::pin(sleep(Duration::from_micros(T::TICK_RATE_MICROS)));
+        let mut visual_ticker = interval(Duration::from_micros(T::TICK_RATE_MICROS));
+        let mut inputs_ticker = interval(Duration::from_micros(T::TICK_RATE_MICROS));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         let mut terminated = false;
@@ -583,7 +581,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // Full RTT is required, not RTT/2: remote_tick is already RTT/2 old when received,
         // so inputs travel another RTT/2 before reaching the server, totalling one full RTT
         // of server advancement since the observed state was sent. +1 absorbs commit-timer jitter.
-        self.min_ticks_ahead = (rtt_micros / 16666.667).ceil() as u64 + 1;
+        self.min_ticks_ahead = (rtt_micros / T::TICK_RATE_MICROS as f64).ceil() as u64 + 1;
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
         // #[cfg(feature = "tracy")]
@@ -619,12 +617,9 @@ impl<T: DeformUserLogic> QuicBackend<T> {
     fn compute_dilated_tick_interval(&mut self) -> Duration {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("compute_dilated_tick_interval");
-        /// <30% ahead
-        const BASE_SLEEP_MS: f32 = 16.666667;
-        /// 30% to 60% ahead
-        const MID_SLEEP_MS: f32 = 25.0;
-        /// >60%
-        const MAX_SLEEP_MS: f32 = 66.666667;
+        let base_sleep_ms: f32 = T::TICK_RATE_MICROS as f32 / 1000.0;
+        let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
+        let max_sleep_ms: f32 = base_sleep_ms * 4.0;
 
         let ticks_ahead = self.local_tick.saturating_sub(self.remote_tick);
 
@@ -633,13 +628,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         let ahead_percent = (ahead_over_min / window).max(0.0);
 
         let sleep_ms = if ahead_percent <= 0.30 {
-            BASE_SLEEP_MS
+            base_sleep_ms
         } else if ahead_percent <= 0.60 {
             let t = ((ahead_percent - 0.30) / 0.30).clamp(0.0, 1.0);
-            BASE_SLEEP_MS.lerp(MID_SLEEP_MS, t)
+            base_sleep_ms.lerp(mid_sleep_ms, t)
         } else {
             let t = ((ahead_percent - 0.60) / 0.40).clamp(0.0, 1.0);
-            MID_SLEEP_MS.lerp(MAX_SLEEP_MS, t)
+            mid_sleep_ms.lerp(max_sleep_ms, t)
         };
 
         let micros = (sleep_ms * 1000.0) as u64;
