@@ -20,7 +20,8 @@ pub const PADDLE_X: f32 = 400.0;
 pub const PADDLE_SPEED: f32 = 8.0;
 pub const BALL_SIZE: f32 = 20.0;
 pub const BALL_HALF: f32 = BALL_SIZE / 2.0;
-pub const BALL_SPEED: f32 = 7.5;
+pub const BALL_SPEED: f32 = 12.0;
+pub const BALL_SPAWN_X: f32 = PADDLE_X - 50.0;
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
 #[cfg_attr(
@@ -52,10 +53,15 @@ pub struct PongGameState {
 }
 
 impl PongGameState {
-    pub fn reset_ball(&mut self, direction: f32) {
-        self.ball_pos = Vec2::ZERO;
-        self.ball_vel =
-            Vec2::new(direction * BALL_SPEED, 0.3 * BALL_SPEED).normalize() * BALL_SPEED;
+    pub fn reset_round(&mut self, direction: f32) {
+        // Serve from the scorer's side instead of the middle, straight at the
+        // opponent so they have time to react
+        self.ball_pos = Vec2::new(-direction * BALL_SPAWN_X, 0.0);
+        self.ball_vel = Vec2::new(direction * BALL_SPEED, 0.0);
+        // Both paddles back to the middle
+        for ps in self.players.values_mut() {
+            ps.paddle_y = 0.0;
+        }
     }
 
     pub fn add_user(&mut self, pubkey: Pubkey) {
@@ -127,7 +133,7 @@ impl DeformUserLogic for PongGame {
         let mut new = state.clone();
 
         if new.ball_vel == Vec2::ZERO {
-            new.reset_ball(1.0);
+            new.reset_round(1.0);
             return Ok(new);
         }
 
@@ -205,14 +211,14 @@ impl DeformUserLogic for PongGame {
                     ps.score += 1;
                 }
             }
-            new.reset_ball(-1.0);
+            new.reset_round(-1.0);
         } else if new.ball_pos.x + BALL_HALF >= FIELD_W / 2.0 {
             if let Some(pk) = left_pk {
                 if let Some(ps) = new.players.get_mut(pk) {
                     ps.score += 1;
                 }
             }
-            new.reset_ball(1.0);
+            new.reset_round(1.0);
         }
 
         Ok(new)
