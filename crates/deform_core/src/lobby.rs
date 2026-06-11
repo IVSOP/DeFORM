@@ -43,6 +43,13 @@ pub struct PlayerInfo<I: DeformInputs> {
 
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
+///
+/// This is generic over `<I, G>` instead of `<T: DeformUserLogic>` because wincode's
+/// derive macros place trait bounds on all type parameters. Using `T` would require
+/// `T: SchemaRead + SchemaWrite`, which makes no sense for a game logic type that
+/// contains callbacks and non-serializable state. The same constraint applies to
+/// `LobbyAccount` in the on-chain program and `deform_program` client crate.
+/// TODO: maybe just accept it and have DeformUserLogic require the wincode trait bounds?
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct Lobby<I: DeformInputs, G: DeformGameState> {
     pub tick: u64,
