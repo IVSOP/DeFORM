@@ -6,7 +6,10 @@ use wincode::{SchemaRead, SchemaWrite};
 use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, Pubkey, TickInfo};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
-#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
 #[derive(Clone, Copy, Eq, PartialEq, Default, SchemaRead, SchemaWrite)]
 pub enum LobbyStatus {
@@ -16,7 +19,10 @@ pub enum LobbyStatus {
     Finished = 2,
 }
 
-#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
 #[derive(Clone, Copy, Eq, PartialEq, Default, SchemaRead, SchemaWrite)]
 pub enum PLayerStatus {
@@ -25,7 +31,10 @@ pub enum PLayerStatus {
     Ready = 1,
 }
 
-#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct PlayerInfo<I: DeformInputs> {
     pub status: PLayerStatus,
@@ -51,7 +60,11 @@ impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
         Pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
     }
 
-    pub fn create_program_address(id: u64, game: &Pubkey, bump: u8) -> Result<Pubkey, AddressError> {
+    pub fn create_program_address(
+        id: u64,
+        game: &Pubkey,
+        bump: u8,
+    ) -> Result<Pubkey, AddressError> {
         Pubkey::create_program_address(&[b"lobby", &id.to_le_bytes(), &[bump]], game)
     }
 
@@ -63,7 +76,6 @@ impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
         wincode::serialize_into(dst, self).map_err(|e| DeformError::SerializeLobby(e.to_string()))
     }
 }
-
 
 impl<T: crate::DeformUserLogic> From<Lobby<T::Inputs, T::GameState>> for crate::TickInfo<T> {
     fn from(lobby: Lobby<T::Inputs, T::GameState>) -> Self {

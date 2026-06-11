@@ -109,10 +109,7 @@ pub struct TickInfo<T: DeformUserLogic> {
 pub trait Anchor {}
 
 #[cfg(feature = "anchor")]
-impl<T> Anchor for T
-where
-    T: anchor_lang::AnchorSerialize + anchor_lang::AnchorDeserialize,
-{}
+impl<T> Anchor for T where T: anchor_lang::AnchorSerialize + anchor_lang::AnchorDeserialize {}
 
 #[cfg(not(feature = "anchor"))]
 impl<T> Anchor for T {}

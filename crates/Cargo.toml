@@ -3,6 +3,8 @@ resolver = "3"
 members = [
     "deform_core",
     "deform_derive",
+    "deform_program",
+    "deform_program_anchor",
     "deform_quic",
     "deform_offline",
     "examples/*",
@@ -13,6 +15,13 @@ exclude = [
 
 [workspace.dependencies]
 wincode = { version = "0.5.4", default-features = false, features = ["alloc", "std", "derive"] }
+borsh = { version = "1.6.1", features = ["derive"] }
+num-derive = "0.4.2"
+num-traits = "0.2.19"
+solana-account-info = "3.1.1"
+solana-cpi = "3.1.0"
+solana-instruction = "3.4.0"
+solana-system-interface = "3.2.0"
 solana-program-error = "3.0.1"
 anchor-lang = { version = "1.0.2", default-features = false }
 # borsh = { version = "1.6.1", default-features = false, features = ["derive", "std"] }

@@ -1,0 +1,11 @@
+[package]
+name = "deform_program"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+deform_core = { path = "../deform_core", default-features = false }
+solana-address = { workspace = true }
+solana-instruction = { workspace = true }
+thiserror = { workspace = true }
+wincode = { workspace = true }

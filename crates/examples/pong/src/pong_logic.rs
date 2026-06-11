@@ -23,7 +23,10 @@ pub const BALL_HALF: f32 = BALL_SIZE / 2.0;
 pub const BALL_SPEED: f32 = 7.5;
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
-#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
 pub struct PlayerState {
     #[smooth]
     pub paddle_y: f32,
@@ -88,14 +91,16 @@ impl MaxLen for PongGameState {
 }
 
 #[derive(Default, Clone, Eq, PartialEq, serde::Serialize, SchemaRead, SchemaWrite)]
-#[cfg_attr(feature = "anchor", derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
 #[cfg_attr(feature = "client", derive(bevy::prelude::Component))]
 pub struct PongInputs {
     pub direction: i8,
 }
 
 impl DeformInputs for PongInputs {}
-
 
 impl MaxLen for PongInputs {
     fn max_len() -> DeformResult<usize> {
