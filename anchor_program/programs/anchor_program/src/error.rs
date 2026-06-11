@@ -18,4 +18,8 @@ pub enum ErrorCode {
     PlayerNotInLobby,
     #[msg("Player already ready")]
     PlayerAlreadyReady,
+    #[msg("Unauthorized")]
+    Unauthorized,
+    #[msg("Creator mismatch")]
+    CreatorMismatch,
 }
