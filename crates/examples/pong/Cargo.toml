@@ -11,17 +11,22 @@ required-features = ["client"]
 
 [features]
 default = ["client", "anchor"]
-client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:anyhow"]
+client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:anyhow", "dep:deform_program", "dep:deform_program_anchor", "dep:solana-sdk", "dep:solana-client"]
 anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 
 [dependencies]
 anchor-lang = { workspace = true, optional = true }
 deform_core = { path = "../../deform_core" }
 deform_offline = { path = "../../deform_offline", optional = true }
+deform_program = { path = "../../deform_program", optional = true }
+deform_program_anchor = { path = "../../deform_program_anchor", optional = true }
 glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }
 bevy = { workspace = true, optional = true }
 bevy_egui = { workspace = true, optional = true }
 solana-address = { workspace = true, features = ["decode"] }
+solana-instruction = { workspace = true }
+solana-sdk = { workspace = true, optional = true }
+solana-client = { workspace = true, optional = true }
 anyhow = { version = "1.0.102", optional = true }

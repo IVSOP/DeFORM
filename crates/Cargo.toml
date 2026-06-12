@@ -26,7 +26,7 @@ solana-program-error = "3.0.1"
 anchor-lang = { version = "1.0.2", default-features = false }
 # borsh = { version = "1.6.1", default-features = false, features = ["derive", "std"] }
 solana-address = { version = "2.6.0", features = ["wincode", "serde", "curve25519", "copy"] }
-solana-client = "3.1.14"
+solana-client = "4.1.0-beta.3"
 solana-signature = "3.4.0"
 serde = { version = "1.0.228", features = ["serde_derive"] }
 tokio = { version = "1.48.0", default-features = false }
