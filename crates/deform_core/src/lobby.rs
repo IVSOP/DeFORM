@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use solana_address::error::AddressError;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{DeformError, DeformGameState, DeformInputs, DeformResult, Pubkey, TickInfo};
+use crate::{
+    DeformError, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, Pubkey, TickInfo,
+};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
@@ -44,14 +46,19 @@ pub struct PlayerInfo<I: DeformInputs> {
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
 ///
-/// This is generic over `<I, G>` instead of `<T: DeformUserLogic>` because wincode's
-/// derive macros place trait bounds on all type parameters. Using `T` would require
-/// `T: SchemaRead + SchemaWrite`, which makes no sense for a game logic type that
-/// contains callbacks and non-serializable state. The same constraint applies to
-/// `LobbyAccount` in the on-chain program and `deform_program` client crate.
-/// TODO: maybe just accept it and have DeformUserLogic require the wincode trait bounds?
+/// This is the wincode-serializable representation, parameterized by the data types
+/// `<I, G>`. It is kept generic over the *data types* (rather than the whole
+/// [`DeformUserLogic`]) because wincode's derive macros bound every type parameter
+/// with `SchemaRead + SchemaWrite`; bounding the data types is correct (they are the
+/// fields), whereas bounding a `T: DeformUserLogic` would be both wrong (`T` is never
+/// serialized) and impossible (the derive would demand `T::GameState: SchemaRead<C>`
+/// for all configs `C`, which is unexpressible).
+///
+/// Prefer the [`Lobby<T>`] alias below in user-facing / `DeformUserLogic`-generic code.
+/// [`Lobby::new`] is a convenience all-parameters constructor; the fields are public.
+#[doc(hidden)]
 #[derive(Clone, SchemaRead, SchemaWrite)]
-pub struct Lobby<I: DeformInputs, G: DeformGameState> {
+pub struct LobbyData<I: DeformInputs, G: DeformGameState> {
     pub tick: u64,
     pub creator: Pubkey,
     pub status: LobbyStatus,
@@ -62,7 +69,32 @@ pub struct Lobby<I: DeformInputs, G: DeformGameState> {
     pub player_infos: HashMap<Pubkey, PlayerInfo<I>>,
 }
 
-impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
+/// A [`LobbyData`] keyed off a [`DeformUserLogic`] `T` — the ergonomic spelling for
+/// code that is already generic over `T`. Because it resolves to `LobbyData<I, G>`,
+/// the wincode `SchemaRead`/`SchemaWrite` bounds land on the data types (which already
+/// satisfy them via the `DeformInputs` / `DeformGameState` supertraits), so `T` itself
+/// never needs the wincode traits.
+pub type Lobby<T> = LobbyData<<T as DeformUserLogic>::Inputs, <T as DeformUserLogic>::GameState>;
+
+impl<I: DeformInputs, G: DeformGameState> LobbyData<I, G> {
+    /// Construct a lobby from all of its parameters. This (plus the field accessors)
+    /// is the only way to build one outside this crate, since the fields are private.
+    pub fn new(
+        tick: u64,
+        creator: Pubkey,
+        status: LobbyStatus,
+        game_state: G,
+        player_infos: HashMap<Pubkey, PlayerInfo<I>>,
+    ) -> Self {
+        Self {
+            tick,
+            creator,
+            status,
+            game_state,
+            player_infos,
+        }
+    }
+
     pub fn find_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
         Pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
     }
@@ -84,8 +116,8 @@ impl<I: DeformInputs, G: DeformGameState> Lobby<I, G> {
     }
 }
 
-impl<T: crate::DeformUserLogic> From<Lobby<T::Inputs, T::GameState>> for crate::TickInfo<T> {
-    fn from(lobby: Lobby<T::Inputs, T::GameState>) -> Self {
+impl<T: DeformUserLogic> From<Lobby<T>> for TickInfo<T> {
+    fn from(lobby: Lobby<T>) -> Self {
         TickInfo {
             game_state: lobby.game_state,
             inputs: lobby

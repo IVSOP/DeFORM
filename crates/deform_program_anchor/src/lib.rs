@@ -2,7 +2,7 @@ mod generated;
 
 pub use generated::*;
 
-use deform_core::{DeformGameState, DeformInputs, Pubkey};
+use deform_core::{DeformUserLogic, Pubkey};
 use deform_program::{DeformProgramClient, LobbyAccount, PlayerScore, Result};
 use generated::instructions::*;
 use generated::types::PlayerScore as AnchorPlayerScore;
@@ -23,7 +23,7 @@ impl AnchorClient {
     }
 }
 
-impl<I: DeformInputs, G: DeformGameState> DeformProgramClient<I, G> for AnchorClient {
+impl DeformProgramClient for AnchorClient {
     fn program_id(&self) -> Pubkey {
         self.program_id
     }
@@ -77,7 +77,7 @@ impl<I: DeformInputs, G: DeformGameState> DeformProgramClient<I, G> for AnchorCl
         Ok(self.with_program_id(ix))
     }
 
-    fn deserialize_lobby(&self, data: &[u8]) -> Result<LobbyAccount<I, G>> {
-        LobbyAccount::from_bytes(data)
+    fn deserialize_lobby<T: DeformUserLogic>(&self, data: &[u8]) -> Result<LobbyAccount<T>> {
+        LobbyAccount::<T>::from_bytes(data)
     }
 }

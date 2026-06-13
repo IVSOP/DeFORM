@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use deform_core::lobby::{LobbyStatus, PLayerStatus};
 
-use crate::error::ErrorCode;
+use crate::error::GameError;
 use crate::state::{AccountTypes, LobbyAccount};
 
 #[derive(Accounts)]
@@ -19,23 +19,23 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     // deser
     let mut lobby_account = {
         let data = lobby_info.data.borrow();
-        LobbyAccount::from_bytes(&data).map_err(|_| error!(ErrorCode::DeserializeLobby))?
+        LobbyAccount::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
     };
 
     // check account type
     match lobby_account.account_type {
         AccountTypes::Lobby => {}
-        _ => return Err(error!(ErrorCode::InvalidAccountType)),
+        _ => return Err(error!(GameError::InvalidAccountType)),
     }
 
     // check pda
     let pda = LobbyAccount::create_program_address(id, lobby_account.bump, ctx.program_id)?;
-    require_keys_eq!(lobby_info.key(), pda, ErrorCode::InvalidPda);
+    require_keys_eq!(lobby_info.key(), pda, GameError::InvalidPda);
 
     // lobby not started
     require!(
         lobby_account.lobby.status == LobbyStatus::NotStarted,
-        ErrorCode::LobbyNotJoinable
+        GameError::LobbyNotJoinable
     );
 
     // user in lobby
@@ -43,12 +43,12 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
         .lobby
         .player_infos
         .get_mut(&user_key)
-        .ok_or_else(|| error!(ErrorCode::PlayerNotInLobby))?;
+        .ok_or_else(|| error!(GameError::PlayerNotInLobby))?;
 
     // user not ready
     require!(
         player_info.status == PLayerStatus::NotReady,
-        ErrorCode::PlayerAlreadyReady
+        GameError::PlayerAlreadyReady
     );
 
     player_info.status = PLayerStatus::Ready;
@@ -57,7 +57,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     let mut data = lobby_info.data.borrow_mut();
     lobby_account
         .write_into(&mut data)
-        .map_err(|_| error!(ErrorCode::SerializeLobby))?;
+        .map_err(|_| error!(GameError::SerializeLobby))?;
 
     Ok(())
 }

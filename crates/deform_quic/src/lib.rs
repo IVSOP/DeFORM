@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use deform_core::Pubkey;
 use deform_core::{
-    DeformClient, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::Lobby,
+    DeformClient, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
 };
 use solana_signature::Signature;
 use wincode::{SchemaRead, SchemaWrite};
@@ -47,7 +47,7 @@ pub enum ServerUnreliableInstruction<I: DeformInputs> {
 pub enum ServerResponse<I: DeformInputs, G: DeformGameState> {
     Error(String),
     // TODO: might be wasteful but it better mimics the fully on-chain behaviour
-    NewState(Lobby<I, G>),
+    NewState(LobbyData<I, G>),
 }
 
 pub fn new_quic_client<T: DeformUserLogic>(

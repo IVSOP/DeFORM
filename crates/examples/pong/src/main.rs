@@ -8,53 +8,6 @@ use deform_offline::new_offline_client;
 use deform_program::{DeformProgramClient, LobbyAccount};
 use deform_program_anchor::AnchorClient;
 
-struct PongProgramClient(AnchorClient);
-
-impl PongProgramClient {
-    fn find_lobby_address(&self, id: u64) -> (Pubkey, u8) {
-        <AnchorClient as DeformProgramClient<PongInputs, PongGameState>>::find_lobby_address(
-            &self.0, id,
-        )
-    }
-    fn create_lobby(
-        &self,
-        user: Pubkey,
-        lobby: Pubkey,
-        id: u64,
-    ) -> deform_program::Result<solana_instruction::Instruction> {
-        <AnchorClient as DeformProgramClient<PongInputs, PongGameState>>::create_lobby(
-            &self.0, user, lobby, id,
-        )
-    }
-    fn join_lobby(
-        &self,
-        user: Pubkey,
-        lobby: Pubkey,
-        id: u64,
-    ) -> deform_program::Result<solana_instruction::Instruction> {
-        <AnchorClient as DeformProgramClient<PongInputs, PongGameState>>::join_lobby(
-            &self.0, user, lobby, id,
-        )
-    }
-    fn ready(
-        &self,
-        user: Pubkey,
-        lobby: Pubkey,
-        id: u64,
-    ) -> deform_program::Result<solana_instruction::Instruction> {
-        <AnchorClient as DeformProgramClient<PongInputs, PongGameState>>::ready(
-            &self.0, user, lobby, id,
-        )
-    }
-    fn deserialize_lobby(
-        &self,
-        data: &[u8],
-    ) -> deform_program::Result<LobbyAccount<PongInputs, PongGameState>> {
-        <AnchorClient as DeformProgramClient<PongInputs, PongGameState>>::deserialize_lobby(
-            &self.0, data,
-        )
-    }
-}
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     message::Message, pubkey::Pubkey as SdkPubkey, signature::Keypair, signer::Signer,
@@ -149,13 +102,13 @@ struct MenuState {
     selected_preset_idx: usize,
 
     rpc_client: Option<RpcClient>,
-    program_client: Option<PongProgramClient>,
+    program_client: Option<AnchorClient>,
 
     lobby_id: u64,
     lobby_id_text: String,
     status_msg: Option<(String, bool)>,
 
-    lobby_data: Option<LobbyAccount<PongInputs, PongGameState>>,
+    lobby_data: Option<LobbyAccount<PongGame>>,
 }
 
 fn scan_json_files() -> Vec<String> {
@@ -459,7 +412,7 @@ fn egui_in_menu(
                 let rpc = RpcClient::new(preset.rpc_url.to_string());
                 let program_id = Pubkey::from_str_const(preset.program_id);
                 menu.rpc_client = Some(rpc);
-                menu.program_client = Some(PongProgramClient(AnchorClient::new(program_id)));
+                menu.program_client = Some(AnchorClient::new(program_id));
                 menu.status_msg = Some((format!("Connected to {}", preset.name), false));
             }
         });
@@ -545,7 +498,7 @@ fn egui_in_menu(
 
             if ui.button("Read Lobby").clicked() {
                 match rpc.get_account_data(&to_sdk_pubkey(&lobby_pda)) {
-                    Ok(data) => match program_client.deserialize_lobby(&data) {
+                    Ok(data) => match program_client.deserialize_lobby::<PongGame>(&data) {
                         Ok(lobby) => {
                             result = Some((
                                 format!(

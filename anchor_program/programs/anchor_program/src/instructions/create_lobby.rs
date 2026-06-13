@@ -6,9 +6,7 @@ use deform_core::{
     DeformGameState,
 };
 
-use crate::deform::GameState;
-use crate::state::{AccountTypes, LobbyAccount};
-use crate::{deform::Inputs, error::ErrorCode};
+use crate::{error::GameError, state::*};
 
 #[derive(Accounts)]
 pub struct CreateLobbyAccounts<'info> {
@@ -42,7 +40,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     let lobby_account = LobbyAccount {
         account_type: AccountTypes::Lobby,
         bump,
-        lobby: Lobby {
+        lobby: Lobby::<UserLogic> {
             tick: 0,
             creator,
             status: LobbyStatus::NotStarted,
@@ -52,7 +50,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     };
 
     // serialize into a Vec
-    let data = wincode::serialize(&lobby_account).map_err(|_| error!(ErrorCode::SerializeLobby))?;
+    let data = wincode::serialize(&lobby_account).map_err(|_| error!(GameError::SerializeLobby))?;
 
     let rent = Rent::get()?;
     let lamports = rent.minimum_balance(data.len());

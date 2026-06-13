@@ -1,9 +1,8 @@
 use anchor_lang::{prelude::*, system_program};
 use deform_core::lobby::{LobbyStatus, PLayerStatus, PlayerInfo};
 
-use crate::deform::Inputs;
-use crate::error::ErrorCode;
-use crate::state::{AccountTypes, LobbyAccount};
+use crate::error::GameError;
+use crate::state::*;
 
 #[derive(Accounts)]
 pub struct JoinLobbyAccounts<'info> {
@@ -22,28 +21,28 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
     // deser
     let mut lobby_account = {
         let data = lobby_info.data.borrow();
-        LobbyAccount::from_bytes(&data).map_err(|_| error!(ErrorCode::DeserializeLobby))?
+        LobbyAccount::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
     };
 
     // check account type
     match lobby_account.account_type {
         AccountTypes::Lobby => {}
-        _ => return Err(error!(ErrorCode::InvalidAccountType)),
+        _ => return Err(error!(GameError::InvalidAccountType)),
     }
 
     // check pda
     let pda = LobbyAccount::create_program_address(id, lobby_account.bump, ctx.program_id)?;
-    require_keys_eq!(lobby_info.key(), pda, ErrorCode::InvalidPda);
+    require_keys_eq!(lobby_info.key(), pda, GameError::InvalidPda);
 
     // lobby must not be started
     require!(
         lobby_account.lobby.status == LobbyStatus::NotStarted,
-        ErrorCode::LobbyNotJoinable
+        GameError::LobbyNotJoinable
     );
     // player must not already be in lobby
     require!(
         !lobby_account.lobby.player_infos.contains_key(&user_key),
-        ErrorCode::PlayerAlreadyInLobby
+        GameError::PlayerAlreadyInLobby
     );
 
     // add the player
@@ -62,7 +61,7 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
 
     // reserialize
     let new_data =
-        wincode::serialize(&lobby_account).map_err(|_| error!(ErrorCode::SerializeLobby))?;
+        wincode::serialize(&lobby_account).map_err(|_| error!(GameError::SerializeLobby))?;
 
     let new_len = new_data.len();
     let old_len = lobby_info.data_len();

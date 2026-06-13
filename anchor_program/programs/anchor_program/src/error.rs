@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 #[error_code]
-pub enum ErrorCode {
+pub enum GameError {
     #[msg("Failed to serialize lobby")]
     SerializeLobby,
     #[msg("Failed to deserialize lobby")]
