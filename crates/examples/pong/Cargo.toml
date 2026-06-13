@@ -11,22 +11,29 @@ required-features = ["client"]
 
 [features]
 default = ["client", "anchor"]
-client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:anyhow", "dep:deform_program", "dep:deform_program_anchor", "dep:solana-sdk", "dep:solana-client"]
+client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:bevy-egui-notify", "dep:anyhow", "dep:solana-sdk", "dep:solana-client"]
 anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 
 [dependencies]
 anchor-lang = { workspace = true, optional = true }
 deform_core = { path = "../../deform_core" }
 deform_offline = { path = "../../deform_offline", optional = true }
-deform_program = { path = "../../deform_program", optional = true }
-deform_program_anchor = { path = "../../deform_program_anchor", optional = true }
 glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }
 bevy = { workspace = true, optional = true }
 bevy_egui = { workspace = true, optional = true }
+bevy-egui-notify = { git = "https://github.com/IVSOP/bevy-egui-notify", rev = "793dd75d2a5218c62e3e3fdc87e936c07bca40da", optional = true }
 solana-address = { workspace = true, features = ["decode"] }
 solana-instruction = { workspace = true }
 solana-sdk = { workspace = true, optional = true }
 solana-client = { workspace = true, optional = true }
 anyhow = { version = "1.0.102", optional = true }
+borsh = { workspace = true }
+num-derive = { workspace = true }
+num-traits = { workspace = true }
+thiserror = { workspace = true }
+solana-account-info = { workspace = true }
+solana-cpi = { workspace = true }
+solana-program-error = { workspace = true }
+solana-system-interface = { workspace = true }

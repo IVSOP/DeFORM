@@ -890,6 +890,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bevy-egui-notify"
+version = "0.21.0"
+source = "git+https://github.com/IVSOP/bevy-egui-notify?rev=793dd75d2a5218c62e3e3fdc87e936c07bca40da#793dd75d2a5218c62e3e3fdc87e936c07bca40da"
+dependencies = [
+ "bevy",
+ "bevy_egui",
+]
+
+[[package]]
 name = "bevy_a11y"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3196,36 +3205,6 @@ dependencies = [
  "serde",
  "solana-address 2.6.0",
  "tokio",
- "wincode",
-]
-
-[[package]]
-name = "deform_program"
-version = "0.1.0"
-dependencies = [
- "deform_core",
- "solana-address 2.6.0",
- "solana-instruction",
- "thiserror 2.0.18",
- "wincode",
-]
-
-[[package]]
-name = "deform_program_anchor"
-version = "0.1.0"
-dependencies = [
- "borsh",
- "deform_core",
- "deform_program",
- "num-derive",
- "num-traits",
- "solana-account-info",
- "solana-address 2.6.0",
- "solana-cpi",
- "solana-instruction",
- "solana-program-error",
- "solana-system-interface 3.2.0",
- "thiserror 2.0.18",
  "wincode",
 ]
 
@@ -5977,17 +5956,24 @@ dependencies = [
  "anchor-lang",
  "anyhow",
  "bevy",
+ "bevy-egui-notify",
  "bevy_egui",
+ "borsh",
  "deform_core",
  "deform_offline",
- "deform_program",
- "deform_program_anchor",
  "glam",
+ "num-derive",
+ "num-traits",
  "serde",
+ "solana-account-info",
  "solana-address 2.6.0",
  "solana-client",
+ "solana-cpi",
  "solana-instruction",
+ "solana-program-error",
  "solana-sdk",
+ "solana-system-interface 3.2.0",
+ "thiserror 2.0.18",
  "wincode",
 ]
 

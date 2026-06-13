@@ -5,7 +5,7 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use solana_address::{address, Address};
+use solana_address::{Address, address};
 
 /// `anchor_program` program ID.
 pub const ANCHOR_PROGRAM_ID: Address = address!("5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r");

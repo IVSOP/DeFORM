@@ -1658,11 +1658,19 @@ name = "pong"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",
+ "borsh",
  "deform_core",
  "glam",
+ "num-derive",
+ "num-traits",
  "serde",
+ "solana-account-info",
  "solana-address 2.6.1",
+ "solana-cpi",
  "solana-instruction",
+ "solana-program-error",
+ "solana-system-interface 3.2.0",
+ "thiserror 2.0.18",
  "wincode",
 ]
 

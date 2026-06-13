@@ -3,8 +3,6 @@ resolver = "3"
 members = [
     "deform_core",
     "deform_derive",
-    "deform_program",
-    "deform_program_anchor",
     "deform_quic",
     "deform_offline",
     "examples/*",

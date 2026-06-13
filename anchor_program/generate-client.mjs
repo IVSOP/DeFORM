@@ -9,7 +9,7 @@ const idl = JSON.parse(
 
 const codama = createFromRoot(rootNodeFromAnchor(idl));
 
-const outDir = "../crates/deform_program_anchor";
+const outDir = "../crates/examples/pong";
 
 codama.accept(
   renderVisitor(outDir, { deleteFolderBeforeRendering: false })

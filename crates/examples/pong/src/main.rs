@@ -3,10 +3,9 @@ use std::collections::{HashMap, HashSet};
 use anyhow::anyhow;
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
 use deform_core::{DeformClient, Pubkey};
 use deform_offline::new_offline_client;
-use deform_program::{DeformProgramClient, LobbyAccount};
-use deform_program_anchor::AnchorClient;
 
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
@@ -14,10 +13,13 @@ use solana_sdk::{
     signer::keypair::read_keypair_file, transaction::Transaction,
 };
 
+use pong_logic::*;
+
 fn main() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins,))
         .add_plugins(EguiPlugin::default())
+        .add_plugins(EguiToastsPlugin::default())
         .init_state::<AppState>()
         .add_systems(Startup, setup)
         .add_systems(
@@ -37,7 +39,10 @@ fn main() {
         .run();
 }
 
-use pong::*;
+use pong::{
+    solana::{accounts::LobbyAccount, anchor_client::AnchorClient},
+    *,
+};
 
 #[derive(Component)]
 pub struct Ball;
@@ -93,7 +98,7 @@ const NETWORK_PRESETS: &[NetworkPreset] = &[
     },
 ];
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 struct MenuState {
     keypair_files: Vec<String>,
     selected_keypair_idx: usize,
@@ -102,13 +107,12 @@ struct MenuState {
     selected_preset_idx: usize,
 
     rpc_client: Option<RpcClient>,
-    program_client: Option<AnchorClient>,
+    program_client: AnchorClient,
 
     lobby_id: u64,
     lobby_id_text: String,
-    status_msg: Option<(String, bool)>,
 
-    lobby_data: Option<LobbyAccount<PongGame>>,
+    lobby_data: Option<LobbyAccount>,
 }
 
 fn scan_json_files() -> Vec<String> {
@@ -176,8 +180,16 @@ fn setup(
 
     commands.insert_resource(MenuState {
         keypair_files: scan_json_files(),
+        selected_keypair_idx: 0,
+        keypair: None,
+        selected_preset_idx: 0,
+        rpc_client: None,
+        program_client: AnchorClient {
+            program_id: Pubkey::default(),
+        },
+        lobby_id: 0,
         lobby_id_text: "0".into(),
-        ..Default::default()
+        lobby_data: None,
     });
 
     // Pre-spawn paddle slots (hidden until a game starts and assigns players)
@@ -320,12 +332,14 @@ fn egui_in_menu(
     mut contexts: EguiContexts,
     mut next_state: ResMut<NextState<AppState>>,
     mut menu: ResMut<MenuState>,
+    mut toasts: ResMut<EguiToasts>,
     mut commands: Commands,
     mut player_entities: ResMut<PlayerEntities>,
     paddle_slots: Res<PaddleSlots>,
     mut players_q: Query<(&mut Player, &mut Visibility)>,
 ) -> Result {
-    egui::Window::new("Pong").show(contexts.ctx_mut()?, |ui| {
+    let ctx = contexts.ctx_mut()?.clone();
+    egui::Window::new("Pong").show(&ctx, |ui| {
         ui.heading("Pong");
         ui.add_space(10.0);
 
@@ -344,13 +358,14 @@ fn egui_in_menu(
                     &mut players_q,
                 ) {
                     Ok(()) => next_state.set(AppState::InGame),
-                    Err(e) => menu.status_msg = Some((format!("Offline error: {e}"), true)),
+                    Err(e) => {
+                        toasts.0.error(format!("Offline error: {e}"));
+                    }
                 },
                 None => {
-                    menu.status_msg = Some((
-                        "Load a keypair first — it identifies your player.".into(),
-                        true,
-                    ));
+                    toasts
+                        .0
+                        .error("Load a keypair first — it identifies your player.");
                 }
             }
         }
@@ -381,11 +396,11 @@ fn egui_in_menu(
                 if let Some(path) = menu.keypair_files.get(menu.selected_keypair_idx) {
                     match read_keypair_file(path) {
                         Ok(kp) => {
-                            menu.status_msg = Some((format!("Loaded: {}", kp.pubkey()), false));
+                            toasts.0.info(format!("Loaded: {}", kp.pubkey()));
                             menu.keypair = Some(kp);
                         }
                         Err(e) => {
-                            menu.status_msg = Some((format!("Failed to load keypair: {e}"), true));
+                            toasts.0.error(format!("Failed to load keypair: {e}"));
                         }
                     }
                 }
@@ -412,8 +427,8 @@ fn egui_in_menu(
                 let rpc = RpcClient::new(preset.rpc_url.to_string());
                 let program_id = Pubkey::from_str_const(preset.program_id);
                 menu.rpc_client = Some(rpc);
-                menu.program_client = Some(AnchorClient::new(program_id));
-                menu.status_msg = Some((format!("Connected to {}", preset.name), false));
+                menu.program_client = AnchorClient { program_id };
+                toasts.0.info(format!("Connected to {}", preset.name));
             }
         });
 
@@ -439,85 +454,79 @@ fn egui_in_menu(
             }
         });
 
-        let has_all =
-            menu.rpc_client.is_some() && menu.program_client.is_some() && menu.keypair.is_some();
+        let has_all = menu.rpc_client.is_some() && menu.keypair.is_some();
 
         if has_all {
             let rpc = menu.rpc_client.as_ref().unwrap();
-            let program_client = menu.program_client.as_ref().unwrap();
+            let program_client = &menu.program_client;
             let keypair = menu.keypair.as_ref().unwrap();
             let lobby_id = menu.lobby_id;
-            let (lobby_pda, _) = program_client.find_lobby_address(lobby_id);
+            let (lobby_pda, _) =
+                LobbyAccount::find_program_address(lobby_id, &program_client.program_id);
             let user = Pubkey::from(keypair.pubkey().to_bytes());
 
             ui.label(format!("Lobby PDA: {lobby_pda}"));
 
-            let mut result: Option<(String, bool)> = None;
             let mut new_lobby_data = None;
 
             ui.horizontal(|ui| {
                 if ui.button("Create Lobby").clicked() {
-                    result = Some(
-                        match program_client
-                            .create_lobby(user, lobby_pda, lobby_id)
-                            .map_err(|e| anyhow!("{e}"))
-                            .and_then(|ix| send_and_confirm_tx(rpc, ix, keypair))
-                        {
-                            Ok(()) => ("Lobby created!".into(), false),
-                            Err(e) => (format!("Create failed: {e}"), true),
-                        },
-                    );
+                    let ix = program_client.create_lobby(user, lobby_pda, lobby_id);
+                    match send_and_confirm_tx(rpc, ix, keypair) {
+                        Ok(()) => {
+                            toasts.0.info("Lobby created!");
+                        }
+                        Err(e) => {
+                            toasts.0.error(format!("Create failed: {e}"));
+                        }
+                    }
                 }
 
                 if ui.button("Join Lobby").clicked() {
-                    result = Some(
-                        match program_client
-                            .join_lobby(user, lobby_pda, lobby_id)
-                            .map_err(|e| anyhow!("{e}"))
-                            .and_then(|ix| send_and_confirm_tx(rpc, ix, keypair))
-                        {
-                            Ok(()) => ("Joined lobby!".into(), false),
-                            Err(e) => (format!("Join failed: {e}"), true),
-                        },
-                    );
+                    let ix = program_client.join_lobby(user, lobby_pda, lobby_id);
+                    match send_and_confirm_tx(rpc, ix, keypair) {
+                        Ok(()) => {
+                            toasts.0.info("Joined lobby!");
+                        }
+                        Err(e) => {
+                            toasts.0.error(format!("Join failed: {e}"));
+                        }
+                    }
                 }
 
                 if ui.button("Ready").clicked() {
-                    result = Some(
-                        match program_client
-                            .ready(user, lobby_pda, lobby_id)
-                            .map_err(|e| anyhow!("{e}"))
-                            .and_then(|ix| send_and_confirm_tx(rpc, ix, keypair))
-                        {
-                            Ok(()) => ("Ready!".into(), false),
-                            Err(e) => (format!("Ready failed: {e}"), true),
-                        },
-                    );
+                    let ix = program_client.ready(user, lobby_pda, lobby_id);
+                    match send_and_confirm_tx(rpc, ix, keypair) {
+                        Ok(()) => {
+                            toasts.0.info("Ready!");
+                        }
+                        Err(e) => {
+                            toasts.0.error(format!("Ready failed: {e}"));
+                        }
+                    }
                 }
             });
 
             if ui.button("Read Lobby").clicked() {
                 match rpc.get_account_data(&to_sdk_pubkey(&lobby_pda)) {
-                    Ok(data) => match program_client.deserialize_lobby::<PongGame>(&data) {
+                    Ok(data) => match program_client.deserialize_lobby(&data) {
                         Ok(lobby) => {
-                            result = Some((
-                                format!(
-                                    "Lobby loaded, players: {}",
-                                    lobby.lobby.player_infos.len()
-                                ),
-                                false,
+                            toasts.0.info(format!(
+                                "Lobby loaded, players: {}",
+                                lobby.lobby.player_infos.len()
                             ));
                             new_lobby_data = Some(lobby);
                         }
-                        Err(e) => result = Some((format!("Deserialize failed: {e}"), true)),
+                        Err(e) => {
+                            toasts.0.error(format!("Deserialize failed: {e}"));
+                        }
                     },
-                    Err(e) => result = Some((format!("RPC error: {e}"), true)),
+                    Err(e) => {
+                        toasts.0.error(format!("RPC error: {e}"));
+                    }
                 }
             }
 
-            if let Some(msg) = result {
-                menu.status_msg = Some(msg);
-            }
             if let Some(lobby) = new_lobby_data {
                 menu.lobby_data = Some(lobby);
             }
@@ -526,16 +535,6 @@ fn egui_in_menu(
                 egui::Color32::YELLOW,
                 "Load a keypair and connect to a network first.",
             );
-        }
-
-        // --- Status ---
-        if let Some((msg, is_error)) = &menu.status_msg {
-            let color = if *is_error {
-                egui::Color32::RED
-            } else {
-                egui::Color32::GREEN
-            };
-            ui.colored_label(color, msg);
         }
     });
     Ok(())
