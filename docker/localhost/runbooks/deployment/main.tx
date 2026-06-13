@@ -1,0 +1,33 @@
+addon "svm" {
+    rpc_api_url = input.rpc_api_url
+    network_id = input.network_id
+}
+
+signer "payer" "svm::secret_key" {
+    keypair_json = input.payer_keypair_json
+}
+
+signer "authority" "svm::secret_key" {
+    keypair_json = input.authority_keypair_json
+}
+
+action "fund_admin" "svm::setup_surfnet" {
+    description = "Fund account with SOL during Surfnet setup"
+    set_account {
+        public_key = "AdmiapAjgTDNTKHUAs7FWztVWSGPNU5zHv2YKSN5GiMg"
+        lamports = svm::sol_to_lamports(10)
+    }
+}
+
+action "deploy_game_program" "svm::deploy_program" {
+    description = "Deploy game program"
+    program = svm::get_program_from_anchor_project(
+        "anchor_program",
+        "/artifacts/deploy/anchor_program-keypair.json",
+        "/artifacts/idl/anchor_program.json",
+        "/artifacts/deploy/anchor_program.so"
+    )
+    authority = signer.authority
+    payer = signer.payer
+    instant_surfnet_deployment = true
+}
