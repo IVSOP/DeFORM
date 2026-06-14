@@ -6,7 +6,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     sync::{Notify, mpsc, oneshot},
@@ -14,8 +14,8 @@ use tokio::{
 };
 
 use deform_core::{
-    DeformClient, DeformError, DeformReadState, DeformResult, DeformUserLogic, Pubkey, TickInfo,
-    lobby::LobbyStatus,
+    DeformClient, DeformError, DeformReadState, DeformResult, DeformUserLogic, Pubkey, Smooth,
+    TickInfo, lobby::LobbyStatus,
 };
 
 pub(crate) struct OfflineBackend<T: DeformUserLogic> {
@@ -25,7 +25,7 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     pub player_input: T::Inputs,
     pub local_tick: u64,
     pub last_status: LobbyStatus,
-    // this will pretty much always have the same value as whatever is inside the mutex, it's just to decrease contention
+    pub prev_info: TickInfo<T>,
     pub current_info: TickInfo<T>,
     pub player: Pubkey,
 
@@ -36,6 +36,8 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
     pub user_logic: T,
     pub bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
+    pub visual_tick_micros: u64,
+    pub last_sim_instant: Instant,
 }
 
 impl<T: DeformUserLogic> OfflineBackend<T> {
@@ -43,6 +45,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         player: Pubkey,
         players: HashSet<Pubkey>,
         bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
+        visual_tick_micros: u64,
     ) -> DeformResult<DeformClient<T>> {
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
@@ -57,14 +60,6 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
 
         let terminate_clone = terminate.clone();
         let backend_dead_clone = backend_dead.clone();
-
-        // #[cfg(feature = "log")]
-        // info!("QUIC init with rpc: {}", rpc_url);
-        // #[cfg(feature = "log")]
-        // info!(
-        //     "QUIC init with server: {} (SNI: {})",
-        //     server_addr, server_name
-        // );
 
         let _rss_thread = thread::spawn(move || {
             match tokio::runtime::Builder::new_multi_thread()
@@ -89,13 +84,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                         let _ = setup_tx.send(Ok(()));
                         // --- Runtime phase ---
                         let tick_thread = tokio::spawn(async move {
-                            // FIX: criar um estado default com os 2 jogadores
-                            // FIX: fazer um game state message e tambem o current info estarem em sync com isso
-
                             let tick_info = OfflineBackend {
                                 player_input: T::Inputs::default(),
                                 local_tick: 0,
                                 last_status: LobbyStatus::NotStarted,
+                                prev_info: current_info.clone(),
                                 current_info,
 
                                 player,
@@ -104,6 +97,8 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                                 sdk_game_state: sdk_game_state_clone.clone(),
                                 user_logic: T::default(),
                                 bot_fn,
+                                visual_tick_micros,
+                                last_sim_instant: Instant::now(),
                             };
 
                             if let Err(e) = tick_info.tick_loop().await
@@ -145,25 +140,32 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
 
     pub async fn tick_loop(mut self) -> DeformResult {
         let mut tick_sleep = interval(Duration::from_micros(T::TICK_RATE_MICROS));
+        let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
         let mut terminated = false;
 
         loop {
             tokio_select!(match .. {
                 .. if let _ = tick_sleep.tick() => {
                     if self.last_status != LobbyStatus::Finished {
+                        self.prev_info = self.current_info.clone();
                         self.advance_local_simulation()?;
-
-                        {
-                            let mut shared = self
-                                .sdk_game_state
-                                .lock()
-                                .map_err(|_| DeformError::LockPoisoned)?;
-                            shared.tick_info = self.current_info.clone();
-                            shared.remote_status = self.last_status;
-                            // shared.events.append(&mut tick_info.events_queue);
-                        }
+                        self.last_sim_instant = Instant::now();
                     } else {
                         break;
+                    }
+                }
+                .. if let _ = visual_ticker.tick() => {
+                    let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
+                    let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
+                    let mut visual_state = self.current_info.clone();
+                    T::Smoother::apply(&self.prev_info.game_state, &mut visual_state.game_state, t);
+                    {
+                        let mut shared = self
+                            .sdk_game_state
+                            .lock()
+                            .map_err(|_| DeformError::LockPoisoned)?;
+                        shared.tick_info = visual_state;
+                        shared.remote_status = self.last_status;
                     }
                 }
                 // Shutdown signal

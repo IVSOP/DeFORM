@@ -20,7 +20,7 @@ pub const PADDLE_X: f32 = 400.0;
 pub const PADDLE_SPEED: f32 = 8.0;
 pub const BALL_SIZE: f32 = 20.0;
 pub const BALL_HALF: f32 = BALL_SIZE / 2.0;
-pub const BALL_SPEED: f32 = 12.0;
+pub const BALL_SPEED: f32 = 17.5;
 pub const BALL_SPAWN_X: f32 = PADDLE_X - 50.0;
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
@@ -41,7 +41,6 @@ impl MaxLen for PlayerState {
 }
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
-#[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
 pub struct PongGameState {
     #[smooth]
     #[wincode(with = "PodVec2")]

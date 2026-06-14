@@ -1,10 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use anyhow::anyhow;
-use bevy::prelude::*;
+use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
-use deform_core::{DeformClient, Pubkey};
+use deform_core::{DeformClient, DeformUserLogic, Pubkey};
 use deform_offline::new_offline_client;
 
 use solana_client::rpc_client::RpcClient;
@@ -226,13 +226,15 @@ fn start_offline(
     player_entities: &mut ResMut<PlayerEntities>,
     slots: &PaddleSlots,
     players_q: &mut Query<(&mut Player, &mut Visibility)>,
+    visual_tick_micros: u64,
 ) -> Result<()> {
     // Max pubkey so the bot always sorts last (= right side), matching
     // pong_bot's assumption that it defends the right paddle.
     let bot_player = Pubkey::new_from_array([255; 32]);
     let players = HashSet::from([main_player, bot_player]);
 
-    let client = new_offline_client::<PongGame>(main_player, players, pong_bot)?;
+    let client =
+        new_offline_client::<PongGame>(main_player, players, pong_bot, visual_tick_micros)?;
     commands.insert_resource(MultiplayerClient(client));
 
     // Game logic assigns sides by sorted pubkey: smaller = left, larger = right.
@@ -337,6 +339,7 @@ fn egui_in_menu(
     mut player_entities: ResMut<PlayerEntities>,
     paddle_slots: Res<PaddleSlots>,
     mut players_q: Query<(&mut Player, &mut Visibility)>,
+    monitor_q: Query<&Monitor>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     egui::Window::new("Pong").show(&ctx, |ui| {
@@ -350,18 +353,27 @@ fn egui_in_menu(
                 .as_ref()
                 .map(|kp| Pubkey::from(kp.pubkey().to_bytes()));
             match main_player {
-                Some(main_player) => match start_offline(
-                    &mut commands,
-                    main_player,
-                    &mut player_entities,
-                    &paddle_slots,
-                    &mut players_q,
-                ) {
-                    Ok(()) => next_state.set(AppState::InGame),
-                    Err(e) => {
-                        toasts.0.error(format!("Offline error: {e}"));
+                Some(main_player) => {
+                    let visual_tick_micros = monitor_q
+                        .iter()
+                        .filter_map(|m| m.refresh_rate_millihertz)
+                        .max()
+                        .map(|mhz| 1_000_000_000 / mhz as u64)
+                        .unwrap_or(PongGame::TICK_RATE_MICROS);
+                    match start_offline(
+                        &mut commands,
+                        main_player,
+                        &mut player_entities,
+                        &paddle_slots,
+                        &mut players_q,
+                        visual_tick_micros,
+                    ) {
+                        Ok(()) => next_state.set(AppState::InGame),
+                        Err(e) => {
+                            toasts.0.error(format!("Offline error: {e}"));
+                        }
                     }
-                },
+                }
                 None => {
                     toasts
                         .0

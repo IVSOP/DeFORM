@@ -58,6 +58,7 @@ pub fn new_quic_client<T: DeformUserLogic>(
     players: HashSet<Pubkey>,
     sig: Signature,
     skip_cert_verify: bool,
+    visual_tick_micros: u64,
 ) -> DeformResult<DeformClient<T>> {
     client::QuicBackend::<T>::init(
         server_addr,
@@ -67,5 +68,6 @@ pub fn new_quic_client<T: DeformUserLogic>(
         players,
         sig,
         skip_cert_verify,
+        visual_tick_micros,
     )
 }

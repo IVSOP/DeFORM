@@ -1,59 +1,37 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{
-    parse_macro_input, Data, DeriveInput, Fields, GenericArgument, Lit, PathArguments, Type,
-};
+use syn::{parse_macro_input, Data, DeriveInput, Fields, GenericArgument, PathArguments, Type};
 
 /// Derives a companion smoother struct and implements [`Smooth<T>`] for it.
 ///
 /// For a struct named `Foo`, this generates:
-/// - `FooSmoother` — a struct holding per-field smoothing offsets
-/// - `impl Smooth<Foo> for FooSmoother`
+/// - `FooSmoother` — a unit struct
+/// - `impl Smooth<Foo> for FooSmoother` — lerps `#[smooth]` fields between prev and current
 /// - `impl Smoothable for Foo` — links `Foo` to its smoother for composition
-///
-/// # Struct-level parameters
-///
-/// Configure smoothing behavior with `#[smooth(...)]` on the struct:
-///
-/// ```ignore
-/// #[derive(Smooth)]
-/// #[smooth(decay = 0.85, max_offset = 150.0, min_offset_sq = 1.0)]
-/// struct GameState { /* ... */ }
-/// ```
-///
-/// | Parameter      | Default | Description                                                   |
-/// |----------------|---------|---------------------------------------------------------------|
-/// | `decay`        | `0.9`   | Multiplier applied to offsets each frame (lower = faster snap)|
-/// | `max_offset`   | `200.0` | Offsets larger than this are discarded (teleport threshold)   |
-/// | `min_offset_sq`| `4.0`   | Offsets with squared magnitude below this are zeroed out      |
-///
-/// All parameters are optional. Omitting `#[smooth(...)]` entirely uses the defaults.
 ///
 /// # Field attributes
 ///
-/// ## `#[smooth]` — direct field smoothing
+/// ## `#[smooth]` — direct field interpolation
 ///
-/// Marks a field for offset-based smoothing. The field type must implement
-/// [`SmoothableField`] and support `-`, `+=`, and `*= f32`.
+/// Marks a field for lerp-based interpolation. The field type must implement
+/// [`SmoothableField`].
 ///
 /// Built-in types that work: `f32`, `f64`, `Vec2`, `Vec3`.
 ///
 /// ```ignore
 /// #[derive(Smooth)]
-/// #[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
 /// struct GameState {
 ///     #[smooth]
-///     ball_pos: Vec2,   // smoothed
-///     ball_vel: Vec2,   // NOT smoothed — no #[smooth]
-///     score: u32,       // NOT smoothed
+///     ball_pos: Vec2,   // interpolated
+///     ball_vel: Vec2,   // NOT interpolated — no #[smooth]
+///     score: u32,       // NOT interpolated
 /// }
 /// ```
 ///
 /// ## `#[smooth(nested)]` — delegate to a child smoother
 ///
-/// Delegates smoothing to the field's own derived smoother. The field type must
-/// also derive `Smooth` (i.e. implement [`Smoothable`]). Parameter inheritance
-/// flows through via [`Smooth::set_params`].
+/// Delegates interpolation to the field's own derived smoother. The field type
+/// must also derive `Smooth` (i.e. implement [`Smoothable`]).
 ///
 /// ```ignore
 /// #[derive(Smooth)]
@@ -64,18 +42,17 @@ use syn::{
 /// }
 ///
 /// #[derive(Smooth)]
-/// #[smooth(decay = 0.9)]
 /// struct GameState {
 ///     #[smooth(nested)]
 ///     player: PlayerState,
 /// }
 /// ```
 ///
-/// ## `#[smooth(map)]` — per-entry smoothing for `HashMap` fields
+/// ## `#[smooth(map)]` — per-entry interpolation for `HashMap` fields
 ///
-/// Smooths each entry of a `HashMap<K, V>` independently. `V` must also derive
-/// `Smooth` (i.e. implement [`Smoothable`]). Entries are created and cleaned up
-/// automatically as keys appear and disappear from the map.
+/// Interpolates each entry of a `HashMap<K, V>` independently. `V` must also
+/// derive `Smooth` (i.e. implement [`Smoothable`]). Entries that only exist in
+/// `current` (new keys) are left as-is (snap).
 ///
 /// ```ignore
 /// #[derive(Smooth)]
@@ -86,38 +63,11 @@ use syn::{
 /// }
 ///
 /// #[derive(Smooth)]
-/// #[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
 /// struct GameState {
 ///     #[smooth]
 ///     ball_pos: Vec2,
 ///     #[smooth(map)]
 ///     players: HashMap<Pubkey, PlayerState>,
-/// }
-/// ```
-///
-/// # Parameter inheritance
-///
-/// When a struct is used as a `#[smooth(nested)]` field or a `#[smooth(map)]`
-/// value, the parent's smoothing parameters are passed down through
-/// [`Smooth::set_params`].
-///
-/// - If the child has **no** `#[smooth(...)]`, it inherits the parent's parameters.
-/// - If the child has **its own** `#[smooth(...)]`, it keeps them — `set_params` is a no-op.
-///
-/// ```ignore
-/// // Inherits parent's decay/max_offset/min_offset_sq
-/// #[derive(Smooth)]
-/// struct PlayerState {
-///     #[smooth]
-///     position: Vec2,
-/// }
-///
-/// // Keeps its own parameters, ignoring the parent's
-/// #[derive(Smooth)]
-/// #[smooth(decay = 0.5)]
-/// struct HeavyPlayerState {
-///     #[smooth]
-///     position: Vec2,
 /// }
 /// ```
 #[proc_macro_derive(Smooth, attributes(smooth))]
@@ -127,48 +77,6 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
     let name = &input.ident;
     let smoother_name = format_ident!("{}Smoother", name);
     let vis = &input.vis;
-
-    let mut decay: f32 = 0.9;
-    let mut max_offset: f32 = 200.0;
-    let mut min_offset_sq: f32 = 4.0;
-    let mut has_custom_params = false;
-
-    for attr in &input.attrs {
-        if attr.path().is_ident("smooth") {
-            has_custom_params = true;
-            attr.parse_nested_meta(|meta| {
-                if meta.path.is_ident("decay") {
-                    let value = meta.value()?;
-                    let lit: Lit = value.parse()?;
-                    if let Lit::Float(f) = &lit {
-                        decay = f.base10_parse()?;
-                    } else if let Lit::Int(i) = &lit {
-                        decay = i.base10_parse()?;
-                    }
-                } else if meta.path.is_ident("max_offset") {
-                    let value = meta.value()?;
-                    let lit: Lit = value.parse()?;
-                    if let Lit::Float(f) = &lit {
-                        max_offset = f.base10_parse()?;
-                    } else if let Lit::Int(i) = &lit {
-                        max_offset = i.base10_parse()?;
-                    }
-                } else if meta.path.is_ident("min_offset_sq") {
-                    let value = meta.value()?;
-                    let lit: Lit = value.parse()?;
-                    if let Lit::Float(f) = &lit {
-                        min_offset_sq = f.base10_parse()?;
-                    } else if let Lit::Int(i) = &lit {
-                        min_offset_sq = i.base10_parse()?;
-                    }
-                }
-                Ok(())
-            })
-            .unwrap_or_else(|e| panic!("failed to parse #[smooth(...)]: {e}"));
-        }
-    }
-
-    let max_offset_sq = max_offset * max_offset;
 
     let fields = match &input.data {
         Data::Struct(data) => match &data.fields {
@@ -207,192 +115,48 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         }
     }
 
-    // --- smoother struct field definitions ---
-
-    let direct_field_defs = direct_fields.iter().map(|f| {
-        let name = &f.ident;
-        let ty = &f.ty;
-        quote! { pub #name: #ty }
-    });
-
-    let nested_field_defs = nested_fields.iter().map(|f| {
-        let name = &f.ident;
-        let ty = &f.ty;
-        quote! {
-            pub #name: <#ty as ::deform_core::Smoothable>::Smoother
-        }
-    });
-
-    let map_field_defs = map_fields.iter().map(|f| {
-        let name = &f.ident;
-        let (key_ty, val_ty) = extract_map_kv(&f.ty);
-        quote! {
-            pub #name: std::collections::HashMap<#key_ty, <#val_ty as ::deform_core::Smoothable>::Smoother>
-        }
-    });
-
-    // --- Default impl (sets __params from struct-level annotation) ---
-
-    let direct_field_defaults = direct_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! { #name: Default::default() }
-    });
-
-    let nested_field_defaults = nested_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! { #name: Default::default() }
-    });
-
-    let map_field_defaults = map_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! { #name: Default::default() }
-    });
-
-    // --- reset ---
-
-    let direct_reset = direct_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! { self.#name = Default::default(); }
-    });
-
-    let nested_reset = nested_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! { ::deform_core::Smooth::reset(&mut self.#name); }
-    });
-
-    let map_reset = map_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! { self.#name.clear(); }
-    });
-
-    // --- on_rollback ---
-
-    let direct_rollback = direct_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! {
-            {
-                let mut pre_visual = old.#name.clone();
-                pre_visual += self.#name.clone();
-                self.#name = pre_visual - new.#name.clone();
-                if ::deform_core::SmoothableField::magnitude_sq(&self.#name) > self.__params.max_offset_sq {
-                    self.#name = Default::default();
-                }
-            }
-        }
-    });
-
-    let nested_rollback = nested_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! {
-            ::deform_core::Smooth::on_rollback(&mut self.#name, &old.#name, &new.#name);
-        }
-    });
-
-    let map_rollback = map_fields.iter().map(|f| {
-        let name = &f.ident;
-        quote! {
-            {
-                let __params = self.__params;
-                for (__key, __new_val) in &new.#name {
-                    let __smoother = self.#name.entry(__key.clone()).or_insert_with(|| {
-                        let mut __s = Default::default();
-                        ::deform_core::Smooth::set_params(&mut __s, __params);
-                        __s
-                    });
-                    if let Some(__old_val) = old.#name.get(__key) {
-                        ::deform_core::Smooth::on_rollback(__smoother, __old_val, __new_val);
-                    } else {
-                        ::deform_core::Smooth::reset(__smoother);
-                    }
-                }
-                self.#name.retain(|__k, _| new.#name.contains_key(__k));
-            }
-        }
-    });
-
-    // --- apply ---
+    // --- apply (lerp) ---
 
     let direct_apply = direct_fields.iter().map(|f| {
         let name = &f.ident;
         quote! {
-            self.#name *= self.__params.decay;
-            if ::deform_core::SmoothableField::magnitude_sq(&self.#name) < self.__params.min_offset_sq {
-                self.#name = Default::default();
-            }
-            state.#name += self.#name.clone();
+            current.#name = ::deform_core::SmoothableField::lerp_toward(&prev.#name, &current.#name, t);
         }
     });
 
     let nested_apply = nested_fields.iter().map(|f| {
         let name = &f.ident;
+        let ty = &f.ty;
         quote! {
-            ::deform_core::Smooth::apply(&mut self.#name, &mut state.#name);
+            <<#ty as ::deform_core::Smoothable>::Smoother as ::deform_core::Smooth<#ty>>::apply(
+                &prev.#name, &mut current.#name, t
+            );
         }
     });
 
     let map_apply = map_fields.iter().map(|f| {
         let name = &f.ident;
+        let (_key_ty, val_ty) = extract_map_kv(&f.ty);
         quote! {
-            for (__key, __val) in &mut state.#name {
-                if let Some(__smoother) = self.#name.get_mut(__key) {
-                    ::deform_core::Smooth::apply(__smoother, __val);
+            for (__key, __current_val) in &mut current.#name {
+                if let Some(__prev_val) = prev.#name.get(__key) {
+                    <<#val_ty as ::deform_core::Smoothable>::Smoother as ::deform_core::Smooth<#val_ty>>::apply(
+                        __prev_val, __current_val, t
+                    );
                 }
             }
         }
     });
 
-    let nested_set_params_names: Vec<_> = nested_fields.iter().map(|f| &f.ident).collect();
-
     let expanded = quote! {
-        #[derive(Clone)]
-        #vis struct #smoother_name {
-            #(#direct_field_defs,)*
-            #(#nested_field_defs,)*
-            #(#map_field_defs,)*
-            __params: ::deform_core::SmoothParams,
-            __custom_params: bool,
-        }
-
-        impl Default for #smoother_name {
-            fn default() -> Self {
-                Self {
-                    #(#direct_field_defaults,)*
-                    #(#nested_field_defaults,)*
-                    #(#map_field_defaults,)*
-                    __params: ::deform_core::SmoothParams {
-                        decay: #decay,
-                        max_offset_sq: #max_offset_sq,
-                        min_offset_sq: #min_offset_sq,
-                    },
-                    __custom_params: #has_custom_params,
-                }
-            }
-        }
+        #[derive(Default, Clone)]
+        #vis struct #smoother_name;
 
         impl ::deform_core::Smooth<#name> for #smoother_name {
-            fn reset(&mut self) {
-                #(#direct_reset)*
-                #(#nested_reset)*
-                #(#map_reset)*
-            }
-
-            fn on_rollback(&mut self, old: &#name, new: &#name) {
-                #(#direct_rollback)*
-                #(#nested_rollback)*
-                #(#map_rollback)*
-            }
-
-            fn apply(&mut self, state: &mut #name) {
+            fn apply(prev: &#name, current: &mut #name, t: f32) {
                 #(#direct_apply)*
                 #(#nested_apply)*
                 #(#map_apply)*
-            }
-
-            fn set_params(&mut self, params: ::deform_core::SmoothParams) {
-                if !self.__custom_params {
-                    self.__params = params;
-                }
-                #(::deform_core::Smooth::set_params(&mut self.#nested_set_params_names, params);)*
             }
         }
 

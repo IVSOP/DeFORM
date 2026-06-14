@@ -10,7 +10,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     sync::{Notify, mpsc, oneshot},
@@ -46,7 +46,8 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
     pub user_logic: T,
 
-    pub smoother: T::Smoother,
+    pub visual_tick_micros: u64,
+    pub last_sim_instant: Instant,
 
     pub avg_rtt: Duration,
     /// If ticks are below this, simulation is fast forwarded. Also used to compute time dilation.
@@ -113,6 +114,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // TODO: abstract signature and auth in general!!!!!
         sig: Signature,
         skip_cert_verify: bool,
+        visual_tick_micros: u64,
     ) -> DeformResult<DeformClient<T>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
@@ -340,7 +342,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 min_ticks_ahead: 4,
                                 max_ticks_ahead: 3 * 4,
 
-                                smoother: T::Smoother::default(),
+                                visual_tick_micros,
+                                last_sim_instant: Instant::now(),
 
                                 avg_rtt: Duration::from_millis(50),
                                 user_logic: T::default(),
@@ -400,7 +403,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         self.info_per_tick.insert(0, current_tick_info);
 
         let mut tick_sleep = Box::pin(sleep(Duration::from_micros(T::TICK_RATE_MICROS)));
-        let mut visual_ticker = interval(Duration::from_micros(T::TICK_RATE_MICROS));
+        let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
         let mut inputs_ticker = interval(Duration::from_micros(T::TICK_RATE_MICROS));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
@@ -429,6 +432,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 // finish is handled when server tells us, not here
                             }
                         }
+                        self.last_sim_instant = Instant::now();
                     } else {
                         break;
                     }
@@ -436,12 +440,17 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                     tick_sleep = Box::pin(sleep(self.compute_dilated_tick_interval()));
                 }
 
-                // Visual: fixed 60fps update independent of simulation rate
+                // Visual: interpolate between previous and current sim state
                 .. if let _ = visual_ticker.tick() => {
-                    // FIX: RETURN ERROR
-                    if let Some(state) = self.info_per_tick.get(&self.local_tick) {
-                        let mut visual_state = state.clone();
-                        self.smoother.apply(&mut visual_state.game_state);
+                    let prev_tick = self.local_tick.saturating_sub(1);
+                    if let (Some(prev), Some(current)) = (
+                        self.info_per_tick.get(&prev_tick),
+                        self.info_per_tick.get(&self.local_tick),
+                    ) {
+                        let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
+                        let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
+                        let mut visual_state = current.clone();
+                        T::Smoother::apply(&prev.game_state, &mut visual_state.game_state, t);
                         {
                             let mut shared = self
                                 .sdk_game_state
@@ -449,7 +458,6 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                                 .map_err(|_| DeformError::LockPoisoned)?;
                             shared.tick_info = visual_state;
                             shared.remote_status = self.last_remote_status;
-                            // shared.events.append(&mut tick_info.events_queue);
                         }
                     }
                 }
@@ -545,8 +553,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
         if !terminated && self.last_remote_status == LobbyStatus::Finished {
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
-                let mut visual_state = tick_info.clone();
-                self.smoother.apply(&mut visual_state.game_state);
+                let visual_state = tick_info.clone();
                 {
                     let mut shared = self
                         .sdk_game_state
@@ -867,7 +874,6 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             .on_fast_forward(last_computed_state, &new_tick_info)
                             .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
 
-                        self.smoother.reset();
                         self.remote_tick = new_remote_tick;
                         self.local_tick = new_remote_tick;
                         self.info_per_tick.clear();
@@ -1026,11 +1032,6 @@ impl<T: DeformUserLogic> QuicBackend<T> {
             .info_per_tick
             .get(&self.local_tick)
             .ok_or(DeformError::InvalidState("State not found!"))?;
-
-        self.smoother.on_rollback(
-            &pre_rollback_info.game_state,
-            &post_rollback_info.game_state,
-        );
 
         self.user_logic
             .on_rollback(pre_rollback_info, post_rollback_info)
