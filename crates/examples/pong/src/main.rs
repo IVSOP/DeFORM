@@ -421,6 +421,19 @@ fn egui_in_menu(
 
         if let Some(kp) = &menu.keypair {
             ui.label(format!("Pubkey: {}", kp.pubkey()));
+            if let Some(rpc) = &menu.rpc_client {
+                if ui.button("Airdrop 10 SOL").clicked() {
+                    let lamports = 10 * solana_sdk::native_token::LAMPORTS_PER_SOL;
+                    match rpc.request_airdrop(&kp.pubkey(), lamports) {
+                        Ok(sig) => {
+                            toasts.0.info(format!("Airdrop requested: {sig}"));
+                        }
+                        Err(e) => {
+                            toasts.0.error(format!("Airdrop failed: {e}"));
+                        }
+                    }
+                }
+            }
         }
 
         // --- Network preset ---
