@@ -36,6 +36,7 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
     pub user_logic: T,
     pub bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
+    pub smoother: T::Smoother,
     pub visual_tick_micros: u64,
     pub last_sim_instant: Instant,
 }
@@ -84,6 +85,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                         let _ = setup_tx.send(Ok(()));
                         // --- Runtime phase ---
                         let tick_thread = tokio::spawn(async move {
+                            let mut smoother = T::Smoother::default();
+                            let decay_ratio =
+                                visual_tick_micros as f32 / T::TICK_RATE_MICROS as f32;
+                            smoother.scale_decay(decay_ratio);
+
                             let tick_info = OfflineBackend {
                                 player_input: T::Inputs::default(),
                                 local_tick: 0,
@@ -97,6 +103,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                                 sdk_game_state: sdk_game_state_clone.clone(),
                                 user_logic: T::default(),
                                 bot_fn,
+                                smoother,
                                 visual_tick_micros,
                                 last_sim_instant: Instant::now(),
                             };
@@ -158,7 +165,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
                     let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
                     let mut visual_state = self.current_info.clone();
-                    T::Smoother::apply(&self.prev_info.game_state, &mut visual_state.game_state, t);
+                    self.smoother.apply(
+                        &self.prev_info.game_state,
+                        &mut visual_state.game_state,
+                        t,
+                    );
                     {
                         let mut shared = self
                             .sdk_game_state

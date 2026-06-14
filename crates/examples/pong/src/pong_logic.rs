@@ -41,6 +41,7 @@ impl MaxLen for PlayerState {
 }
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
+#[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
 pub struct PongGameState {
     #[smooth]
     #[wincode(with = "PodVec2")]

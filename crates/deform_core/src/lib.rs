@@ -13,7 +13,7 @@ pub mod smooth;
 pub use client::{DeformClient, DeformReadState, Stats};
 
 pub use error::{DeformError, DeformResult};
-pub use smooth::{NoopSmoother, Smooth, Smoothable, SmoothableField};
+pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
