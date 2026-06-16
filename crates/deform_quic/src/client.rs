@@ -75,36 +75,6 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
 /// 200ms: introduces a bit of jitter
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
-// Helpers for length-prefixed messages on reliable streams
-async fn stream_write_msg(send: &mut quinn::SendStream, data: &[u8]) -> DeformResult {
-    send.write_all(&(data.len() as u32).to_le_bytes())
-        .await
-        .map_err(|e| DeformError::Connection(e.to_string()))?;
-    send.write_all(data)
-        .await
-        .map_err(|e| DeformError::Connection(e.to_string()))?;
-    Ok(())
-}
-
-async fn stream_read_msg(recv: &mut quinn::RecvStream) -> DeformResult<Vec<u8>> {
-    let mut len_buf = [0u8; 4];
-    recv.read_exact(&mut len_buf)
-        .await
-        .map_err(|e| DeformError::Connection(e.to_string()))?;
-    let len = u32::from_le_bytes(len_buf) as usize;
-    if len > 1024 * 1024 {
-        return Err(DeformError::Protocol(format!(
-            "message too large: {} bytes",
-            len
-        )));
-    }
-    let mut buf = vec![0u8; len];
-    recv.read_exact(&mut buf)
-        .await
-        .map_err(|e| DeformError::Connection(e.to_string()))?;
-    Ok(buf)
-}
-
 impl<T: DeformUserLogic> QuicBackend<T> {
     pub fn init(
         server_addr: String,
@@ -257,39 +227,21 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             sig,
                         };
 
-                        let bytes = match wincode::serialize(&handshake_message) {
-                            Ok(bytes) => bytes,
-                            Err(e) => {
-                                let _ = setup_tx
-                                    .send(Err(DeformError::Serialize(format!("handshake: {e:?}"))));
-                                return;
-                            }
-                        };
-
-                        if let Err(e) = stream_write_msg(&mut control_send, &bytes).await {
+                        if let Err(e) =
+                            crate::write_control(&mut control_send, &handshake_message).await
+                        {
                             let _ = setup_tx.send(Err(e));
                             return;
                         }
 
                         // Wait for AuthOk
-                        let response_bytes = match stream_read_msg(&mut control_recv).await {
-                            Ok(b) => b,
+                        let control_msg = match crate::read_control(&mut control_recv).await {
+                            Ok(msg) => msg,
                             Err(e) => {
                                 let _ = setup_tx.send(Err(e));
                                 return;
                             }
                         };
-
-                        let control_msg: ControlMessage =
-                            match wincode::deserialize(&response_bytes) {
-                                Ok(msg) => msg,
-                                Err(e) => {
-                                    let _ = setup_tx.send(Err(DeformError::Deserialize(format!(
-                                        "auth response: {e:?}"
-                                    ))));
-                                    return;
-                                }
-                            };
 
                         match control_msg {
                             ControlMessage::AuthOk => {}
@@ -526,24 +478,18 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Receive control messages on the reliable stream
-                .. if let control_msg = stream_read_msg(&mut self.control_recv) => {
-                    let bytes = control_msg?;
-                    match wincode::deserialize::<ControlMessage>(&bytes) {
-                        Ok(ControlMessage::Finish) => {
+                .. if let control_msg = crate::read_control(&mut self.control_recv) => {
+                    match control_msg? {
+                        ControlMessage::Finish => {
                             self.last_remote_status = LobbyStatus::Finished;
                             break;
                         }
-                        Ok(ControlMessage::Error(e)) => {
+                        ControlMessage::Error(e) => {
                             return Err(DeformError::Protocol(format!("server error: {e}")));
                         }
-                        Ok(other) => {
+                        other => {
                             return Err(DeformError::Protocol(format!(
                                 "unexpected control message: {other:?}"
-                            )));
-                        }
-                        Err(e) => {
-                            return Err(DeformError::Deserialize(format!(
-                                "control message: {e:?}"
                             )));
                         }
                     }

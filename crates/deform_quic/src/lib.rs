@@ -2,7 +2,8 @@ use std::collections::{HashMap, HashSet};
 
 use deform_core::Pubkey;
 use deform_core::{
-    DeformClient, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
+    DeformClient, DeformError, DeformGameState, DeformInputs, DeformResult, DeformUserLogic,
+    lobby::LobbyData,
 };
 use solana_signature::Signature;
 use wincode::{SchemaRead, SchemaWrite};
@@ -48,6 +49,39 @@ pub enum ServerResponse<I: DeformInputs, G: DeformGameState> {
     Error(String),
     // TODO: might be wasteful but it better mimics the fully on-chain behaviour
     NewState(LobbyData<I, G>),
+}
+
+const MAX_CONTROL_MSG_SIZE: usize = 4096;
+
+pub async fn write_control(send: &mut quinn::SendStream, msg: &ControlMessage) -> DeformResult {
+    let data = wincode::serialize(msg)
+        .map_err(|e| DeformError::Serialize(format!("control message: {e:?}")))?;
+    send.write_all(&(data.len() as u32).to_le_bytes())
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
+    send.write_all(data.as_slice())
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
+    Ok(())
+}
+
+pub async fn read_control(recv: &mut quinn::RecvStream) -> DeformResult<ControlMessage> {
+    let mut len_buf = [0u8; 4];
+    recv.read_exact(&mut len_buf)
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
+    let len = u32::from_le_bytes(len_buf) as usize;
+    if len > MAX_CONTROL_MSG_SIZE {
+        return Err(DeformError::Protocol(format!(
+            "control message too large: {len} bytes",
+        )));
+    }
+    let mut buf = vec![0u8; len];
+    recv.read_exact(&mut buf)
+        .await
+        .map_err(|e| DeformError::Connection(e.to_string()))?;
+    wincode::deserialize(&buf)
+        .map_err(|e| DeformError::Deserialize(format!("control message: {e:?}")))
 }
 
 pub fn new_quic_client<T: DeformUserLogic>(
