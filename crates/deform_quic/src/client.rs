@@ -1,9 +1,9 @@
 use better_tokio_select::tokio_select;
 use glam::FloatExt;
 use quinn::crypto::rustls::QuicClientConfig;
-use solana_signature::Signature;
 use std::{
     collections::{HashMap, HashSet},
+    marker::PhantomData,
     pin::Pin,
     sync::{
         Arc,
@@ -22,9 +22,12 @@ use deform_core::{
     Pubkey, Smooth, TickInfo, lobby::LobbyStatus,
 };
 
-use crate::{ALPN_PROTOCOL, ControlMessage, ServerResponse, ServerUnreliableInstruction};
+use crate::{
+    ALPN_PROTOCOL, DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
+    UnreliableServerResponse,
+};
 
-pub(crate) struct QuicBackend<T: DeformUserLogic> {
+pub(crate) struct QuicBackend<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> {
     pub local_tick: u64,
     pub remote_tick: u64,
     pub info_per_tick: HashMap<u64, TickInfo<T>>,
@@ -59,6 +62,7 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
     // pub dropped_datagrams: u64,
     // /// Cumulative count of stale/out-of-order datagrams (tick <= remote_tick).
     // pub stale_datagrams: u64,
+    phantom: PhantomData<D>,
 }
 
 /// How long to wait before using the RTT value to update how far ahead the simulation is.
@@ -75,17 +79,16 @@ pub(crate) struct QuicBackend<T: DeformUserLogic> {
 /// 200ms: introduces a bit of jitter
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
-impl<T: DeformUserLogic> QuicBackend<T> {
+impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> {
     pub fn init(
         server_addr: String,
         server_name: String,
         lobby_id: u64,
         player: Pubkey,
         players: HashSet<Pubkey>,
-        // TODO: abstract signature and auth in general!!!!!
-        sig: Signature,
         skip_cert_verify: bool,
         visual_tick_micros: u64,
+        auth: D::Auth,
     ) -> DeformResult<DeformClient<T>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
@@ -220,22 +223,27 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                             }
                         };
 
+                        // make a handshake message and send it to the server
+                        // if server returns an error, then communicate it to setup_tx and just exit. this is already done below
+
                         // Send handshake
-                        let handshake_message = ControlMessage::Handshake {
-                            lobby_id,
-                            player_pubkey: player.clone(),
-                            sig,
-                        };
+                        let handshake_message =
+                            ReliableMessage::Identification(crate::UserIdentification {
+                                pubkey: player.clone(),
+                                lobby_id,
+                                auth,
+                            });
 
                         if let Err(e) =
-                            crate::write_control(&mut control_send, &handshake_message).await
+                            ReliableMessage::<D>::write(&mut control_send, &handshake_message).await
                         {
                             let _ = setup_tx.send(Err(e));
                             return;
                         }
 
                         // Wait for AuthOk
-                        let control_msg = match crate::read_control(&mut control_recv).await {
+                        let control_msg = match ReliableMessage::<D>::read(&mut control_recv).await
+                        {
                             Ok(msg) => msg,
                             Err(e) => {
                                 let _ = setup_tx.send(Err(e));
@@ -244,8 +252,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                         };
 
                         match control_msg {
-                            ControlMessage::AuthOk => {}
-                            ControlMessage::Error(e) => {
+                            ReliableMessage::Authorized => {}
+                            ReliableMessage::Error(e) => {
                                 let _ = setup_tx.send(Err(DeformError::Protocol(format!(
                                     "server auth error: {e}"
                                 ))));
@@ -301,6 +309,8 @@ impl<T: DeformUserLogic> QuicBackend<T> {
 
                                 avg_rtt: Duration::from_millis(50),
                                 user_logic: T::default(),
+
+                                phantom: PhantomData::<D>,
                             };
 
                             if let Err(e) = tick_info.tick_loop().await
@@ -478,13 +488,13 @@ impl<T: DeformUserLogic> QuicBackend<T> {
                 }
 
                 // Receive control messages on the reliable stream
-                .. if let control_msg = crate::read_control(&mut self.control_recv) => {
+                .. if let control_msg = ReliableMessage::<D>::read(&mut self.control_recv) => {
                     match control_msg? {
-                        ControlMessage::Finish => {
+                        ReliableMessage::Finish => {
                             self.last_remote_status = LobbyStatus::Finished;
                             break;
                         }
-                        ControlMessage::Error(e) => {
+                        ReliableMessage::Error(e) => {
                             return Err(DeformError::Protocol(format!("server error: {e}")));
                         }
                         other => {
@@ -666,7 +676,7 @@ impl<T: DeformUserLogic> QuicBackend<T> {
             return Ok(());
         }
 
-        let ix = ServerUnreliableInstruction::<T::Inputs>::BatchSetInputs(self.inputs.clone());
+        let ix = UnreliableServerInstruction::<T::Inputs>::BatchSetInputs(self.inputs.clone());
         let bytes = wincode::serialize(&ix)?;
 
         self.connection
@@ -684,247 +694,242 @@ impl<T: DeformUserLogic> QuicBackend<T> {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("process_server_update");
 
-        let message: ServerResponse<T::Inputs, T::GameState> = wincode::deserialize(bytes)?;
-        match message {
-            ServerResponse::Error(e) => {
-                return Err(DeformError::Protocol(e));
+        let UnreliableServerResponse {
+            lobby_info: new_lobby_state,
+        }: UnreliableServerResponse<T::Inputs, T::GameState> = wincode::deserialize(bytes)?;
+        // #[cfg(feature = "tracy")]
+        // if let Some(client) = tracy_client::Client::running() {
+        //     client.plot(
+        //         tracy_client::plot_name!("last_tick_slot"),
+        //         new_lobby_state.last_tick_slot as f64,
+        //     );
+        // }
+
+        let old_remote_tick = self.remote_tick;
+        let new_remote_tick = new_lobby_state.tick;
+        let new_remote_status = new_lobby_state.status;
+        let new_tick_info: TickInfo<T> = new_lobby_state.into();
+
+        // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
+        if matches!(new_remote_status, LobbyStatus::Finished) {
+            self.inputs.clear();
+            self.info_per_tick.clear();
+            self.info_per_tick.insert(new_remote_tick, new_tick_info);
+            self.remote_tick = new_remote_tick;
+            self.local_tick = new_remote_tick;
+            self.last_remote_status = new_remote_status;
+            self.inputs.clear();
+
+            // self.events_queue.push(GameEvent::StateTransition {
+            //     old: GameStateEnum::Playing,
+            //     new: GameStateEnum::Finished,
+            // });
+
+            return Ok(());
+        }
+
+        /// Trying to handle all cases was a mess to keep up with all invariants so this makes it cleaner. I assume the compiler will take care of this.
+        /// IMPORTANT: each case is evaluated one after another; this means that the [`ReceivedScenario::Default`] branch will only trigger if all others do not.
+        ///
+        /// NOTE: in the case where there is no gap (`new_remote == old_remote + 1`) but the new remote is exactly equal to the local (`new_remote == local_sim`), then if falls through to the [`ReceivedScenario::Rollback`] and [`ReceivedScenario::Default`] branches.
+        #[derive(Clone, Copy)]
+        enum ReceivedScenario {
+            /// The received state is too old or a repeat message.
+            /// `new_remote <= old_remote`
+            OldOrRepeated,
+            /// The received state is strictly ahead of our own.
+            /// `new_remote > local_sim`
+            FastForward,
+            /// The received state is ahead of the old remote state by more than one tick.
+            /// `new_remote > old_remote + 1`
+            Gap,
+            /// The predicted inputs do not match the received ones, so we must roll back the simulation.
+            Rollback,
+            /// The default, expected scenario, were the remote state advanced by +1
+            /// and we are still ahead of it, and the inputs match the prediction.
+            Default,
+        }
+
+        let scenario = if old_remote_tick >= new_remote_tick {
+            // if the old tick is too old or repeated, just leave and do nothing
+            ReceivedScenario::OldOrRepeated
+        } else if new_remote_tick > self.local_tick {
+            // if the new tick is ahead of our local tick, we have fallen behind the server, and must fast-forward.
+            // the latest state is always under the ID `tick_info.local_tick`, so it will never exist
+            ReceivedScenario::FastForward
+        } else if new_remote_tick > old_remote_tick + 1 {
+            // the expected scenario is `new_remote_tick == old_remote_tick + 1`.
+            // if this does not happen, a gap was detected, and will need to be taken care of.
+            ReceivedScenario::Gap
+        } else {
+            // everything was ok, so now we can finally check that the inputs match
+            // according to the previous checks, the remote tick must exist in a previous predicted state, so error if it doesn't
+            let predicted_inputs = &self
+                .info_per_tick
+                .get(&new_remote_tick)
+                .ok_or(DeformError::InvalidState(
+                    "remote tick has not been predicted",
+                ))?
+                .inputs;
+
+            let remote_inputs = &new_tick_info.inputs;
+
+            // compare inputs from all players, and check if they match the ones the server sent
+            let mut mismatch = false;
+            for (player, predicted_input) in predicted_inputs.iter() {
+                let remote_input = remote_inputs.get(player).ok_or(DeformError::InvalidState(
+                    "player not found in remote inputs",
+                ))?;
+
+                if remote_input != predicted_input {
+                    mismatch = true;
+                    break;
+                }
             }
-            ServerResponse::NewState(new_lobby_state) => {
-                // #[cfg(feature = "tracy")]
-                // if let Some(client) = tracy_client::Client::running() {
-                //     client.plot(
-                //         tracy_client::plot_name!("last_tick_slot"),
-                //         new_lobby_state.last_tick_slot as f64,
-                //     );
-                // }
 
-                let old_remote_tick = self.remote_tick;
-                let new_remote_tick = new_lobby_state.tick;
-                let new_remote_status = new_lobby_state.status;
-                let new_tick_info: TickInfo<T> = new_lobby_state.into();
+            // if !mismatch {
+            //     // even though absolutely nothing went wrong, PowerupSpawnScheduled is a special case where the server is responsible for spawning powerups.
+            //     // there is no need to go and check all the other events, just this one.
+            //     // since handling a rollback also implies manually_emit_events, this is a lazy solution but it will work fine
 
-                // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
-                if matches!(new_remote_status, LobbyStatus::Finished) {
-                    self.inputs.clear();
-                    self.info_per_tick.clear();
-                    self.info_per_tick.insert(new_remote_tick, new_tick_info);
-                    self.remote_tick = new_remote_tick;
-                    self.local_tick = new_remote_tick;
-                    self.last_remote_status = new_remote_status;
-                    self.inputs.clear();
+            //     if predicted_state.scheduled_powerup.is_none()
+            //         && new_lobby_state.game_state.scheduled_powerup.is_some()
+            //     {
+            //         mismatch = true;
+            //     }
+            // }
 
-                    // self.events_queue.push(GameEvent::StateTransition {
-                    //     old: GameStateEnum::Playing,
-                    //     new: GameStateEnum::Finished,
-                    // });
+            if mismatch {
+                ReceivedScenario::Rollback
+            } else {
+                ReceivedScenario::Default
+            }
+        };
 
-                    return Ok(());
-                }
+        // handle early-return scenarios
+        match scenario {
+            ReceivedScenario::OldOrRepeated => {
+                // TODO: log something
+                return Ok(());
+            }
+            ReceivedScenario::FastForward => {
+                let last_computed_state = self
+                    .info_per_tick
+                    .get(&self.local_tick)
+                    .ok_or(DeformError::InvalidState("Local state not found, wtf"))?;
+                // manually_emit_events(
+                //     last_computed_state,
+                //     &new_lobby_state.game_state,
+                //     &mut self.events_queue,
+                // );
 
-                /// Trying to handle all cases was a mess to keep up with all invariants so this makes it cleaner. I assume the compiler will take care of this.
-                /// IMPORTANT: each case is evaluated one after another; this means that the [`ReceivedScenario::Default`] branch will only trigger if all others do not.
-                ///
-                /// NOTE: in the case where there is no gap (`new_remote == old_remote + 1`) but the new remote is exactly equal to the local (`new_remote == local_sim`), then if falls through to the [`ReceivedScenario::Rollback`] and [`ReceivedScenario::Default`] branches.
-                #[derive(Clone, Copy)]
-                enum ReceivedScenario {
-                    /// The received state is too old or a repeat message.
-                    /// `new_remote <= old_remote`
-                    OldOrRepeated,
-                    /// The received state is strictly ahead of our own.
-                    /// `new_remote > local_sim`
-                    FastForward,
-                    /// The received state is ahead of the old remote state by more than one tick.
-                    /// `new_remote > old_remote + 1`
-                    Gap,
-                    /// The predicted inputs do not match the received ones, so we must roll back the simulation.
-                    Rollback,
-                    /// The default, expected scenario, were the remote state advanced by +1
-                    /// and we are still ahead of it, and the inputs match the prediction.
-                    Default,
-                }
+                self.user_logic
+                    .on_fast_forward(last_computed_state, &new_tick_info)
+                    .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
 
-                let scenario = if old_remote_tick >= new_remote_tick {
-                    // if the old tick is too old or repeated, just leave and do nothing
-                    ReceivedScenario::OldOrRepeated
-                } else if new_remote_tick > self.local_tick {
-                    // if the new tick is ahead of our local tick, we have fallen behind the server, and must fast-forward.
-                    // the latest state is always under the ID `tick_info.local_tick`, so it will never exist
-                    ReceivedScenario::FastForward
-                } else if new_remote_tick > old_remote_tick + 1 {
-                    // the expected scenario is `new_remote_tick == old_remote_tick + 1`.
-                    // if this does not happen, a gap was detected, and will need to be taken care of.
-                    ReceivedScenario::Gap
-                } else {
-                    // everything was ok, so now we can finally check that the inputs match
-                    // according to the previous checks, the remote tick must exist in a previous predicted state, so error if it doesn't
-                    let predicted_inputs = &self
-                        .info_per_tick
-                        .get(&new_remote_tick)
-                        .ok_or(DeformError::InvalidState(
-                            "remote tick has not been predicted",
-                        ))?
-                        .inputs;
-
-                    let remote_inputs = &new_tick_info.inputs;
-
-                    // compare inputs from all players, and check if they match the ones the server sent
-                    let mut mismatch = false;
-                    for (player, predicted_input) in predicted_inputs.iter() {
-                        let remote_input = remote_inputs.get(player).ok_or(
-                            DeformError::InvalidState("player not found in remote inputs"),
-                        )?;
-
-                        if remote_input != predicted_input {
-                            mismatch = true;
-                            break;
-                        }
-                    }
-
-                    // if !mismatch {
-                    //     // even though absolutely nothing went wrong, PowerupSpawnScheduled is a special case where the server is responsible for spawning powerups.
-                    //     // there is no need to go and check all the other events, just this one.
-                    //     // since handling a rollback also implies manually_emit_events, this is a lazy solution but it will work fine
-
-                    //     if predicted_state.scheduled_powerup.is_none()
-                    //         && new_lobby_state.game_state.scheduled_powerup.is_some()
-                    //     {
-                    //         mismatch = true;
-                    //     }
-                    // }
-
-                    if mismatch {
-                        ReceivedScenario::Rollback
-                    } else {
-                        ReceivedScenario::Default
-                    }
-                };
-
-                // handle early-return scenarios
-                match scenario {
-                    ReceivedScenario::OldOrRepeated => {
-                        // TODO: log something
-                        return Ok(());
-                    }
-                    ReceivedScenario::FastForward => {
-                        let last_computed_state = self
-                            .info_per_tick
-                            .get(&self.local_tick)
-                            .ok_or(DeformError::InvalidState("Local state not found, wtf"))?;
-                        // manually_emit_events(
-                        //     last_computed_state,
-                        //     &new_lobby_state.game_state,
-                        //     &mut self.events_queue,
-                        // );
-
-                        self.user_logic
-                            .on_fast_forward(last_computed_state, &new_tick_info)
-                            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
-
-                        self.smoother.reset();
-                        self.remote_tick = new_remote_tick;
-                        self.local_tick = new_remote_tick;
-                        self.info_per_tick.clear();
-                        self.info_per_tick.insert(new_remote_tick, new_tick_info);
-                        self.last_remote_status = new_remote_status;
-                        self.inputs.clear();
-
-                        // trigger immediate catch-up on the next select iteration
-                        tick_sleep.as_mut().reset(tokio::time::Instant::now());
-
-                        return Ok(());
-                    }
-                    _ => {}
-                }
-
-                // --- shared setup for Gap / Rollback / Default ---
-
-                self.last_remote_status = new_remote_status;
+                self.smoother.reset();
                 self.remote_tick = new_remote_tick;
+                self.local_tick = new_remote_tick;
+                self.info_per_tick.clear();
+                self.info_per_tick.insert(new_remote_tick, new_tick_info);
+                self.last_remote_status = new_remote_status;
+                self.inputs.clear();
 
-                // if new_lobby_state.tick <= self.remote_tick {
-                //     self.stale_datagrams += 1;
-                //     #[cfg(feature = "tracy")]
-                //     if let Some(client) = tracy_client::Client::running() {
-                //         client.plot(
-                //             tracy_client::plot_name!("stale datagrams"),
-                //             self.stale_datagrams as f64,
-                //         );
-                //     }
-                //     return Ok(());
-                // }
+                // trigger immediate catch-up on the next select iteration
+                tick_sleep.as_mut().reset(tokio::time::Instant::now());
 
-                // // Count gaps in received tick sequence as dropped datagrams
-                // let gap = new_lobby_state
-                //     .tick
-                //     .saturating_sub(self.remote_tick + 1);
-                // if gap > 0 {
-                //     self.dropped_datagrams += gap;
-                //     #[cfg(feature = "tracy")]
-                //     if let Some(client) = tracy_client::Client::running() {
-                //         client.plot(
-                //             tracy_client::plot_name!("dropped datagrams"),
-                //             self.dropped_datagrams as f64,
-                //         );
-                //     }
-                // }
-
-                // prune all local inputs that are older than the new remote tick
-                self.inputs.retain(|tick, _| *tick >= new_remote_tick);
-
-                // #[cfg(feature = "log")]
-                // warn!("QUIC received {}", new_lobby_state.tick);
-
-                // #[cfg(feature = "tracy")]
-                // if let Some(client) = tracy_client::Client::running() {
-                //     client.plot(
-                //         tracy_client::plot_name!("remote_tick (clean)"),
-                //         new_lobby_state.tick as f64,
-                //     );
-                // }
-
-                match scenario {
-                    // if a gap was detected, no need to compare inputs. we have to rollback either way.
-                    // while these inputs could be correct, the previous missed frames could be wrong, causing divergence.
-                    // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
-                    ReceivedScenario::Gap => {
-                        // this could be remove() due to all the invariants but whatever, perf should be similar
-                        let old_remote_state = self
-                            .info_per_tick
-                            .get(&old_remote_tick)
-                            .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
-
-                        // manually_emit_events(
-                        //     old_remote_state,
-                        //     &new_lobby_state.game_state,
-                        //     &mut self.events_queue,
-                        // );
-
-                        self.user_logic
-                            .on_gap(old_remote_state, &new_tick_info)
-                            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
-
-                        // a rollback is always triggered, as it is assumed that the simulation is now out of sync
-                        // so it is resimulated from the new tick up to the current tick
-                        // this also inserts the new state etc
-                        self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
-                    }
-                    ReceivedScenario::Rollback => {
-                        // manually_emit_events(
-                        //     predicted_state,
-                        //     &new_lobby_state.game_state,
-                        //     &mut self.events_queue,
-                        // );
-                        self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
-                    }
-                    ReceivedScenario::Default => {}
-                    _ => unreachable!(),
-                }
-
-                // prune
-                for slot in old_remote_tick..new_remote_tick {
-                    self.info_per_tick.remove(&slot);
-                }
+                return Ok(());
             }
+            _ => {}
+        }
+
+        // --- shared setup for Gap / Rollback / Default ---
+
+        self.last_remote_status = new_remote_status;
+        self.remote_tick = new_remote_tick;
+
+        // if new_lobby_state.tick <= self.remote_tick {
+        //     self.stale_datagrams += 1;
+        //     #[cfg(feature = "tracy")]
+        //     if let Some(client) = tracy_client::Client::running() {
+        //         client.plot(
+        //             tracy_client::plot_name!("stale datagrams"),
+        //             self.stale_datagrams as f64,
+        //         );
+        //     }
+        //     return Ok(());
+        // }
+
+        // // Count gaps in received tick sequence as dropped datagrams
+        // let gap = new_lobby_state
+        //     .tick
+        //     .saturating_sub(self.remote_tick + 1);
+        // if gap > 0 {
+        //     self.dropped_datagrams += gap;
+        //     #[cfg(feature = "tracy")]
+        //     if let Some(client) = tracy_client::Client::running() {
+        //         client.plot(
+        //             tracy_client::plot_name!("dropped datagrams"),
+        //             self.dropped_datagrams as f64,
+        //         );
+        //     }
+        // }
+
+        // prune all local inputs that are older than the new remote tick
+        self.inputs.retain(|tick, _| *tick >= new_remote_tick);
+
+        // #[cfg(feature = "log")]
+        // warn!("QUIC received {}", new_lobby_state.tick);
+
+        // #[cfg(feature = "tracy")]
+        // if let Some(client) = tracy_client::Client::running() {
+        //     client.plot(
+        //         tracy_client::plot_name!("remote_tick (clean)"),
+        //         new_lobby_state.tick as f64,
+        //     );
+        // }
+
+        match scenario {
+            // if a gap was detected, no need to compare inputs. we have to rollback either way.
+            // while these inputs could be correct, the previous missed frames could be wrong, causing divergence.
+            // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
+            ReceivedScenario::Gap => {
+                // this could be remove() due to all the invariants but whatever, perf should be similar
+                let old_remote_state = self
+                    .info_per_tick
+                    .get(&old_remote_tick)
+                    .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
+
+                // manually_emit_events(
+                //     old_remote_state,
+                //     &new_lobby_state.game_state,
+                //     &mut self.events_queue,
+                // );
+
+                self.user_logic
+                    .on_gap(old_remote_state, &new_tick_info)
+                    .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+
+                // a rollback is always triggered, as it is assumed that the simulation is now out of sync
+                // so it is resimulated from the new tick up to the current tick
+                // this also inserts the new state etc
+                self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
+            }
+            ReceivedScenario::Rollback => {
+                // manually_emit_events(
+                //     predicted_state,
+                //     &new_lobby_state.game_state,
+                //     &mut self.events_queue,
+                // );
+                self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
+            }
+            ReceivedScenario::Default => {}
+            _ => unreachable!(),
+        }
+
+        // prune
+        for slot in old_remote_tick..new_remote_tick {
+            self.info_per_tick.remove(&slot);
         }
 
         Ok(())
