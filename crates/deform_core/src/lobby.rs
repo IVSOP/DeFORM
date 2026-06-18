@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use solana_address::error::AddressError;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{
-    DeformError, DeformGameState, DeformInputs, DeformResult, DeformUserLogic, Pubkey, TickInfo,
-};
+use crate::{DeformError, DeformInputs, DeformResult, DeformUserLogic, Pubkey, TickInfo};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
@@ -58,33 +56,26 @@ pub struct PlayerInfo<I: DeformInputs> {
 /// [`Lobby::new`] is a convenience all-parameters constructor; the fields are public.
 #[doc(hidden)]
 #[derive(Clone, SchemaRead, SchemaWrite)]
-pub struct LobbyData<I: DeformInputs, G: DeformGameState> {
+pub struct LobbyData<T: DeformUserLogic> {
     pub tick: u64,
     pub creator: Pubkey,
     pub status: LobbyStatus,
     // TODO: for web2, is game state needed?
     // it would mostly just be used for selected powerups, skins, etc...
-    pub game_state: G,
+    pub game_state: T::GameState,
     // FIX: serde correct serialization of pubkey
-    pub player_infos: HashMap<Pubkey, PlayerInfo<I>>,
+    pub player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
 }
 
-/// A [`LobbyData`] keyed off a [`DeformUserLogic`] `T` — the ergonomic spelling for
-/// code that is already generic over `T`. Because it resolves to `LobbyData<I, G>`,
-/// the wincode `SchemaRead`/`SchemaWrite` bounds land on the data types (which already
-/// satisfy them via the `DeformInputs` / `DeformGameState` supertraits), so `T` itself
-/// never needs the wincode traits.
-pub type Lobby<T> = LobbyData<<T as DeformUserLogic>::Inputs, <T as DeformUserLogic>::GameState>;
-
-impl<I: DeformInputs, G: DeformGameState> LobbyData<I, G> {
+impl<T: DeformUserLogic> LobbyData<T> {
     /// Construct a lobby from all of its parameters. This (plus the field accessors)
     /// is the only way to build one outside this crate, since the fields are private.
     pub fn new(
         tick: u64,
         creator: Pubkey,
         status: LobbyStatus,
-        game_state: G,
-        player_infos: HashMap<Pubkey, PlayerInfo<I>>,
+        game_state: T::GameState,
+        player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
     ) -> Self {
         Self {
             tick,
@@ -116,8 +107,8 @@ impl<I: DeformInputs, G: DeformGameState> LobbyData<I, G> {
     }
 }
 
-impl<T: DeformUserLogic> From<Lobby<T>> for TickInfo<T> {
-    fn from(lobby: Lobby<T>) -> Self {
+impl<T: DeformUserLogic> From<LobbyData<T>> for TickInfo<T> {
+    fn from(lobby: LobbyData<T>) -> Self {
         TickInfo {
             game_state: lobby.game_state,
             inputs: lobby

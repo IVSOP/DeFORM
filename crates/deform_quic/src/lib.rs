@@ -3,8 +3,7 @@ use std::fmt::{Debug, Display};
 
 use deform_core::Pubkey;
 use deform_core::{
-    DeformClient, DeformError, DeformGameState, DeformInputs, DeformResult, DeformUserLogic,
-    lobby::LobbyData,
+    DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
 };
 use solana_signature::Signature;
 use wincode::config::DefaultConfig;
@@ -83,8 +82,8 @@ pub enum UnreliableServerInstruction<I: DeformInputs> {
 pub struct SerializedUnreliableServerResponse(pub Vec<u8>);
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
-pub struct UnreliableServerResponse<I: DeformInputs, G: DeformGameState> {
-    pub lobby_info: LobbyData<I, G>,
+pub struct UnreliableServerResponse<T: DeformUserLogic> {
+    pub lobby_info: LobbyData<T>,
 }
 
 const MAX_CONTROL_MSG_SIZE: usize = 4096;

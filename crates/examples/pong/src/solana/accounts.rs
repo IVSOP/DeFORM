@@ -1,4 +1,5 @@
-use deform_core::{DeformError, DeformResult, Pubkey, lobby::Lobby};
+use deform_core::lobby::LobbyData;
+use deform_core::{DeformError, DeformResult, Pubkey};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::pong_logic::PongGame;
@@ -21,16 +22,16 @@ pub enum AccountType {
 pub struct LobbyAccount {
     pub account_type: AccountType,
     pub bump: u8,
-    pub lobby: Lobby<PongGame>,
+    pub lobby: LobbyData<PongGame>,
 }
 
 impl LobbyAccount {
     pub fn find_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
-        Lobby::<PongGame>::find_program_address(id, game)
+        LobbyData::<PongGame>::find_program_address(id, game)
     }
 
     pub fn create_program_address(id: u64, bump: u8, game: &Pubkey) -> anchor_lang::Result<Pubkey> {
-        Lobby::<PongGame>::create_program_address(id, game, bump)
+        LobbyData::<PongGame>::create_program_address(id, game, bump)
             .map_err(|_| anchor_lang::error::ErrorCode::ConstraintSeeds.into())
     }
 

@@ -696,7 +696,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
         let UnreliableServerResponse {
             lobby_info: new_lobby_state,
-        }: UnreliableServerResponse<T::Inputs, T::GameState> = wincode::deserialize(bytes)?;
+        }: UnreliableServerResponse<T> = wincode::deserialize(bytes)?;
         // #[cfg(feature = "tracy")]
         // if let Some(client) = tracy_client::Client::running() {
         //     client.plot(
