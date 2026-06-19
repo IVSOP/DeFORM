@@ -49,4 +49,4 @@ bevy_egui = "0.39.1"
 # opt-level = 3
 
 [patch.crates-io]
-wincode = { git = "https://github.com/IVSOP/wincode", rev = "ac9dcfe33dbfe94021389a5f137648f7144eb602" }
+wincode = { git = "https://github.com/IVSOP/wincode", rev = "a6b727a002b382602c2540d687d0334c154f1041" }

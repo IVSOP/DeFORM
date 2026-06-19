@@ -43,17 +43,6 @@ pub struct PlayerInfo<I: DeformInputs> {
 
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
-///
-/// This is the wincode-serializable representation, parameterized by the data types
-/// `<I, G>`. It is kept generic over the *data types* (rather than the whole
-/// [`DeformUserLogic`]) because wincode's derive macros bound every type parameter
-/// with `SchemaRead + SchemaWrite`; bounding the data types is correct (they are the
-/// fields), whereas bounding a `T: DeformUserLogic` would be both wrong (`T` is never
-/// serialized) and impossible (the derive would demand `T::GameState: SchemaRead<C>`
-/// for all configs `C`, which is unexpressible).
-///
-/// Prefer the [`Lobby<T>`] alias below in user-facing / `DeformUserLogic`-generic code.
-/// [`Lobby::new`] is a convenience all-parameters constructor; the fields are public.
 #[doc(hidden)]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct LobbyData<T: DeformUserLogic> {

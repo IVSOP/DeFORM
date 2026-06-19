@@ -1004,16 +1004,6 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
     }
 }
 
-// async fn fetch_lobby<I: DeformInputs, G: DeformGameState>(
-//     lobby: &Pubkey,
-//     rpc_client: &RpcClient,
-// ) -> DeformResult<Lobby<I, G>> {
-//     let account = rpc_client
-//         .get_account(lobby)
-//         .map_err(|e| DeformError::Rpc(e.to_string()))?;
-//     Lobby::from_bytes(&account.data).map_err(|e| DeformError::Deserialize(format!("lobby: {e:?}")))
-// }
-
 // ---------------------------------------------------------------------------
 // Certificate verification bypass for dev mode
 // ---------------------------------------------------------------------------
