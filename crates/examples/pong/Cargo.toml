@@ -23,7 +23,7 @@ serde = { workspace = true }
 wincode = { workspace = true }
 bevy = { workspace = true, optional = true }
 bevy_egui = { workspace = true, optional = true }
-bevy-egui-notify = { git = "https://github.com/IVSOP/bevy-egui-notify", rev = "793dd75d2a5218c62e3e3fdc87e936c07bca40da", optional = true }
+bevy-egui-notify = { workspace = true, optional = true }
 solana-address = { workspace = true, features = ["decode"] }
 solana-instruction = { workspace = true }
 solana-sdk = { workspace = true, optional = true }

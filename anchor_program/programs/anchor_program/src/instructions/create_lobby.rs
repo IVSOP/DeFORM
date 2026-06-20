@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use anchor_lang::{prelude::*, system_program};
 use deform_core::{
-    lobby::{Lobby, LobbyStatus, PLayerStatus, PlayerInfo},
+    lobby::{LobbyData, LobbyStatus, PLayerStatus, PlayerInfo},
     DeformGameState,
 };
 
@@ -40,7 +40,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     let lobby_account = LobbyAccount {
         account_type: AccountTypes::Lobby,
         bump,
-        lobby: Lobby::<UserLogic> {
+        lobby: LobbyData::<UserLogic> {
             tick: 0,
             creator,
             status: LobbyStatus::NotStarted,

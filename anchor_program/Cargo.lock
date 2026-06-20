@@ -1079,9 +1079,9 @@ dependencies = [
 
 [[package]]
 name = "glam"
-version = "0.30.10"
+version = "0.32.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19fc433e8437a212d1b6f1e68c7824af3aed907da60afa994e7f542d18d12aa9"
+checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 dependencies = [
  "bytemuck",
  "serde_core",
@@ -4164,8 +4164,7 @@ dependencies = [
 [[package]]
 name = "wincode"
 version = "0.5.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66d967db7705dc29120bb6e8ce5b5a2e27734ed5976d1c904e95bd238d1c3c5a"
+source = "git+https://github.com/anza-xyz/wincode?rev=ce424cbcd1c3cca34ad16b8d462feb444fcbf172#ce424cbcd1c3cca34ad16b8d462feb444fcbf172"
 dependencies = [
  "pastey",
  "proc-macro2",
@@ -4177,8 +4176,7 @@ dependencies = [
 [[package]]
 name = "wincode-derive"
 version = "0.4.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "15ab90b719560d0fda79c74550ad1c948d17b118765942838055ebaf34d67071"
+source = "git+https://github.com/anza-xyz/wincode?rev=ce424cbcd1c3cca34ad16b8d462feb444fcbf172#ce424cbcd1c3cca34ad16b8d462feb444fcbf172"
 dependencies = [
  "darling",
  "proc-macro2",

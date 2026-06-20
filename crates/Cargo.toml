@@ -32,13 +32,15 @@ solana-sdk = { version = "4.0.1", default-features = false, features = ["full", 
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 webpki-roots = { version = "0.26" }
-glam = { version = "0.30.7", default-features = false, features = ["bytemuck", "std", "serde"] } # debug-glam-assert
 thiserror = "2.0.18"
 better_tokio_select = "0.2"
 
 # deps shared between examples
-bevy = "0.18.1"
-bevy_egui = "0.39.1"
+bevy = "0.19.0"
+# bevy_math = "0.19.0"
+glam = { version = "0.32.1", default-features = false, features = ["bytemuck", "std", "serde"] } # debug-glam-assert # WARN: this needs to match bevy_math. I can't depend on bevy_math as bevy is locked to rustc 1.95, and solana is way behind
+bevy_egui = "0.40.0"
+bevy-egui-notify = { git = "https://github.com/IVSOP/bevy-egui-notify", rev = "f8e111d312a4c465a00ff2b86d6bc8be244ffcc2" }
 
 # # Enable a small amount of optimization in the dev profile.
 # [profile.dev]
@@ -49,4 +51,5 @@ bevy_egui = "0.39.1"
 # opt-level = 3
 
 [patch.crates-io]
-wincode = { git = "https://github.com/IVSOP/wincode", rev = "a6b727a002b382602c2540d687d0334c154f1041" }
+wincode = { git = "https://github.com/anza-xyz/wincode", rev = "ce424cbcd1c3cca34ad16b8d462feb444fcbf172" }
+
