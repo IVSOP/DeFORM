@@ -12,6 +12,7 @@ exclude = [
 ]
 
 [workspace.dependencies]
+anyhow = "1.0.102"
 wincode = { version = "0.5.5", default-features = false, features = ["alloc", "std", "derive"] }
 borsh = { version = "1.6.1", features = ["derive"] }
 num-derive = "0.4.2"
@@ -28,12 +29,16 @@ solana-client = "4.1.0-beta.3"
 solana-signature = "3.4.0"
 serde = { version = "1.0.228", features = ["serde_derive"] }
 tokio = { version = "1.48.0", default-features = false }
+tokio-util = "0.7.18"
 solana-sdk = { version = "4.0.1", default-features = false, features = ["full", "solana-signature"] } # "borsh"
+solana-rpc-client = "4.1.0-rc.1"
 quinn = "0.11"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 webpki-roots = { version = "0.26" }
 thiserror = "2.0.18"
 better_tokio_select = "0.2"
+rustls-pemfile = "2.2.0"
+rcgen = "0.14.8"
 
 # deps shared between examples
 bevy = "0.19.0"

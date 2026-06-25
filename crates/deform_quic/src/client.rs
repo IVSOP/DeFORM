@@ -994,8 +994,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
             .on_rollback(pre_rollback_info, post_rollback_info)
             .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
 
-        let new_deadline =
-            tokio::time::Instant::now() + self.compute_dilated_tick_interval();
+        let new_deadline = tokio::time::Instant::now() + self.compute_dilated_tick_interval();
         let old_deadline = tick_sleep.deadline();
         tick_sleep.as_mut().reset(new_deadline.min(old_deadline));
         // #[cfg(feature = "log")]

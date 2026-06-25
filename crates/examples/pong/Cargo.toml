@@ -27,7 +27,7 @@ bevy-egui-notify = { workspace = true, optional = true }
 solana-address = { workspace = true, features = ["decode"] }
 solana-instruction = { workspace = true }
 solana-sdk = { workspace = true, optional = true }
-solana-client = { workspace = true, optional = true }
+solana-client = { workspace = true, optional = true } # TODO: is solana-rpc-client enough??
 anyhow = { version = "1.0.102", optional = true }
 borsh = { workspace = true }
 num-derive = { workspace = true }

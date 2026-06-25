@@ -7,17 +7,22 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
+anyhow = { workspace = true }
 deform_core = { path = "../deform_core" }
 tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "net", "macros"] }
+tokio-util = { workspace = true }
 serde = { workspace = true }
 # solana-program-error = { workspace = true }
 solana-address = { workspace = true }
-solana-signature = { workspace = true } 
+solana-signature = { workspace = true }
+solana-rpc-client = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 webpki-roots = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 better_tokio_select = { workspace = true }
+rustls-pemfile = { workspace = true }
+rcgen = { workspace = true }
 
 [features]
