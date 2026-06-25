@@ -5,7 +5,7 @@ use std::{
 use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::DeformUserLogic;
-use quinn::{ServerConfig, crypto::rustls::QuicServerConfig};
+use quinn::{Connection, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -95,7 +95,7 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 .. if let incoming = endpoint.accept() => {
                     match incoming {
                         Some(incoming) => {
-                            self.handle_connection(incoming, rpc_client.clone()).await;
+                            self.handle_incoming(incoming, rpc_client.clone()).await;
                         }
                         None => {
                             // info!("QUIC endpoint closed");
@@ -150,8 +150,9 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             cancellation_token.cancel();
         });
     }
-    
-    pub async fn handle_connection(
+
+    /// Does a quick filtering of the connection before spawning a task to process it
+    pub async fn handle_incoming(
         &mut self,
         incoming: quinn::Incoming,
         rpc_client: Arc<RpcClient>,
@@ -174,37 +175,58 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             return;
         }
     
-        // Per-IP concurrent connection cap.  Loopback is exempt
-        // so that local test runs are not artificially limited.
+        // refuse connection if too many connections
+        // it is checked here, but not modified!! only incremented once connection is actually accepted
         if !is_loopback {
-            let mut num_connections_per_ip_guard = self.num_connections_per_ip.write().await;
-            let entry = num_connections_per_ip_guard.entry(client_ip).or_insert(0);
-            if *entry >= self.max_conn_per_ip {
-                // warn!("Per-IP connection limit reached for {}", client_ip);
-                incoming.refuse();
-                return;
+            let mut num_connections_per_ip_guard = self.num_connections_per_ip.read().await;
+            if let Some(num_connections) = num_connections_per_ip_guard.get(&client_ip) {
+                if *num_connections >= self.max_conn_per_ip {
+                    // log...
+                    incoming.refuse();
+                    return;
+                }
             }
-            *entry += 1;
         }
     
         let rpc_client = rpc_client.clone();
         let matches = self.matches.clone();
         let num_connections_per_ip = self.num_connections_per_ip.clone();
+
         tokio::spawn(async move {
-            if let Err(e) = process_connection(
-                incoming,
+            let connection = match incoming.await {
+                Ok(connection) => connection,
+                Err(_e) => {
+                    // TODO: handle error. maybe just debug log it and close the connection?
+                    return;
+                }
+            };
+
+            let (mut send_stream, recv_stream) = match connection.accept_bi().await {
+                Ok(streams) => streams,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("cryptographic handshake failed") {
+                        // debug!("Rejected probe from {}: {}", client_ip, msg);
+                    } else {
+                        //
+                    }
+                    return;
+                }
+            };
+
+            if let Err(e) = Self::process_connection(
+                connection,
+                client_ip.clone(),
+                is_loopback,
                 rpc_client,
                 matches,
+                num_connections_per_ip.clone(),
             )
             .await
             {
-                let msg = e.to_string();
-                if msg.contains("cryptographic handshake failed") {
-                    // debug!("Rejected probe from {}: {}", client_ip, msg);
-                } else {
-                    // warn!("Connection error: {}", msg);
-                }
+                // TODO: SEND ERROR TO THE CLIENT AND LOG IT!
             }
+
             // Decrement per-IP count when the connection ends.
             // Loopback connections were never counted, skip them.
             if !is_loopback {
@@ -220,6 +242,26 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 }
             }
         });
+    }
+
+    pub async fn process_connection(
+        connection: Connection,
+        client_ip: IpAddr,
+        is_loopback: bool,
+        rpc_client: Arc<RpcClient>,
+        matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
+        num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
+    ) -> anyhow::Result<()> {
+        // FIX: increment IP, call process_connection, decrement IP, treat errors as needed
+
+        // TODO: do this with the Incoming instead of the Connection?
+        if !is_loopback {
+            let mut num_connections_per_ip_guard = num_connections_per_ip.write().await;
+            let entry = num_connections_per_ip_guard.entry(client_ip).or_insert(0);
+            *entry += 1;
+        }
+
+        Ok(())
     }
 }
 
