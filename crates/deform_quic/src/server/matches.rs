@@ -17,7 +17,7 @@ pub enum MatchMessage<U: DeformUserLogic> {
 }
 
 /// Messages sent internally from the match task to each client-handling task
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[derive(Debug, SchemaRead, SchemaWrite)]
 pub enum InternalServerResponse<Q: DeformQuicLogic> {
     SendDatagram(SerializedUnreliableServerResponse),
     SendReliableMessage(ReliableMessage<Q>),

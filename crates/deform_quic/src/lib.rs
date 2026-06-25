@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::fmt::{Debug, Display};
+use std::fmt::Debug;
 
 use deform_core::Pubkey;
 use deform_core::{
@@ -21,7 +21,7 @@ wincode::pod_wrapper! {
 
 /// Trait that defines what data types the server, as well as the logic functions/callbacks.
 // has to be debug for printing reliable messages (wtf)
-pub trait DeformQuicLogic: Debug + Send + 'static {
+pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
     type CustomReliableMessage: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::CustomReliableMessage>
         + SchemaWrite<DefaultConfig, Src = Self::CustomReliableMessage>
         + Clone
@@ -32,13 +32,6 @@ pub trait DeformQuicLogic: Debug + Send + 'static {
         + SchemaWrite<DefaultConfig, Src = Self::Auth>
         + Clone
         + Debug
-        + Send;
-
-    type Error: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Error>
-        + SchemaWrite<DefaultConfig, Src = Self::Error>
-        + Clone
-        + Debug
-        + Display
         + Send;
 
     // https://github.com/rust-lang/rust/issues/29661

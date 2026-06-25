@@ -118,16 +118,12 @@ impl MaxLen for PongInputs {
 #[derive(Clone, Default)]
 pub struct PongGame;
 
-#[derive(Debug, Clone, serde::Serialize)]
-pub enum PongError {}
-
-impl std::fmt::Display for PongError {
-    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match *self {}
-    }
+#[derive(Debug, Clone, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
+pub enum PongError {
+    // needed otherwise SchemaRead will warn about unreachable code
+    #[error("unreachable")]
+    Never,
 }
-
-impl std::error::Error for PongError {}
 
 impl DeformUserLogic for PongGame {
     type Inputs = PongInputs;

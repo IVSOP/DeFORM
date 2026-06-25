@@ -30,7 +30,14 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     type Inputs: DeformInputs;
     type GameState: DeformGameState;
     type Smoother: Smooth<Self::GameState>;
-    type Error: std::error::Error + Send + Sync + 'static + serde::Serialize;
+    type Error: std::error::Error
+        + Send
+        + Sync
+        + 'static
+        + serde::Serialize
+        + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Error>
+        + SchemaWrite<DefaultConfig, Src = Self::Error>
+        + Clone;
 
     /// Microseconds per simulation tick. For 60 fps, use `16667`.
     const TICK_RATE_MICROS: u64;
