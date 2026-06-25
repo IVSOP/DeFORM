@@ -114,14 +114,26 @@ impl MaxLen for PongInputs {
     }
 }
 
+// workaround since Infallible does not have Serialize
 #[derive(Clone, Default)]
 pub struct PongGame;
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum PongError {}
+
+impl std::fmt::Display for PongError {
+    fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {}
+    }
+}
+
+impl std::error::Error for PongError {}
 
 impl DeformUserLogic for PongGame {
     type Inputs = PongInputs;
     type GameState = PongGameState;
     type Smoother = PongGameStateSmoother;
-    type Error = std::convert::Infallible;
+    type Error = PongError;
 
     const TICK_RATE_MICROS: u64 = 16667;
 

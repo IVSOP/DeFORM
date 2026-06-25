@@ -19,7 +19,9 @@ use tokio::{
 
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformReadState, DeformResult, DeformUserLogic,
-    Pubkey, Smooth, TickInfo, lobby::LobbyStatus,
+    Pubkey, Smooth, TickInfo,
+    error::{UserFacingError, UserFacingResult},
+    lobby::LobbyStatus,
 };
 
 use crate::{
@@ -316,7 +318,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                             if let Err(e) = tick_info.tick_loop().await
                                 && let Ok(mut shared) = sdk_game_state_clone.lock()
                             {
-                                shared.internal_error = Err(e);
+                                shared.internal_error = Err(e.into());
                             }
                         });
 
@@ -324,7 +326,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                             // if error aquiring lock, there is really no way to report it
                             if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
                                 shared.internal_error =
-                                    Err(DeformError::BackendPanicked(format!("{e:?}")));
+                                    Err(DeformError::BackendPanicked(format!("{e:?}")).into());
                             }
                         }
                     });
@@ -350,7 +352,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         })
     }
 
-    pub async fn tick_loop(mut self) -> DeformResult {
+    pub async fn tick_loop(mut self) -> UserFacingResult<T> {
         // read the first tick from the sdk_game_state
         // TODO: do this above, at setup??
         let current_tick_info: TickInfo<T> = {
@@ -495,12 +497,13 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                             break;
                         }
                         ReliableMessage::Error(e) => {
-                            return Err(DeformError::Protocol(format!("server error: {e}")));
+                            return Err(DeformError::Protocol(format!("server error: {e}")).into());
                         }
                         other => {
                             return Err(DeformError::Protocol(format!(
                                 "unexpected control message: {other:?}"
-                            )));
+                            ))
+                            .into());
                         }
                     }
                 }
@@ -610,7 +613,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         Duration::from_micros(micros)
     }
 
-    pub fn advance_local_simulation(&mut self) -> DeformResult {
+    pub fn advance_local_simulation(&mut self) -> UserFacingResult<T> {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("advance_local_simulation");
 
@@ -655,7 +658,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         let new_state = self
             .user_logic
             .advance_frame(&current_info.game_state, &new_players_inputs)
-            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+            .map_err(|e| UserFacingError::User(e))?;
 
         let next_info = TickInfo {
             game_state: new_state,
@@ -690,13 +693,15 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         &mut self,
         bytes: &[u8],
         tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> DeformResult {
+    ) -> UserFacingResult<T> {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("process_server_update");
 
         let UnreliableServerResponse {
             lobby_info: new_lobby_state,
-        }: UnreliableServerResponse<T> = wincode::deserialize(bytes)?;
+        }: UnreliableServerResponse<T> =
+            wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
+
         // #[cfg(feature = "tracy")]
         // if let Some(client) = tracy_client::Client::running() {
         //     client.plot(
@@ -825,7 +830,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
                 self.user_logic
                     .on_fast_forward(last_computed_state, &new_tick_info)
-                    .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+                    .map_err(|e| UserFacingError::User(e))?;
 
                 self.smoother.reset();
                 self.remote_tick = new_remote_tick;
@@ -908,7 +913,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
                 self.user_logic
                     .on_gap(old_remote_state, &new_tick_info)
-                    .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+                    .map_err(|e| UserFacingError::User(e))?;
 
                 // a rollback is always triggered, as it is assumed that the simulation is now out of sync
                 // so it is resimulated from the new tick up to the current tick
@@ -947,7 +952,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         new_tick_info: TickInfo<T>,
         conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> DeformResult {
+    ) -> UserFacingResult<T> {
         // #[cfg(feature = "tracy")]
         // if let Some(client) = tracy_client::Client::running() {
         //     client.message("rollback", 0);
@@ -992,7 +997,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
         self.user_logic
             .on_rollback(pre_rollback_info, post_rollback_info)
-            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+            .map_err(|e| UserFacingError::User(e))?;
 
         let new_deadline = tokio::time::Instant::now() + self.compute_dilated_tick_interval();
         let old_deadline = tick_sleep.deadline();

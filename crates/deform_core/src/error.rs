@@ -1,6 +1,8 @@
 use solana_program_error::ProgramError;
 use thiserror::Error;
 
+use crate::DeformUserLogic;
+
 fn serialize_as_display<T: std::fmt::Display, S: serde::Serializer>(
     value: &T,
     serializer: S,
@@ -42,12 +44,6 @@ pub enum DeformError {
         std::io::Error,
     ),
 
-    // TODO: ugly, but I can't figure out an alternative
-    #[error("user logic: {0}")]
-    UserLogic(
-        #[serde(serialize_with = "serialize_as_display")] Box<dyn std::error::Error + Send + Sync>,
-    ),
-
     #[error("serialize lobby: {0}")]
     SerializeLobby(String),
 
@@ -72,10 +68,9 @@ impl From<DeformError> for ProgramError {
             DeformError::ChannelClosed => 6,
             DeformError::Rpc(_) => 8,
             DeformError::Io(_) => 9,
-            DeformError::UserLogic(_) => 10,
-            DeformError::SerializeLobby(_) => 11,
-            DeformError::DeserializeLobby(_) => 12,
-            DeformError::BackendPanicked(_) => 13,
+            DeformError::SerializeLobby(_) => 10,
+            DeformError::DeserializeLobby(_) => 11,
+            DeformError::BackendPanicked(_) => 12,
         })
     }
 }
@@ -91,3 +86,17 @@ impl From<wincode::ReadError> for DeformError {
         DeformError::Deserialize(format!("{e:?}"))
     }
 }
+
+#[derive(Debug, serde::Serialize)]
+pub enum UserFacingError<D: DeformUserLogic> {
+    Deform(DeformError),
+    User(D::Error),
+}
+
+impl<D: DeformUserLogic> From<DeformError> for UserFacingError<D> {
+    fn from(e: DeformError) -> Self {
+        UserFacingError::Deform(e)
+    }
+}
+
+pub type UserFacingResult<D, T = ()> = Result<T, UserFacingError<D>>;

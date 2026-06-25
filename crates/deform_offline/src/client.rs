@@ -15,7 +15,9 @@ use tokio::{
 
 use deform_core::{
     DeformClient, DeformError, DeformReadState, DeformResult, DeformUserLogic, Pubkey, Smooth,
-    TickInfo, lobby::LobbyStatus,
+    TickInfo,
+    error::{UserFacingError, UserFacingResult},
+    lobby::LobbyStatus,
 };
 
 pub(crate) struct OfflineBackend<T: DeformUserLogic> {
@@ -119,7 +121,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                             // if error aquiring lock, there is really no way to report it
                             if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
                                 shared.internal_error =
-                                    Err(DeformError::BackendPanicked(format!("{e:?}")));
+                                    Err(DeformError::BackendPanicked(format!("{e:?}")).into());
                             }
                         }
                     });
@@ -145,7 +147,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         })
     }
 
-    pub async fn tick_loop(mut self) -> DeformResult {
+    pub async fn tick_loop(mut self) -> UserFacingResult<T> {
         let mut tick_sleep = interval(Duration::from_micros(T::TICK_RATE_MICROS));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
         let mut terminated = false;
@@ -208,7 +210,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         Ok(())
     }
 
-    pub fn advance_local_simulation(&mut self) -> DeformResult {
+    pub fn advance_local_simulation(&mut self) -> UserFacingResult<T> {
         let current_state = &self.current_info.game_state;
 
         // clone the old array so that we have the correct pubkeys
@@ -233,7 +235,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         let new_state = self
             .user_logic
             .advance_frame(current_state, &new_players_inputs)
-            .map_err(|e| DeformError::UserLogic(Box::new(e)))?;
+            .map_err(UserFacingError::User)?;
 
         let next_info = TickInfo {
             game_state: new_state,

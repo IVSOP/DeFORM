@@ -1,5 +1,9 @@
 use std::{
-    collections::HashMap, marker::PhantomData, net::{IpAddr, SocketAddr}, sync::Arc, time::Duration
+    collections::HashMap,
+    marker::PhantomData,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+    time::Duration,
 };
 
 use anyhow::Context;
@@ -44,7 +48,7 @@ pub struct DeformQuicServer<T: DeformQuicLogic + DeformUserLogic> {
     pub num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
 }
 
-impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
+impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
     pub fn new_with_defaults(auth_config: &AuthConfig) -> anyhow::Result<Self> {
         let tls_config = build_tls_config(auth_config)?;
         let quic_server_config =
@@ -74,22 +78,18 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         self.quinn_config.transport_config(Arc::new(transport));
     }
 
-    pub async fn init_server(
-        mut self,
-        logic: T,
-        rpc_client: Arc<RpcClient>,
-    ) -> anyhow::Result<()> {
+    pub async fn init_server(mut self, logic: T, rpc_client: Arc<RpcClient>) -> anyhow::Result<()> {
         // // TODO: get this out of here, the client has to call it
         // rustls::crypto::ring::default_provider()
         //     .install_default()
         //     .expect("Failed to install rustls crypto provider");
         let endpoint = quinn::Endpoint::server(self.quinn_config.clone(), self.addr.clone())?;
-    
+
         // I will have many different tokio selects doing different things, so shutdown will be through a cancellation token
         // TODO: pass this from outside so the user can also call it
         let cancellation_token = CancellationToken::new();
         Self::register_signal(cancellation_token.clone()).await;
-    
+
         loop {
             tokio_select!(match .. {
                 .. if let incoming = endpoint.accept() => {
@@ -105,7 +105,7 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 }
                 .. if let _ = cancellation_token.cancelled() => {
                     // TODO: in the future don't do this with a sleep
-    
+
                     // wait for all cranks to finish their games
                     loop {
                         let matches_len = self.matches.read().await.len();
@@ -116,22 +116,22 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                             break;
                         }
                     }
-    
+
                     break;
                 }
             })
         }
-    
+
         Ok(())
     }
-    
+
     async fn register_signal(cancellation_token: CancellationToken) {
         tokio::spawn(async move {
             // TODO: make this return error somehow
             let mut sigterm = signal(SignalKind::terminate())
                 .with_context(|| "Failed to register SIGTERM handler")
                 .unwrap();
-    
+
             // wait for ctrl_c or sigterm to be received
             tokio_select!(match .. {
                 .. if let result = tokio::signal::ctrl_c() => {
@@ -142,7 +142,7 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 }
                 .. if let _ = sigterm.recv() => {}
             });
-    
+
             // set an atomic bool so that new connections can be rejected
             // info!(
             //     "Shutdown signal received. Rejecting new cranks, waiting for active ones to finish..."
@@ -152,15 +152,11 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
     }
 
     /// Does a quick filtering of the connection before spawning a task to process it
-    pub async fn handle_incoming(
-        &mut self,
-        incoming: quinn::Incoming,
-        rpc_client: Arc<RpcClient>,
-    ) {
+    pub async fn handle_incoming(&mut self, incoming: quinn::Incoming, rpc_client: Arc<RpcClient>) {
         // do some quick filtering to check that the connection is allowed before spawning the handler task
         let client_ip = incoming.remote_address().ip();
         let is_loopback = client_ip.is_loopback();
-    
+
         // TODO: is this needed / is this how this should be done?
         // Force address validation: if the client hasn't echoed
         // a Retry token yet, send one and discard this attempt.
@@ -174,7 +170,7 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             }
             return;
         }
-    
+
         // refuse connection if too many connections
         // it is checked here, but not modified!! only incremented once connection is actually accepted
         if !is_loopback {
@@ -187,7 +183,7 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 }
             }
         }
-    
+
         let rpc_client = rpc_client.clone();
         let matches = self.matches.clone();
         let num_connections_per_ip = self.num_connections_per_ip.clone();
@@ -231,7 +227,7 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             // Loopback connections were never counted, skip them.
             if !is_loopback {
                 let mut num_connections_per_ip_guard = num_connections_per_ip.write().await;
-    
+
                 if let Some(count) = num_connections_per_ip_guard.get_mut(&client_ip) {
                     if *count > 0 {
                         *count -= 1;
@@ -264,7 +260,6 @@ impl <T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         Ok(())
     }
 }
-
 
 // FIX: read data from lobby
 // FIX: perform auth, connect clients to matches, run game logic, read and send messages

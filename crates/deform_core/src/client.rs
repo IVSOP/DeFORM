@@ -6,8 +6,8 @@ use std::{
 use tokio::sync::{mpsc, Notify};
 
 use crate::{
-    lobby::LobbyStatus, DeformError, DeformGameState, DeformResult, DeformUserLogic, Pubkey,
-    TickInfo,
+    error::UserFacingResult, lobby::LobbyStatus, DeformError, DeformGameState, DeformResult,
+    DeformUserLogic, Pubkey, TickInfo,
 };
 
 /// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
@@ -37,7 +37,7 @@ pub struct DeformReadState<T: DeformUserLogic> {
     /// However, running the callbacks inside the lock is bad as I don't know how long the operations being done by the user are taking.
     /// So, the approach I have chosen is to keep an owned T in the backend. After operations are done and the [`DeformReadState`] needs to be updated, it is cloned into here.
     pub user_logic: T,
-    pub internal_error: DeformResult<()>,
+    pub internal_error: UserFacingResult<T, ()>,
 }
 
 impl<T: DeformUserLogic> DeformReadState<T> {
