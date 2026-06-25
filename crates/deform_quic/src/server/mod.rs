@@ -8,7 +8,10 @@ use std::{
 
 use anyhow::Context;
 use better_tokio_select::tokio_select;
-use deform_core::DeformUserLogic;
+use deform_core::{
+    DeformUserLogic,
+    error::{UserFacingError, UserFacingResult},
+};
 use quinn::{Connection, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use tokio::{
@@ -19,7 +22,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    DeformQuicLogic,
+    DeformQuicLogic, ReliableMessage,
     server::{
         auth_config::{AuthConfig, build_tls_config},
         matches::MatchInfo,
@@ -174,7 +177,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         // refuse connection if too many connections
         // it is checked here, but not modified!! only incremented once connection is actually accepted
         if !is_loopback {
-            let mut num_connections_per_ip_guard = self.num_connections_per_ip.read().await;
+            let num_connections_per_ip_guard = self.num_connections_per_ip.read().await;
             if let Some(num_connections) = num_connections_per_ip_guard.get(&client_ip) {
                 if *num_connections >= self.max_conn_per_ip {
                     // log...
@@ -211,7 +214,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             };
 
             if let Err(e) = Self::process_connection(
-                connection,
+                connection.clone(),
                 client_ip.clone(),
                 is_loopback,
                 rpc_client,
@@ -220,7 +223,10 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             )
             .await
             {
-                // TODO: SEND ERROR TO THE CLIENT AND LOG IT!
+                // warn!("Sending error to client {}: {}", remote, e);
+                let _ = ReliableMessage::Error(e).write(&mut send_stream).await;
+                let _ = send_stream.finish();
+                connection.close(quinn::VarInt::from_u32(1), b"error");
             }
 
             // Decrement per-IP count when the connection ends.
@@ -247,7 +253,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         rpc_client: Arc<RpcClient>,
         matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
         num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
-    ) -> anyhow::Result<()> {
+    ) -> UserFacingResult<T> {
         // FIX: increment IP, call process_connection, decrement IP, treat errors as needed
 
         // TODO: do this with the Incoming instead of the Connection?

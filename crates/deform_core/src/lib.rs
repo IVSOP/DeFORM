@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
 
 pub use deform_derive::Smooth;
@@ -37,7 +40,8 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
         + serde::Serialize
         + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Error>
         + SchemaWrite<DefaultConfig, Src = Self::Error>
-        + Clone;
+        + Clone
+        + Display;
 
     /// Microseconds per simulation tick. For 60 fps, use `16667`.
     const TICK_RATE_MICROS: u64;

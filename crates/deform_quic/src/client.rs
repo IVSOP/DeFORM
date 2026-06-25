@@ -26,7 +26,7 @@ use deform_core::{
 
 use crate::{
     ALPN_PROTOCOL, DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
-    UnreliableServerResponse,
+    UnreliableServerResponse, UserIdentification,
 };
 
 pub(crate) struct QuicBackend<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> {
@@ -230,15 +230,13 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
                         // Send handshake
                         let handshake_message =
-                            ReliableMessage::Identification(crate::UserIdentification {
+                            ReliableMessage::<D>::Identification(UserIdentification {
                                 pubkey: player.clone(),
                                 lobby_id,
                                 auth,
                             });
 
-                        if let Err(e) =
-                            ReliableMessage::<D>::write(&mut control_send, &handshake_message).await
-                        {
+                        if let Err(e) = handshake_message.write(&mut control_send).await {
                             let _ = setup_tx.send(Err(e));
                             return;
                         }
@@ -256,6 +254,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                         match control_msg {
                             ReliableMessage::Authorized => {}
                             ReliableMessage::Error(e) => {
+                                // TODO: I think this is bad
                                 let _ = setup_tx.send(Err(DeformError::Protocol(format!(
                                     "server auth error: {e}"
                                 ))));
@@ -631,7 +630,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         let current_info = self
             .info_per_tick
             .get(&current_tick)
-            .ok_or(DeformError::InvalidState("slot not found"))?;
+            .ok_or(DeformError::InvalidState("slot not found".into()))?;
 
         // clone the old array so that we have the correct pubkeys
         // the inputs will be overwritten
@@ -773,7 +772,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                 .info_per_tick
                 .get(&new_remote_tick)
                 .ok_or(DeformError::InvalidState(
-                    "remote tick has not been predicted",
+                    "remote tick has not been predicted".into(),
                 ))?
                 .inputs;
 
@@ -783,7 +782,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
             let mut mismatch = false;
             for (player, predicted_input) in predicted_inputs.iter() {
                 let remote_input = remote_inputs.get(player).ok_or(DeformError::InvalidState(
-                    "player not found in remote inputs",
+                    "player not found in remote inputs".into(),
                 ))?;
 
                 if remote_input != predicted_input {
@@ -818,10 +817,12 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                 return Ok(());
             }
             ReceivedScenario::FastForward => {
-                let last_computed_state = self
-                    .info_per_tick
-                    .get(&self.local_tick)
-                    .ok_or(DeformError::InvalidState("Local state not found, wtf"))?;
+                let last_computed_state =
+                    self.info_per_tick
+                        .get(&self.local_tick)
+                        .ok_or(DeformError::InvalidState(
+                            "Local state not found, wtf".into(),
+                        ))?;
                 // manually_emit_events(
                 //     last_computed_state,
                 //     &new_lobby_state.game_state,
@@ -900,10 +901,12 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
             // this is unlikely and should resolve itself quickly, but is still an issue we need to handle to ensure events aren't missed
             ReceivedScenario::Gap => {
                 // this could be remove() due to all the invariants but whatever, perf should be similar
-                let old_remote_state = self
-                    .info_per_tick
-                    .get(&old_remote_tick)
-                    .ok_or(DeformError::InvalidState("Remote state not found, wtf"))?;
+                let old_remote_state =
+                    self.info_per_tick
+                        .get(&old_remote_tick)
+                        .ok_or(DeformError::InvalidState(
+                            "Remote state not found, wtf".into(),
+                        ))?;
 
                 // manually_emit_events(
                 //     old_remote_state,
@@ -966,7 +969,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         let pre_rollback_info = self
             .info_per_tick
             .remove(&previous_local_tick)
-            .ok_or(DeformError::InvalidState("State not found!"))?;
+            .ok_or(DeformError::InvalidState("State not found!".into()))?;
 
         // insert the new state as-is, and update our tick to match it
         self.info_per_tick.insert(conflicting_tick, new_tick_info);
@@ -988,7 +991,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         let post_rollback_info = self
             .info_per_tick
             .get(&self.local_tick)
-            .ok_or(DeformError::InvalidState("State not found!"))?;
+            .ok_or(DeformError::InvalidState("State not found!".into()))?;
 
         self.smoother.on_rollback(
             &pre_rollback_info.game_state,

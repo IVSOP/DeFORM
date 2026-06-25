@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use deform_core::Pubkey;
+use deform_core::error::UserFacingError;
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
 };
@@ -26,13 +27,15 @@ pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
         + SchemaWrite<DefaultConfig, Src = Self::CustomReliableMessage>
         + Clone
         + Debug
-        + Send;
+        + Send
+        + Sync;
 
     type Auth: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Auth>
         + SchemaWrite<DefaultConfig, Src = Self::Auth>
         + Clone
         + Debug
-        + Send;
+        + Send
+        + Sync;
 
     // https://github.com/rust-lang/rust/issues/29661
     // type Result<T = ()> = Result<T, Self::Error>;
@@ -57,13 +60,13 @@ pub struct UserIdentification<D: DeformQuicLogic> {
 
 /// Messages on the reliable control stream (the bi-directional stream
 /// opened during auth and kept open for the lifetime of the connection).
-#[derive(Clone, SchemaRead, SchemaWrite, Debug)]
+#[derive(SchemaRead, SchemaWrite, Debug)]
 pub enum ReliableMessage<D: DeformQuicLogic> {
     Identification(UserIdentification<D>),
     Authorized,
     Finish,
     Custom(D::CustomReliableMessage),
-    Error(D::Error),
+    Error(UserFacingError<D>),
 }
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
@@ -83,8 +86,8 @@ pub struct UnreliableServerResponse<T: DeformUserLogic> {
 const MAX_CONTROL_MSG_SIZE: usize = 4096;
 
 impl<D: DeformQuicLogic> ReliableMessage<D> {
-    pub async fn write(send: &mut quinn::SendStream, msg: &Self) -> DeformResult {
-        let data = wincode::serialize(msg)
+    pub async fn write(&self, send: &mut quinn::SendStream) -> DeformResult {
+        let data = wincode::serialize(self)
             .map_err(|e| DeformError::Serialize(format!("control message: {e:?}")))?;
         send.write_all(&(data.len() as u32).to_le_bytes())
             .await

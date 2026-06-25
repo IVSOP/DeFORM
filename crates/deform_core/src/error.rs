@@ -1,16 +1,10 @@
 use solana_program_error::ProgramError;
 use thiserror::Error;
+use wincode::{SchemaRead, SchemaWrite};
 
 use crate::DeformUserLogic;
 
-fn serialize_as_display<T: std::fmt::Display, S: serde::Serializer>(
-    value: &T,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&value.to_string())
-}
-
-#[derive(Debug, Error, serde::Serialize)]
+#[derive(Debug, Error, serde::Serialize, SchemaRead, SchemaWrite)]
 #[non_exhaustive]
 pub enum DeformError {
     #[error("serialize: {0}")]
@@ -26,7 +20,7 @@ pub enum DeformError {
     Protocol(String),
 
     #[error("{0}")]
-    InvalidState(&'static str),
+    InvalidState(String),
 
     #[error("lock poisoned")]
     LockPoisoned,
@@ -38,11 +32,7 @@ pub enum DeformError {
     Rpc(String),
 
     #[error("io: {0}")]
-    Io(
-        #[serde(serialize_with = "serialize_as_display")]
-        #[from]
-        std::io::Error,
-    ),
+    Io(String),
 
     #[error("serialize lobby: {0}")]
     SerializeLobby(String),
@@ -75,6 +65,12 @@ impl From<DeformError> for ProgramError {
     }
 }
 
+impl From<std::io::Error> for DeformError {
+    fn from(e: std::io::Error) -> Self {
+        DeformError::Io(e.to_string())
+    }
+}
+
 impl From<wincode::WriteError> for DeformError {
     fn from(e: wincode::WriteError) -> Self {
         DeformError::Serialize(format!("{e:?}"))
@@ -87,9 +83,11 @@ impl From<wincode::ReadError> for DeformError {
     }
 }
 
-#[derive(Debug, serde::Serialize)]
+#[derive(Debug, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
 pub enum UserFacingError<D: DeformUserLogic> {
+    #[error("{0}")]
     Deform(DeformError),
+    #[error("{0}")]
     User(D::Error),
 }
 
