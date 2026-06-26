@@ -42,6 +42,9 @@ pub enum DeformError {
 
     #[error("backend panicked: {0}")]
     BackendPanicked(String),
+
+    #[error("serialize: {0}")]
+    Auth(String),
 }
 
 pub type DeformResult<T = ()> = Result<T, DeformError>;
@@ -61,6 +64,7 @@ impl From<DeformError> for ProgramError {
             DeformError::SerializeLobby(_) => 10,
             DeformError::DeserializeLobby(_) => 11,
             DeformError::BackendPanicked(_) => 12,
+            DeformError::Auth(_) => 13,
         })
     }
 }

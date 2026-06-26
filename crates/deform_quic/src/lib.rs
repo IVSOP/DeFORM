@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use deform_core::Pubkey;
-use deform_core::error::UserFacingError;
+use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
 };
@@ -41,13 +41,13 @@ pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
     // type Result<T = ()> = Result<T, Self::Error>;
 
     /// Function that is wired in when the client connects to the server.
-    /// Meaning of different return types:
-    /// Err -> send an error message to the client and close the connection
-    /// None -> ignore this message and wait for the next one
-    /// Some(msg) -> send `msg` to the client and approve the client
+    ///
+    /// - Err -> send an error message to the client and close the connection
+    /// - Ok(()) -> ReliableMessage::Authorized will be sent.
+    // TODO: use different error types??
     fn authorize_connection<D: DeformQuicLogic>(
         identification: UserIdentification<D>,
-    ) -> Result<Option<ReliableMessage<D>>, Self::Error>;
+    ) -> Result<(), D::Error>;
 }
 
 // TODO: user might want custom information here. make this an associated type instead?

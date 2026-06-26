@@ -9,10 +9,10 @@ use std::{
 use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformUserLogic,
+    DeformError, DeformUserLogic,
     error::{UserFacingError, UserFacingResult},
 };
-use quinn::{Connection, ServerConfig, crypto::rustls::QuicServerConfig};
+use quinn::{Connection, RecvStream, SendStream, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use tokio::{
     signal::unix::{SignalKind, signal},
@@ -25,7 +25,7 @@ use crate::{
     DeformQuicLogic, ReliableMessage,
     server::{
         auth_config::{AuthConfig, build_tls_config},
-        matches::MatchInfo,
+        matches::{MatchConfig, MatchInfo},
     },
 };
 
@@ -49,6 +49,7 @@ pub struct DeformQuicServer<T: DeformQuicLogic + DeformUserLogic> {
 
     pub matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
     pub num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
+    pub match_config: MatchConfig,
 }
 
 impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
@@ -63,6 +64,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             max_conn_per_ip: 5,
             matches: Arc::new(RwLock::new(HashMap::new())),
             num_connections_per_ip: Arc::new(RwLock::new(HashMap::new())),
+            match_config: MatchConfig::WaitForTimeout(Duration::from_secs(10)),
         };
 
         config.apply_custom_quinn_defaults();
@@ -200,7 +202,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 }
             };
 
-            let (mut send_stream, recv_stream) = match connection.accept_bi().await {
+            let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
                 Ok(streams) => streams,
                 Err(e) => {
                     let msg = e.to_string();
@@ -220,6 +222,8 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 rpc_client,
                 matches,
                 num_connections_per_ip.clone(),
+                &mut send_stream,
+                &mut recv_stream,
             )
             .await
             {
@@ -253,15 +257,36 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         rpc_client: Arc<RpcClient>,
         matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
         num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
+        send_stream: &mut SendStream,
+        recv_stream: &mut RecvStream,
     ) -> UserFacingResult<T> {
-        // FIX: increment IP, call process_connection, decrement IP, treat errors as needed
-
         // TODO: do this with the Incoming instead of the Connection?
         if !is_loopback {
             let mut num_connections_per_ip_guard = num_connections_per_ip.write().await;
             let entry = num_connections_per_ip_guard.entry(client_ip).or_insert(0);
             *entry += 1;
         }
+
+        let identification = match ReliableMessage::<T>::read(recv_stream).await? {
+            ReliableMessage::Identification(identification) => identification,
+            _ => Err(DeformError::Auth(
+                "Expected an auth message as the first message".into(),
+            ))?,
+        };
+
+        match T::authorize_connection(identification) {
+            Ok(()) => {
+                ReliableMessage::<T>::Authorized.write(send_stream).await?;
+            }
+            Err(e) => {
+                ReliableMessage::<T>::Error(UserFacingError::User(e))
+                    .write(send_stream)
+                    .await?;
+            }
+        }
+
+        // 1) check if match exists. if so, check that the user belongs there. if it does, connect it.
+        // 2) if the match does not exist, then check with the lobby that the user belongs there. if it does belong, create the match. careful with the edge case where the match was created in the meantime
 
         Ok(())
     }

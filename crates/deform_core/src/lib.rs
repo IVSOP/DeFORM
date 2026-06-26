@@ -149,6 +149,7 @@ pub trait DeformInputs:
 pub trait DeformGameState:
     Clone
     + Send
+    + Sync
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>

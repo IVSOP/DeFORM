@@ -41,6 +41,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
         account_type: AccountTypes::Lobby,
         bump,
         lobby: LobbyData::<UserLogic> {
+            id,
             tick: 0,
             creator,
             status: LobbyStatus::NotStarted,

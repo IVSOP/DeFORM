@@ -46,6 +46,7 @@ pub struct PlayerInfo<I: DeformInputs> {
 #[doc(hidden)]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct LobbyData<T: DeformUserLogic> {
+    pub id: u64,
     pub tick: u64,
     pub creator: Pubkey,
     pub status: LobbyStatus,
@@ -60,6 +61,7 @@ impl<T: DeformUserLogic> LobbyData<T> {
     /// Construct a lobby from all of its parameters. This (plus the field accessors)
     /// is the only way to build one outside this crate, since the fields are private.
     pub fn new(
+        id: u64,
         tick: u64,
         creator: Pubkey,
         status: LobbyStatus,
@@ -67,6 +69,7 @@ impl<T: DeformUserLogic> LobbyData<T> {
         player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
     ) -> Self {
         Self {
+            id,
             tick,
             creator,
             status,
