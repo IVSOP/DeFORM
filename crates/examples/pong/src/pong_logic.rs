@@ -88,6 +88,10 @@ impl DeformGameState for PongGameState {
             players: state_players,
         }
     }
+
+    fn has_ended(&self) -> bool {
+        self.players.values().any(|ps| ps.score >= 10)
+    }
 }
 
 impl MaxLen for PongGameState {

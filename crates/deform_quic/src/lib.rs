@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 
 use deform_core::Pubkey;
-use deform_core::error::{UserFacingError, UserFacingResult};
+use deform_core::error::UserFacingError;
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
 };

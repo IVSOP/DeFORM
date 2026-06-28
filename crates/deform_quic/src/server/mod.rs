@@ -1,6 +1,5 @@
 use std::{
     collections::HashMap,
-    marker::PhantomData,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,

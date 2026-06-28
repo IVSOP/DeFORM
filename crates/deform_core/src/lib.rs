@@ -46,9 +46,11 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     /// Microseconds per simulation tick. For 60 fps, use `16667`.
     const TICK_RATE_MICROS: u64;
 
-    // user must provide certain callbacks
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.
-    // NOTE: I'm not using TickInfo here to not make it more confusing to the user
+    ///
+    /// When an error is returned, it is broadcasted to the clients and the match ends.
+    // TODO: use TickInfo instead?
+    // TODO: return an enum instead of result, to specify if match should end for example, or error transmited but match keeps going
     fn advance_frame(
         &mut self,
         state: &Self::GameState,
@@ -156,6 +158,7 @@ pub trait DeformGameState:
     + MaxLen
 {
     fn new(players: &HashSet<Pubkey>) -> Self;
+    fn has_ended(&self) -> bool;
 }
 
 pub trait MaxLen {
