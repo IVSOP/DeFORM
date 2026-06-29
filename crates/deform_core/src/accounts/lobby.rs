@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use solana_address::error::AddressError;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{DeformError, DeformInputs, DeformResult, DeformUserLogic, Pubkey, TickInfo};
+use crate::{
+    accounts::AccountType, DeformError, DeformInputs, DeformResult, DeformUserLogic, Pubkey,
+    TickInfo,
+};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
@@ -41,24 +44,23 @@ pub struct PlayerInfo<I: DeformInputs> {
     pub inputs: I,
 }
 
+// FIX: let the user pass in additional data as an arbitrary &U
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
 #[derive(Clone, SchemaRead, SchemaWrite)]
-pub struct LobbyData<T: DeformUserLogic> {
+pub struct Lobby<T: DeformUserLogic> {
+    pub account_type: AccountType,
     pub id: u64,
     pub tick: u64,
     pub creator: Pubkey,
     pub status: LobbyStatus,
     // FIX: serde correct serialization of pubkey
     pub player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
-    // TODO: this is very messy for many reasons, but I don't see another way
-    // for users to for example select powerups, I will need to let the user:
-    // - store additional data in this lobby data, or in its own wrapper (probably better)
-    // - pass in arbitrary data into GameState::new(). Allow passing in whatever &T.
     pub game_state: Option<T::GameState>,
+    pub bump: u8,
 }
 
-impl<T: DeformUserLogic> LobbyData<T> {
+impl<T: DeformUserLogic> Lobby<T> {
     pub fn new(
         id: u64,
         tick: u64,
@@ -66,14 +68,17 @@ impl<T: DeformUserLogic> LobbyData<T> {
         status: LobbyStatus,
         game_state: Option<T::GameState>,
         player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
+        bump: u8,
     ) -> Self {
         Self {
+            account_type: AccountType::Lobby,
             id,
             tick,
             creator,
             status,
             game_state,
             player_infos,
+            bump,
         }
     }
 
@@ -98,10 +103,10 @@ impl<T: DeformUserLogic> LobbyData<T> {
     }
 }
 
-impl<T: DeformUserLogic> TryFrom<LobbyData<T>> for TickInfo<T> {
+impl<T: DeformUserLogic> TryFrom<Lobby<T>> for TickInfo<T> {
     type Error = DeformError;
 
-    fn try_from(lobby: LobbyData<T>) -> Result<Self, Self::Error> {
+    fn try_from(lobby: Lobby<T>) -> Result<Self, Self::Error> {
         Ok(TickInfo {
             game_state: lobby
                 .game_state

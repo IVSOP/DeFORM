@@ -4,7 +4,7 @@ use std::fmt::Debug;
 use deform_core::Pubkey;
 use deform_core::error::UserFacingError;
 use deform_core::{
-    DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, lobby::LobbyData,
+    DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
 };
 use solana_signature::Signature;
 use wincode::config::DefaultConfig;
@@ -80,7 +80,7 @@ pub struct SerializedUnreliableServerResponse(pub Vec<u8>);
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct UnreliableServerResponse<T: DeformUserLogic> {
-    pub lobby_info: LobbyData<T>,
+    pub lobby_info: Lobby<T>,
 }
 
 const MAX_CONTROL_MSG_SIZE: usize = 4096;

@@ -1,8 +1,9 @@
 use anyhow::Result;
-use deform_core::Pubkey;
+use deform_core::{Pubkey, accounts::lobby::Lobby};
 use solana_instruction::Instruction;
 
 use crate::{
+    PongGame,
     generated::{
         instructions::{
             CreateLobby, CreateLobbyInstructionArgs, JoinLobby, JoinLobbyInstructionArgs, Ready,
@@ -10,7 +11,6 @@ use crate::{
         },
         types::PlayerScore,
     },
-    solana::accounts::LobbyAccount,
 };
 
 pub struct AnchorClient {
@@ -63,7 +63,7 @@ impl AnchorClient {
         .instruction(WriteAndCloseInstructionArgs { id, scores })
     }
 
-    pub fn deserialize_lobby(&self, data: &[u8]) -> Result<LobbyAccount> {
-        Ok(LobbyAccount::from_bytes(data)?)
+    pub fn deserialize_lobby(&self, data: &[u8]) -> Result<Lobby<PongGame>> {
+        Ok(Lobby::<PongGame>::from_bytes(data)?)
     }
 }

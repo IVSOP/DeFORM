@@ -1,4 +1,6 @@
 use anchor_lang::prelude::*;
+use deform_core::accounts::lobby::Lobby;
+use deform_core::accounts::AccountType;
 
 use crate::constants::ADMIN;
 use crate::error::GameError;
@@ -31,20 +33,21 @@ pub fn handler(
 
     let lobby_account = {
         let data = lobby_info.data.borrow();
-        LobbyAccount::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
+        Lobby::<UserLogic>::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
     };
 
     match lobby_account.account_type {
-        AccountTypes::Lobby => {}
+        AccountType::Lobby => {}
         _ => return Err(error!(GameError::InvalidAccountType)),
     }
 
-    let pda = LobbyAccount::create_program_address(id, lobby_account.bump, ctx.program_id)?;
+    let pda = Lobby::<UserLogic>::create_program_address(id, &ctx.program_id, lobby_account.bump)
+        .map_err(|_| ProgramError::InvalidSeeds)?;
     require_keys_eq!(lobby_info.key(), pda, GameError::InvalidPda);
 
     require_keys_eq!(
         ctx.accounts.creator.key(),
-        lobby_account.lobby.creator,
+        lobby_account.creator,
         GameError::CreatorMismatch
     );
 

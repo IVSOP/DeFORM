@@ -1,8 +1,10 @@
-use anchor_lang::prelude::*;
-use deform_core::lobby::{LobbyStatus, PLayerStatus};
-
 use crate::error::GameError;
-use crate::state::{AccountTypes, LobbyAccount};
+use crate::state::UserLogic;
+use anchor_lang::prelude::*;
+use deform_core::accounts::{
+    lobby::{Lobby, LobbyStatus, PLayerStatus},
+    AccountType,
+};
 
 #[derive(Accounts)]
 pub struct ReadyAccounts<'info> {
@@ -19,28 +21,28 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     // deser
     let mut lobby_account = {
         let data = lobby_info.data.borrow();
-        LobbyAccount::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
+        Lobby::<UserLogic>::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
     };
 
     // check account type
     match lobby_account.account_type {
-        AccountTypes::Lobby => {}
+        AccountType::Lobby => {}
         _ => return Err(error!(GameError::InvalidAccountType)),
     }
 
     // check pda
-    let pda = LobbyAccount::create_program_address(id, lobby_account.bump, ctx.program_id)?;
+    let pda = Lobby::<UserLogic>::create_program_address(id, &ctx.program_id, lobby_account.bump)
+        .map_err(|_| ProgramError::InvalidSeeds)?;
     require_keys_eq!(lobby_info.key(), pda, GameError::InvalidPda);
 
     // lobby not started
     require!(
-        lobby_account.lobby.status == LobbyStatus::NotStarted,
+        lobby_account.status == LobbyStatus::NotStarted,
         GameError::LobbyNotJoinable
     );
 
     // user in lobby
     let player_info = lobby_account
-        .lobby
         .player_infos
         .get_mut(&user_key)
         .ok_or_else(|| error!(GameError::PlayerNotInLobby))?;

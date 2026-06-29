@@ -6,8 +6,8 @@ use std::{
 use tokio::sync::{mpsc, Notify};
 
 use crate::{
-    error::UserFacingResult, lobby::LobbyStatus, DeformError, DeformGameState, DeformResult,
-    DeformUserLogic, Pubkey, TickInfo,
+    accounts::lobby::LobbyStatus, error::UserFacingResult, DeformError, DeformGameState,
+    DeformResult, DeformUserLogic, Pubkey, TickInfo,
 };
 
 /// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.

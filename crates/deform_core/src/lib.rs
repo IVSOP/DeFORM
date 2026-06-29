@@ -6,10 +6,10 @@ use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
 
 pub use deform_derive::Smooth;
 
+pub mod accounts;
 #[cfg(feature = "client")]
 pub mod client;
 pub mod error;
-pub mod lobby;
 pub mod smooth;
 
 #[cfg(feature = "client")]

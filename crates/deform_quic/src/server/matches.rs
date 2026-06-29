@@ -7,8 +7,8 @@ use std::{
 use better_tokio_select::tokio_select;
 use deform_core::{
     DeformGameState, DeformUserLogic, Pubkey,
+    accounts::lobby::{Lobby, LobbyStatus},
     error::UserFacingError,
-    lobby::{LobbyData, LobbyStatus},
 };
 use tokio::{
     sync::{Notify, RwLock, broadcast, mpsc},
@@ -84,7 +84,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
     pub async fn match_loop(
         &self,
         matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
-        mut lobby_state: LobbyData<T>,
+        mut lobby_state: Lobby<T>,
 
         // TODO: cleaner to have the function access this from the matches array instead??
         state_sender: broadcast::Sender<InternalServerResponse<T>>,
@@ -278,12 +278,14 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         //     lobby_state.lobby, game_state.players[0].score, game_state.players[1].score
         // );
         match matches.write().await.get_mut(&lobby_state.id) {
-            Some(match_info) => {
+            Some(MatchInfo::Started(match_info)) => {
                 match_info.game_ended = true;
             }
-            None => {
+            _ => {
                 // error!("Match does not exist");
-                anyhow::bail!("Internal server error: match does not exist");
+                anyhow::bail!(
+                    "Internal server error: match does not exist or has already finished"
+                );
             }
         }
 
@@ -296,7 +298,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
 
     async fn wait_for_first_player(
         match_receiver: &mut mpsc::Receiver<MatchMessage<T>>,
-        lobby_state: &LobbyData<T>,
+        lobby_state: &Lobby<T>,
         players_data: &mut HashMap<Pubkey, HashMap<u64, T::Inputs>>,
     ) -> anyhow::Result<()> {
         loop {

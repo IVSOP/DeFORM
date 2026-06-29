@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
-use deform_core::{DeformClient, DeformUserLogic, Pubkey};
+use deform_core::{DeformClient, DeformUserLogic, Pubkey, accounts::lobby::Lobby};
 use deform_offline::new_offline_client;
 
 use solana_client::rpc_client::RpcClient;
@@ -39,10 +39,7 @@ fn main() {
         .run();
 }
 
-use pong::{
-    solana::{accounts::LobbyAccount, anchor_client::AnchorClient},
-    *,
-};
+use pong::{solana::anchor_client::AnchorClient, *};
 
 #[derive(Component)]
 pub struct Ball;
@@ -112,7 +109,7 @@ struct MenuState {
     lobby_id: u64,
     lobby_id_text: String,
 
-    lobby_data: Option<LobbyAccount>,
+    lobby_data: Option<Lobby<PongGame>>,
 }
 
 fn scan_json_files() -> Vec<String> {
@@ -487,7 +484,7 @@ fn egui_in_menu(
             let keypair = menu.keypair.as_ref().unwrap();
             let lobby_id = menu.lobby_id;
             let (lobby_pda, _) =
-                LobbyAccount::find_program_address(lobby_id, &program_client.program_id);
+                Lobby::<PongGame>::find_program_address(lobby_id, &program_client.program_id);
             let user = Pubkey::from(keypair.pubkey().to_bytes());
 
             ui.label(format!("Lobby PDA: {lobby_pda}"));
@@ -538,7 +535,7 @@ fn egui_in_menu(
                         Ok(lobby) => {
                             toasts.0.info(format!(
                                 "Lobby loaded, players: {}",
-                                lobby.lobby.player_infos.len()
+                                lobby.player_infos.len()
                             ));
                             new_lobby_data = Some(lobby);
                         }

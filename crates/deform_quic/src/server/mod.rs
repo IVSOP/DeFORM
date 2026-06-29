@@ -9,7 +9,8 @@ use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
     DeformError, DeformUserLogic,
-    error::{UserFacingError, UserFacingResult}, lobby::LobbyData,
+    accounts::lobby::Lobby,
+    error::{UserFacingError, UserFacingResult},
 };
 use quinn::{Connection, RecvStream, SendStream, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
@@ -334,8 +335,8 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             Self::client_loop().await?;
         } else {
             let (state_sender, state_receiver) =
-                broadcast::channel::<InternalServerResponse::<T>>(64);
-            let (match_sender, match_receiver) = mpsc::channel::<MatchMessage::<T>>(256);
+                broadcast::channel::<InternalServerResponse<T>>(64);
+            let (match_sender, match_receiver) = mpsc::channel::<MatchMessage<T>>(256);
             let release_notify = Arc::new(tokio::sync::Notify::new());
 
             let match_info = MatchInfo::Started(Match {
@@ -361,4 +362,3 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         Ok(())
     }
 }
-

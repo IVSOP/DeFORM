@@ -20,8 +20,8 @@ use tokio::{
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformReadState, DeformResult, DeformUserLogic,
     Pubkey, Smooth, TickInfo,
+    accounts::lobby::LobbyStatus,
     error::{UserFacingError, UserFacingResult},
-    lobby::LobbyStatus,
 };
 
 use crate::{
