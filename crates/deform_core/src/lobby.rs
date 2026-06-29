@@ -43,29 +43,28 @@ pub struct PlayerInfo<I: DeformInputs> {
 
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
-#[doc(hidden)]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct LobbyData<T: DeformUserLogic> {
     pub id: u64,
     pub tick: u64,
     pub creator: Pubkey,
     pub status: LobbyStatus,
-    // TODO: for web2, is game state needed?
-    // it would mostly just be used for selected powerups, skins, etc...
-    pub game_state: T::GameState,
     // FIX: serde correct serialization of pubkey
     pub player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
+    // TODO: this is very messy for many reasons, but I don't see another way
+    // for users to for example select powerups, I will need to let the user:
+    // - store additional data in this lobby data, or in its own wrapper (probably better)
+    // - pass in arbitrary data into GameState::new(). Allow passing in whatever &T.
+    pub game_state: Option<T::GameState>,
 }
 
 impl<T: DeformUserLogic> LobbyData<T> {
-    /// Construct a lobby from all of its parameters. This (plus the field accessors)
-    /// is the only way to build one outside this crate, since the fields are private.
     pub fn new(
         id: u64,
         tick: u64,
         creator: Pubkey,
         status: LobbyStatus,
-        game_state: T::GameState,
+        game_state: Option<T::GameState>,
         player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
     ) -> Self {
         Self {
@@ -99,15 +98,19 @@ impl<T: DeformUserLogic> LobbyData<T> {
     }
 }
 
-impl<T: DeformUserLogic> From<LobbyData<T>> for TickInfo<T> {
-    fn from(lobby: LobbyData<T>) -> Self {
-        TickInfo {
-            game_state: lobby.game_state,
+impl<T: DeformUserLogic> TryFrom<LobbyData<T>> for TickInfo<T> {
+    type Error = DeformError;
+
+    fn try_from(lobby: LobbyData<T>) -> Result<Self, Self::Error> {
+        Ok(TickInfo {
+            game_state: lobby
+                .game_state
+                .ok_or(DeformError::InvalidState("game not started".into()))?,
             inputs: lobby
                 .player_infos
                 .into_iter()
                 .map(|(k, v)| (k, v.inputs))
                 .collect(),
-        }
+        })
     }
 }

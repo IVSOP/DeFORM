@@ -53,11 +53,6 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
             inputs: Inputs::default(),
         },
     );
-    lobby_account
-        .lobby
-        .game_state
-        .players
-        .insert(user_key, Default::default());
 
     // reserialize
     let new_data =

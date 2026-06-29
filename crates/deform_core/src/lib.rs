@@ -137,7 +137,6 @@ pub trait DeformInputs:
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
-    + MaxLen
     + Anchor
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
@@ -155,12 +154,7 @@ pub trait DeformGameState:
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
-    + MaxLen
 {
     fn new(players: &HashSet<Pubkey>) -> Self;
     fn has_ended(&self) -> bool;
-}
-
-pub trait MaxLen {
-    fn max_len() -> DeformResult<usize>;
 }

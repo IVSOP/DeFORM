@@ -712,7 +712,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         let old_remote_tick = self.remote_tick;
         let new_remote_tick = new_lobby_state.tick;
         let new_remote_status = new_lobby_state.status;
-        let new_tick_info: TickInfo<T> = new_lobby_state.into();
+        let new_tick_info: TickInfo<T> = new_lobby_state.try_into()?;
 
         // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
         if matches!(new_remote_status, LobbyStatus::Finished) {

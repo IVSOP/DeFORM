@@ -54,9 +54,6 @@ pub struct MatchInfo<T: DeformUserLogic + DeformQuicLogic> {
 
     /// Use this when the match task should exit and be removed from the map, so that a new match can start
     pub release_notify: Arc<Notify>,
-
-    /// Players which are expected, according to the lobby
-    pub lobby_state: LobbyData<T>,
 }
 
 pub enum MatchConfig {
@@ -76,7 +73,6 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
 
         // TODO: cleaner to have the function access this from the matches array instead??
         state_sender: broadcast::Sender<InternalServerResponse<T>>,
-        match_sender: mpsc::Sender<MatchMessage<T>>,
         release_notify: Arc<tokio::sync::Notify>,
 
         mut match_receiver: mpsc::Receiver<MatchMessage<T>>,
@@ -153,7 +149,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         // mark game as started
         lobby_state.status = LobbyStatus::Started;
         // init the game state
-        lobby_state.game_state = T::GameState::new(&players_hashset);
+        lobby_state.game_state = Some(T::GameState::new(&players_hashset));
 
         let mut tick_timer = interval(Duration::from_micros(16667));
 
@@ -190,9 +186,10 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                         player_inputs.retain(|k, _| *k > current_tick);
                     }
 
-                    if let Err(e) =
-                        user_logic.advance_frame(&lobby_state.game_state, &last_applied_inputs)
-                    {
+                    if let Err(e) = user_logic.advance_frame(
+                        lobby_state.game_state.as_ref().unwrap(),
+                        &last_applied_inputs,
+                    ) {
                         let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
                             ReliableMessage::Error(UserFacingError::User(e)),
                         ));
@@ -214,7 +211,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                         ));
                     }
 
-                    if lobby_state.game_state.has_ended() {
+                    if lobby_state.game_state.as_ref().unwrap().has_ended() {
                         // TODO: TREAT ERRORS
                         let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
                             ReliableMessage::Finish,

@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use deform_core::{
-    DeformGameState, DeformInputs, DeformResult, DeformUserLogic, MaxLen, Pubkey, Smooth,
-};
+use deform_core::{DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth};
 use glam::Vec2;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -32,12 +30,6 @@ pub struct PlayerState {
     #[smooth]
     pub paddle_y: f32,
     pub score: u32,
-}
-
-impl MaxLen for PlayerState {
-    fn max_len() -> DeformResult<usize> {
-        Ok(size_of::<Self>())
-    }
 }
 
 #[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
@@ -94,12 +86,6 @@ impl DeformGameState for PongGameState {
     }
 }
 
-impl MaxLen for PongGameState {
-    fn max_len() -> DeformResult<usize> {
-        Ok(size_of::<Vec2>() * 2 + 4 + 2 * (size_of::<Pubkey>() + size_of::<PlayerState>()))
-    }
-}
-
 #[derive(Default, Clone, Eq, PartialEq, serde::Serialize, SchemaRead, SchemaWrite)]
 #[cfg_attr(
     feature = "anchor",
@@ -111,12 +97,6 @@ pub struct PongInputs {
 }
 
 impl DeformInputs for PongInputs {}
-
-impl MaxLen for PongInputs {
-    fn max_len() -> DeformResult<usize> {
-        Ok(size_of::<Self>())
-    }
-}
 
 // workaround since Infallible does not have Serialize
 #[derive(Clone, Default)]

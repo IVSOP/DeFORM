@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use anchor_lang::{prelude::*, system_program};
 use deform_core::{
     lobby::{LobbyData, LobbyStatus, PLayerStatus, PlayerInfo},
-    DeformGameState,
 };
 
 use crate::{error::GameError, state::*};
@@ -34,9 +33,6 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
         },
     );
 
-    let mut users = HashSet::new();
-    users.insert(creator);
-
     let lobby_account = LobbyAccount {
         account_type: AccountTypes::Lobby,
         bump,
@@ -45,7 +41,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
             tick: 0,
             creator,
             status: LobbyStatus::NotStarted,
-            game_state: GameState::new(&users),
+            game_state: None,
             player_infos,
         },
     };
