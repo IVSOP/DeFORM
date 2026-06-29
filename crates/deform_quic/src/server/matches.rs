@@ -4,7 +4,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
     DeformGameState, DeformUserLogic, Pubkey,
@@ -15,6 +14,7 @@ use tokio::{
     sync::{Notify, RwLock, broadcast, mpsc},
     time::interval,
 };
+use tokio_util::sync::CancellationToken;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
@@ -36,14 +36,27 @@ pub enum MatchMessage<U: DeformUserLogic> {
 }
 
 /// Messages sent internally from the match task to each client-handling task
-#[derive(Debug, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum InternalServerResponse<Q: DeformQuicLogic> {
     SendDatagram(SerializedUnreliableServerResponse),
     SendReliableMessage(ReliableMessage<Q>),
 }
 
+/// When the match is being initialized, a fetch is made to solana.
+/// In the meantime, a lock is not held on the matches hashmap,
+/// which could lead to a race condition as other players try and create the match.
+///
+/// To solve this, [`MatchInfo::Initializing`] is inserted until the match is actually validated and created.
+/// The [`CancellationToken`] inside can be used to await until the match is actually created. A [`CancellationToken`] was chosen as it is 'sticky', so there cannot be an issue where, by the time a client listens in on the notification, another client has notified it in the past and dropped it, making it so that the client will never actually see the notification being triggered.
+#[derive(Clone)]
+pub enum MatchInfo<T: DeformQuicLogic> {
+    Initializing(CancellationToken),
+    Started(Match<T>),
+}
+
 /// Match information that is shared between all tasks
-pub struct MatchInfo<T: DeformUserLogic + DeformQuicLogic> {
+#[derive(Clone)]
+pub struct Match<T: DeformQuicLogic> {
     /// subscribe() this to read messages produced by the match task
     pub state_sender: broadcast::Sender<InternalServerResponse<T>>,
     /// use this to send messages to the match task
@@ -54,6 +67,8 @@ pub struct MatchInfo<T: DeformUserLogic + DeformQuicLogic> {
 
     /// Use this when the match task should exit and be removed from the map, so that a new match can start
     pub release_notify: Arc<Notify>,
+
+    pub expected_players: HashSet<Pubkey>,
 }
 
 pub enum MatchConfig {
@@ -274,7 +289,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
 
         release_notify.notified().await;
 
-        // FIX: remove from match info array...
+        matches.write().await.remove(&lobby_state.id);
 
         Ok(())
     }

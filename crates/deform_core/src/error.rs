@@ -4,7 +4,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::DeformUserLogic;
 
-#[derive(Debug, Error, serde::Serialize, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, Error, serde::Serialize, SchemaRead, SchemaWrite)]
 #[non_exhaustive]
 pub enum DeformError {
     #[error("serialize: {0}")]
@@ -87,7 +87,7 @@ impl From<wincode::ReadError> for DeformError {
     }
 }
 
-#[derive(Debug, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
+#[derive(Clone, Debug, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
 pub enum UserFacingError<D: DeformUserLogic> {
     #[error("{0}")]
     Deform(DeformError),

@@ -46,21 +46,21 @@ pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
     /// - Ok(()) -> ReliableMessage::Authorized will be sent.
     // TODO: use different error types??
     fn authorize_connection<D: DeformQuicLogic>(
-        identification: UserIdentification<D>,
+        identification: &UserIdentification<D>,
     ) -> Result<(), D::Error>;
 }
 
 // TODO: user might want custom information here. make this an associated type instead?
 #[derive(Clone, SchemaRead, SchemaWrite, Debug)]
 pub struct UserIdentification<D: DeformQuicLogic> {
-    pub pubkey: Pubkey,
+    pub user: Pubkey,
     pub lobby_id: u64,
     pub auth: D::Auth,
 }
 
 /// Messages on the reliable control stream (the bi-directional stream
 /// opened during auth and kept open for the lifetime of the connection).
-#[derive(SchemaRead, SchemaWrite, Debug)]
+#[derive(Clone, SchemaRead, SchemaWrite, Debug)]
 pub enum ReliableMessage<D: DeformQuicLogic> {
     Identification(UserIdentification<D>),
     Authorized,

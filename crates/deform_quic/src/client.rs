@@ -231,7 +231,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                         // Send handshake
                         let handshake_message =
                             ReliableMessage::<D>::Identification(UserIdentification {
-                                pubkey: player.clone(),
+                                user: player.clone(),
                                 lobby_id,
                                 auth,
                             });

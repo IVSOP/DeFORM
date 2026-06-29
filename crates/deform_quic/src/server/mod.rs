@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -9,13 +9,13 @@ use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
     DeformError, DeformUserLogic,
-    error::{UserFacingError, UserFacingResult},
+    error::{UserFacingError, UserFacingResult}, lobby::LobbyData,
 };
 use quinn::{Connection, RecvStream, SendStream, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use tokio::{
     signal::unix::{SignalKind, signal},
-    sync::RwLock,
+    sync::{RwLock, broadcast, mpsc},
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
@@ -24,7 +24,7 @@ use crate::{
     DeformQuicLogic, ReliableMessage,
     server::{
         auth_config::{AuthConfig, build_tls_config},
-        matches::{MatchConfig, MatchInfo},
+        matches::{InternalServerResponse, Match, MatchConfig, MatchInfo, MatchMessage},
     },
 };
 
@@ -249,6 +249,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         });
     }
 
+    /// Checks auth and join a match, handling the player handling loop to client_loop()
     pub async fn process_connection(
         connection: Connection,
         client_ip: IpAddr,
@@ -273,24 +274,91 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             ))?,
         };
 
-        match T::authorize_connection(identification) {
-            Ok(()) => {
-                ReliableMessage::<T>::Authorized.write(send_stream).await?;
+        // FIX: this is not good enough. need to check the lobby on-chain to check that the player actually belongs
+        // however, when the match already exists, we could just read it from there as well
+        // I think Authorized should not be sent here, for this reason
+        T::authorize_connection(&identification).map_err(|e| UserFacingError::User(e))?;
+
+        // if an existing match does exist, a read lock would be enough
+        // however, if it does not exist, we need an atomic way to insert things into the match while guaranteeing that the same match is not created in parallel
+        // so the workaround is to keep this write lock, which gets released as soon as possible
+        let matches_guard = matches.write().await;
+
+        // check if lobby already has an existing match
+        if let Some(existing_match) = matches_guard.get(&identification.lobby_id).cloned() {
+            // the matches_guard exists on the outside so it can be used in the `else`
+            // we can drop it now, it is no longer needed
+            drop(matches_guard);
+
+            let started_match = match existing_match {
+                MatchInfo::Initializing(init_notify) => {
+                    let init_notify_clone = init_notify.clone();
+                    init_notify_clone.cancelled().await;
+
+                    if let Some(MatchInfo::Started(started)) =
+                        matches.read().await.get(&identification.lobby_id).cloned()
+                    {
+                        Ok(started)
+                    } else {
+                        Err(UserFacingError::Deform(DeformError::InvalidState(
+                            "The given match has not started or does not exist".into(),
+                        )))
+                    }
+                }
+                MatchInfo::Started(started_match) => Ok(started_match),
+            }?;
+
+            // check that user belongs in the match
+            if !started_match
+                .expected_players
+                .contains(&identification.user)
+            {
+                Err(UserFacingError::Deform(DeformError::Auth(
+                    "User does not belong in this match!".into(),
+                )))?;
+            } else {
+                // only now can we send Authorized
+                let _ = ReliableMessage::<T>::Authorized.write(send_stream).await?;
             }
-            Err(e) => {
-                ReliableMessage::<T>::Error(UserFacingError::User(e))
-                    .write(send_stream)
-                    .await?;
+
+            if started_match.game_ended {
+                Err(UserFacingError::Deform(DeformError::InvalidState(
+                    "Match has already ended!".into(),
+                )))?;
             }
+
+            let match_sender = started_match.match_sender.clone();
+            let state_receiver = started_match.state_sender.subscribe();
+            let state_sender = started_match.state_sender.clone();
+
+            Self::client_loop().await?;
+        } else {
+            let (state_sender, state_receiver) =
+                broadcast::channel::<InternalServerResponse::<T>>(64);
+            let (match_sender, match_receiver) = mpsc::channel::<MatchMessage::<T>>(256);
+            let release_notify = Arc::new(tokio::sync::Notify::new());
+
+            let match_info = MatchInfo::Started(Match {
+                state_sender,
+                match_sender,
+                game_ended: false,
+                release_notify,
+                expected_players: HashSet::new(), // FIX:
+            });
+
+            // FIX:
+            // 1) check lobby, if player belongs, then send Authorized
+            // 2) create match and insert it
+            // 3) if match already existed, revert to the case above
+            // 4) init a task that works on the match
+            // 5) call client_loop()
         }
 
-        // 1) check if match exists. if so, check that the user belongs there. if it does, connect it.
-        // 2) if the match does not exist, then check with the lobby that the user belongs there. if it does belong, create the match. careful with the edge case where the match was created in the meantime
+        Ok(())
+    }
 
+    async fn client_loop() -> UserFacingResult<T> {
         Ok(())
     }
 }
 
-// FIX: read data from lobby
-// FIX: perform auth, connect clients to matches, run game logic, read and send messages
-// FIX: problema. quando jogo acaba, eu meto a match a false, mas ela nunca chega a ser removida! tenho de fazer com que o utilizador possa, usando um channel ou assim, apagar a crank. ou simplesmente retorno o seu arc para fora? acho que channel é mais clean.
