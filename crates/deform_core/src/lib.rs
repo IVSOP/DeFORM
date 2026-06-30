@@ -18,6 +18,8 @@ pub use client::{DeformClient, DeformReadState, Stats};
 pub use error::{DeformError, DeformResult};
 pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
+use crate::accounts::lobby::Lobby;
+
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
 
@@ -45,6 +47,8 @@ pub trait DeformUserLogic: Debug + Clone + Default + Send + 'static {
 
     /// Microseconds per simulation tick. For 60 fps, use `16667`.
     const TICK_RATE_MICROS: u64;
+
+    fn new_from_lobby(lobby: &Lobby<Self>) -> Result<Self, Self::Error>;
 
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.
     ///

@@ -53,8 +53,6 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     fn authorize_connection(
         identification: &UserIdentification<Self>,
     ) -> Result<(), <Self::UserLogic as DeformUserLogic>::Error>;
-
-    fn new_match_logic(&self) -> Self::UserLogic;
 }
 
 // TODO: user might want custom information here. make this an associated type instead?

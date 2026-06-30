@@ -6,9 +6,9 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformGameState, DeformUserLogic, Pubkey,
+    DeformError, DeformGameState, DeformUserLogic, Pubkey,
     accounts::lobby::{Lobby, LobbyStatus},
-    error::UserFacingError,
+    error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
     sync::{Notify, RwLock, broadcast, mpsc},
@@ -89,7 +89,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     release_notify: Arc<tokio::sync::Notify>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
-) -> anyhow::Result<()> {
+) -> UserFacingResult<Q::UserLogic> {
     // inputs per-tick of each player
     // NOTE: a player existing in this map means the player is currently joined
     let mut players_data: HashMap<Pubkey, HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs>> =
@@ -113,10 +113,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     }
                     Some(_) => {}
                     None => {
-                        anyhow::bail!(
-                            "Match channel closed before start for lobby {}",
-                            lobby_state.id
-                        );
+                        Err(DeformError::ChannelClosed)?;
                     }
                 }
             }
@@ -138,10 +135,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                             }
                             Some(_) => {}
                             None => {
-                                anyhow::bail!(
-                                    "Match channel closed before start for lobby {}",
-                                    lobby_state.id
-                                );
+                                Err(DeformError::ChannelClosed)?;
                             }
                         }
                     }
@@ -180,7 +174,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         );
     }
 
-    let mut user_logic = Q::new_match_logic(&server.user_server_logic);
+    let mut user_logic = <Q::UserLogic as DeformUserLogic>::new_from_lobby(&lobby_state)
+        .map_err(UserFacingError::User)?;
 
     loop {
         tokio_select!(match .. {
@@ -288,8 +283,9 @@ pub async fn match_loop<Q: DeformQuicLogic>(
             match_info.game_ended = true;
         }
         _ => {
-            // error!("Match does not exist");
-            anyhow::bail!("Internal server error: match does not exist or has already finished");
+            Err(DeformError::InvalidState(
+                "match does not exist or has already finished".into(),
+            ))?;
         }
     }
 
@@ -304,20 +300,16 @@ async fn wait_for_first_player<T: DeformUserLogic>(
     match_receiver: &mut mpsc::Receiver<MatchMessage<T>>,
     lobby_state: &Lobby<T>,
     players_data: &mut HashMap<Pubkey, HashMap<u64, T::Inputs>>,
-) -> anyhow::Result<()> {
+) -> UserFacingResult<T> {
     loop {
         match match_receiver.recv().await {
             Some(MatchMessage::PlayerJoined { pubkey }) => {
                 players_data.insert(pubkey, HashMap::new());
-                // info!("First player {} joined lobby {}", id, lobby_state.lobby);
                 return Ok(());
             }
             Some(_) => {}
             None => {
-                anyhow::bail!(
-                    "Match channel closed before start for lobby {}",
-                    lobby_state.id
-                );
+                Err(DeformError::ChannelClosed)?;
             }
         }
     }

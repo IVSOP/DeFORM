@@ -1,6 +1,8 @@
 use std::collections::{HashMap, HashSet};
 
-use deform_core::{DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth};
+use deform_core::{
+    DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth, accounts::lobby::Lobby,
+};
 use glam::Vec2;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -116,6 +118,10 @@ impl DeformUserLogic for PongGame {
     type Error = PongError;
 
     const TICK_RATE_MICROS: u64 = 16667;
+
+    fn new_from_lobby(_lobby: &Lobby<Self>) -> Result<Self, Self::Error> {
+        Ok(PongGame)
+    }
 
     fn game_program() -> Pubkey {
         crate::generated::ANCHOR_PROGRAM_ID
