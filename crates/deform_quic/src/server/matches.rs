@@ -19,6 +19,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     DeformQuicLogic, ReliableMessage, SerializedUnreliableServerResponse, UnreliableServerResponse,
+    server::DeformQuicServer,
 };
 
 // TODO: put this in the PlayerInputsAccount
@@ -80,8 +81,7 @@ pub enum MatchConfig {
 }
 
 pub async fn match_loop<Q: DeformQuicLogic>(
-    match_config: MatchConfig,
-    matches: Arc<RwLock<HashMap<u64, MatchInfo<Q>>>>,
+    server: Arc<DeformQuicServer<Q>>,
     mut lobby_state: Lobby<Q::UserLogic>,
 
     // TODO: cleaner to have the function access this from the matches array instead??
@@ -89,7 +89,6 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     release_notify: Arc<tokio::sync::Notify>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
-    mut user_logic: Q::UserLogic,
 ) -> anyhow::Result<()> {
     // inputs per-tick of each player
     // NOTE: a player existing in this map means the player is currently joined
@@ -100,7 +99,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     wait_for_first_player(&mut match_receiver, &lobby_state, &mut players_data).await?;
 
     // TODO: depending on match_config, wait for all players to join
-    match match_config {
+    match server.match_config {
         MatchConfig::WaitPlayers => {
             loop {
                 match match_receiver.recv().await {
@@ -180,6 +179,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
             <Q::UserLogic as DeformUserLogic>::Inputs::default(),
         );
     }
+
+    let mut user_logic = Q::new_match_logic(&server.user_server_logic);
 
     loop {
         tokio_select!(match .. {
@@ -282,7 +283,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     //     "Crank loop for lobby {} finished  {}-{}",
     //     lobby_state.lobby, game_state.players[0].score, game_state.players[1].score
     // );
-    match matches.write().await.get_mut(&lobby_state.id) {
+    match server.matches.write().await.get_mut(&lobby_state.id) {
         Some(MatchInfo::Started(match_info)) => {
             match_info.game_ended = true;
         }
@@ -294,7 +295,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
     release_notify.notified().await;
 
-    matches.write().await.remove(&lobby_state.id);
+    server.matches.write().await.remove(&lobby_state.id);
 
     Ok(())
 }

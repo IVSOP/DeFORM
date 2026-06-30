@@ -89,7 +89,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         self.quinn_config.transport_config(Arc::new(transport));
     }
 
-    pub async fn init_server(mut self, rpc_client: Arc<RpcClient>) -> anyhow::Result<()> {
+    pub async fn init_server(self, rpc_client: Arc<RpcClient>) -> anyhow::Result<()> {
         // // TODO: get this out of here, the client has to call it
         // rustls::crypto::ring::default_provider()
         //     .install_default()
@@ -101,12 +101,19 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         let cancellation_token = CancellationToken::new();
         Self::register_signal(cancellation_token.clone()).await;
 
+        let shared_server = Arc::new(self);
+
         loop {
             tokio_select!(match .. {
                 .. if let incoming = endpoint.accept() => {
                     match incoming {
                         Some(incoming) => {
-                            self.handle_incoming(incoming, rpc_client.clone()).await;
+                            Self::handle_incoming(
+                                shared_server.clone(),
+                                incoming,
+                                rpc_client.clone(),
+                            )
+                            .await;
                         }
                         None => {
                             // info!("QUIC endpoint closed");
@@ -119,7 +126,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
                     // wait for all cranks to finish their games
                     loop {
-                        let matches_len = self.matches.read().await.len();
+                        let matches_len = shared_server.matches.read().await.len();
                         if matches_len > 0 {
                             // info!("Waiting for {} active crank(s) to finish...", matches_len);
                             sleep(Duration::from_secs(1)).await;
@@ -163,7 +170,11 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
     }
 
     /// Does a quick filtering of the connection before spawning a task to process it
-    pub async fn handle_incoming(&mut self, incoming: quinn::Incoming, rpc_client: Arc<RpcClient>) {
+    pub async fn handle_incoming(
+        server: Arc<Self>,
+        incoming: quinn::Incoming,
+        rpc_client: Arc<RpcClient>,
+    ) {
         // do some quick filtering to check that the connection is allowed before spawning the handler task
         let client_ip = incoming.remote_address().ip();
         let is_loopback = client_ip.is_loopback();
@@ -185,9 +196,9 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         // refuse connection if too many connections
         // it is checked here, but not modified!! only incremented once connection is actually accepted
         if !is_loopback {
-            let num_connections_per_ip_guard = self.num_connections_per_ip.read().await;
+            let num_connections_per_ip_guard = server.num_connections_per_ip.read().await;
             if let Some(num_connections) = num_connections_per_ip_guard.get(&client_ip) {
-                if *num_connections >= self.max_conn_per_ip {
+                if *num_connections >= server.max_conn_per_ip {
                     // log...
                     incoming.refuse();
                     return;
@@ -196,8 +207,9 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         }
 
         let rpc_client = rpc_client.clone();
-        let matches = self.matches.clone();
-        let num_connections_per_ip = self.num_connections_per_ip.clone();
+        let matches = server.matches.clone();
+        let num_connections_per_ip = server.num_connections_per_ip.clone();
+        let server = server.clone();
 
         tokio::spawn(async move {
             let connection = match incoming.await {
@@ -222,6 +234,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             };
 
             if let Err(e) = Self::process_connection(
+                server,
                 connection.clone(),
                 client_ip.clone(),
                 is_loopback,
@@ -234,7 +247,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             .await
             {
                 // warn!("Sending error to client {}: {}", remote, e);
-                let _ = ReliableMessage::Error(e).write(&mut send_stream).await;
+                let _ = ReliableMessage::<Q>::Error(e).write(&mut send_stream).await;
                 let _ = send_stream.finish();
                 connection.close(quinn::VarInt::from_u32(1), b"error");
             }
@@ -258,7 +271,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
     /// Checks auth and join a match, handling the player handling loop to client_loop()
     pub async fn process_connection(
-        &self,
+        server: Arc<Self>,
         connection: Connection,
         client_ip: IpAddr,
         is_loopback: bool,
@@ -344,9 +357,13 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             );
             drop(matches_guard);
 
-            let lobby_state =
-                Self::check_lobby(&rpc_client, identification.lobby_id, &Q::game_program(), 10)
-                    .await?;
+            let lobby_state = Self::check_lobby(
+                &rpc_client,
+                identification.lobby_id,
+                &<Q::UserLogic as DeformUserLogic>::game_program(),
+                10,
+            )
+            .await?;
 
             let _ = ReliableMessage::<Q>::Authorized.write(send_stream).await?;
 
@@ -361,10 +378,10 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             }
 
             let match_info = MatchInfo::Started(Match {
-                state_sender,
-                match_sender,
+                state_sender: state_sender.clone(),
+                match_sender: match_sender.clone(),
                 game_ended: false,
-                release_notify,
+                release_notify: release_notify.clone(),
                 expected_players,
             });
 
@@ -376,13 +393,11 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             match_started_token.cancel();
 
             tokio::spawn(matches::match_loop(
-                self.match_config,
-                matches.clone(),
+                server,
                 lobby_state,
                 state_sender,
                 release_notify,
                 match_receiver,
-                user_logic,
             ));
 
             Self::client_loop().await?;

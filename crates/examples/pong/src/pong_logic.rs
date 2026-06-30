@@ -99,7 +99,7 @@ pub struct PongInputs {
 impl DeformInputs for PongInputs {}
 
 // workaround since Infallible does not have Serialize
-#[derive(Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PongGame;
 
 #[derive(Debug, Clone, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
@@ -116,6 +116,10 @@ impl DeformUserLogic for PongGame {
     type Error = PongError;
 
     const TICK_RATE_MICROS: u64 = 16667;
+
+    fn game_program() -> Pubkey {
+        crate::generated::ANCHOR_PROGRAM_ID
+    }
 
     fn advance_frame(
         &mut self,

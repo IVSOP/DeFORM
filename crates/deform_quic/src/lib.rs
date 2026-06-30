@@ -22,7 +22,7 @@ wincode::pod_wrapper! {
 
 /// Trait that defines what data types the server, as well as the logic functions/callbacks.
 // has to be debug for printing reliable messages (wtf)
-pub trait DeformQuicLogic: Clone + Sized + Debug + Send + 'static {
+pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     type CustomReliableMessage: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::CustomReliableMessage>
         + SchemaWrite<DefaultConfig, Src = Self::CustomReliableMessage>
         + Clone
