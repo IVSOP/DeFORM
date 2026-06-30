@@ -1,6 +1,9 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -62,13 +65,12 @@ pub struct Match<Q: DeformQuicLogic> {
     /// use this to send messages to the match task
     pub match_sender: mpsc::Sender<MatchMessage<Q::UserLogic>>,
 
-    // new clients that see this value as true will immediately be met with an error
-    pub game_ended: bool,
+    pub game_ended: Arc<AtomicBool>,
 
     /// Use this when the match task should exit and be removed from the map, so that a new match can start
     pub release_notify: Arc<Notify>,
 
-    pub expected_players: HashSet<Pubkey>,
+    pub expected_players: Arc<HashSet<Pubkey>>,
 }
 
 #[derive(Clone, Copy)]
@@ -280,7 +282,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     // );
     match server.matches.write().await.get_mut(&lobby_state.id) {
         Some(MatchInfo::Started(match_info)) => {
-            match_info.game_ended = true;
+            match_info.game_ended.store(true, Ordering::SeqCst);
         }
         _ => {
             Err(DeformError::InvalidState(

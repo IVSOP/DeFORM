@@ -338,7 +338,10 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 let _ = ReliableMessage::<Q>::Authorized.write(send_stream).await?;
             }
 
-            if started_match.game_ended {
+            if started_match
+                .game_ended
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
                 Err(UserFacingError::Deform(DeformError::InvalidState(
                     "Match has already ended!".into(),
                 )))?;
@@ -380,9 +383,9 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             let match_info = MatchInfo::Started(Match {
                 state_sender: state_sender.clone(),
                 match_sender: match_sender.clone(),
-                game_ended: false,
+                game_ended: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 release_notify: release_notify.clone(),
-                expected_players,
+                expected_players: Arc::new(expected_players),
             });
 
             matches
