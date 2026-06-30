@@ -22,6 +22,7 @@ pub enum LobbyStatus {
     Finished = 2,
 }
 
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
     feature = "anchor",
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
@@ -34,6 +35,7 @@ pub enum PLayerStatus {
     Ready = 1,
 }
 
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
     feature = "anchor",
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
@@ -47,6 +49,7 @@ pub struct PlayerInfo<I: DeformInputs> {
 // FIX: let the user pass in additional data as an arbitrary &U
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct Lobby<T: DeformUserLogic> {
     pub account_type: AccountType,

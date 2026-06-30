@@ -4,10 +4,15 @@ use anyhow::anyhow;
 use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
+use clap::{Parser, Subcommand};
 use deform_core::{DeformClient, DeformUserLogic, Pubkey, accounts::lobby::Lobby};
 use deform_offline::new_offline_client;
 
-use solana_client::rpc_client::RpcClient;
+use solana_client::{
+    rpc_client::RpcClient,
+    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, UiAccountEncoding},
+    rpc_filter::{Memcmp, RpcFilterType},
+};
 use solana_sdk::{
     message::Message, pubkey::Pubkey as SdkPubkey, signature::Keypair, signer::Signer,
     signer::keypair::read_keypair_file, transaction::Transaction,
@@ -15,7 +20,84 @@ use solana_sdk::{
 
 use pong_logic::*;
 
-fn main() {
+#[derive(Parser)]
+#[command(name = "pong")]
+struct Cli {
+    #[command(subcommand)]
+    command: CliCommand,
+}
+
+#[derive(Subcommand)]
+enum CliCommand {
+    #[command(about = "Run the pong game")]
+    Run,
+    #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
+    FetchLobbies {
+        #[arg(long, default_value = "https://api.devnet.solana.com")]
+        rpc_url: String,
+    },
+}
+
+fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+    match cli.command {
+        CliCommand::Run => run_game(),
+        CliCommand::FetchLobbies { rpc_url } => fetch_lobbies(&rpc_url)?,
+    }
+    Ok(())
+}
+
+fn fetch_lobbies(rpc_url: &str) -> anyhow::Result<()> {
+    let rpc_client = RpcClient::new(rpc_url.to_string());
+
+    let program_id = to_sdk_pubkey(&PongGame::game_program());
+
+    let discriminator_bytes = wincode::serialize(&deform_core::accounts::AccountType::Lobby)?;
+
+    let config = RpcProgramAccountsConfig {
+        filters: Some(vec![RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
+            0,
+            discriminator_bytes,
+        ))]),
+        account_config: RpcAccountInfoConfig {
+            encoding: Some(UiAccountEncoding::Base64),
+            data_slice: None,
+            commitment: None,
+            min_context_slot: None,
+        },
+        with_context: None,
+        sort_results: None,
+    };
+
+    let accounts = rpc_client.get_program_ui_accounts_with_config(&program_id, config)?;
+
+    let mut results: Vec<serde_json::Value> = Vec::new();
+
+    for (pubkey, account_info) in accounts.iter() {
+        if let Some(data) = account_info.data.decode() {
+            match Lobby::<PongGame>::from_bytes(&data) {
+                Ok(lobby) => {
+                    let mut obj = serde_json::to_value(&lobby)?;
+                    obj.as_object_mut().unwrap().insert(
+                        "pubkey".to_string(),
+                        serde_json::Value::String(pubkey.to_string()),
+                    );
+                    results.push(obj);
+                }
+                Err(e) => {
+                    eprintln!("Failed to deserialize lobby {}: {}", pubkey, e);
+                }
+            }
+        } else {
+            eprintln!("Failed to decode account data for {}", pubkey);
+        }
+    }
+
+    println!("{}", serde_json::to_string_pretty(&results)?);
+    Ok(())
+}
+
+fn run_game() {
     let mut app = App::new();
     app.add_plugins((DefaultPlugins,))
         .add_plugins(EguiPlugin::default())

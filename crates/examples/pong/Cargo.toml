@@ -11,7 +11,7 @@ required-features = ["client"]
 
 [features]
 default = ["client", "anchor"]
-client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:bevy-egui-notify", "dep:anyhow", "dep:solana-sdk", "dep:solana-client"]
+client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:bevy-egui-notify", "dep:anyhow", "dep:solana-sdk", "dep:solana-client", "dep:clap", "dep:serde_json"]
 anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 
 [dependencies]
@@ -29,6 +29,8 @@ solana-instruction = { workspace = true }
 solana-sdk = { workspace = true, optional = true }
 solana-client = { workspace = true, optional = true } # TODO: is solana-rpc-client enough??
 anyhow = { version = "1.0.102", optional = true }
+clap = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 borsh = { workspace = true }
 num-derive = { workspace = true }
 num-traits = { workspace = true }
