@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Debug, Display},
 };
 use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
 
@@ -28,7 +28,7 @@ pub type Pubkey = solana_address::Address;
 /// using the struct that implements this trait.
 ///
 /// Note that while this trait defines [`DeformUserLogic::Inputs`] and [`DeformUserLogic::GameState`], the backend is the one responsible for holding stateful information. You should use the struct that implements this trait to store aditional data that you want to keep out of the [`DeformUserLogic::GameState`].
-pub trait DeformUserLogic: Clone + Default + Send + 'static {
+pub trait DeformUserLogic: Debug + Clone + Default + Send + 'static {
     // user must define inputs and game state
     type Inputs: DeformInputs;
     type GameState: DeformGameState;
@@ -103,6 +103,8 @@ pub trait DeformUserLogic: Clone + Default + Send + 'static {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    fn game_program() -> Pubkey;
 }
 
 #[derive(serde::Serialize, Clone)]

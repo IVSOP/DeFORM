@@ -3,7 +3,6 @@ use glam::FloatExt;
 use quinn::crypto::rustls::QuicClientConfig;
 use std::{
     collections::{HashMap, HashSet},
-    marker::PhantomData,
     pin::Pin,
     sync::{
         Arc,
@@ -29,14 +28,14 @@ use crate::{
     UnreliableServerResponse, UserIdentification,
 };
 
-pub(crate) struct QuicBackend<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> {
+pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub local_tick: u64,
     pub remote_tick: u64,
-    pub info_per_tick: HashMap<u64, TickInfo<T>>,
+    pub info_per_tick: HashMap<u64, TickInfo<Q::UserLogic>>,
     pub last_remote_status: LobbyStatus,
     // these are the inputs from our own player, appended only by set_inputs().
     // TODO: this might not be necessary. We may be able to just store the latest inputs, then reuse the old ones from `info_per_tick`. I only did it this way because it was easier in my head
-    pub inputs: HashMap<u64, T::Inputs>,
+    pub inputs: HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs>,
 
     // pub rpc_client: Arc<RpcClient>,
     pub connection: quinn::Connection,
@@ -47,11 +46,11 @@ pub(crate) struct QuicBackend<T: DeformUserLogic, D: DeformQuicLogic + Send + 's
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
     pub terminate: Arc<Notify>,
-    pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
-    pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
-    pub user_logic: T,
+    pub set_inputs_receiver: mpsc::UnboundedReceiver<<Q::UserLogic as DeformUserLogic>::Inputs>,
+    pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<Q::UserLogic>>>,
+    pub user_logic: Q::UserLogic,
 
-    pub smoother: T::Smoother,
+    pub smoother: <Q::UserLogic as DeformUserLogic>::Smoother,
     pub visual_tick_micros: u64,
     pub last_sim_instant: Instant,
 
@@ -64,7 +63,6 @@ pub(crate) struct QuicBackend<T: DeformUserLogic, D: DeformQuicLogic + Send + 's
     // pub dropped_datagrams: u64,
     // /// Cumulative count of stale/out-of-order datagrams (tick <= remote_tick).
     // pub stale_datagrams: u64,
-    phantom: PhantomData<D>,
 }
 
 /// How long to wait before using the RTT value to update how far ahead the simulation is.
@@ -81,7 +79,7 @@ pub(crate) struct QuicBackend<T: DeformUserLogic, D: DeformQuicLogic + Send + 's
 /// 200ms: introduces a bit of jitter
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
-impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> {
+impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     pub fn init(
         server_addr: String,
         server_name: String,
@@ -90,14 +88,17 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         players: HashSet<Pubkey>,
         skip_cert_verify: bool,
         visual_tick_micros: u64,
-        auth: D::Auth,
-    ) -> DeformResult<DeformClient<T>> {
+        auth: Q::Auth,
+    ) -> DeformResult<DeformClient<Q::UserLogic>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());
-        let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new(&players)));
+        let (set_inputs_sender, set_inputs_receiver) =
+            mpsc::unbounded_channel::<<Q::UserLogic as DeformUserLogic>::Inputs>();
+        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<Q::UserLogic>::new(
+            &players,
+        )));
         let backend_dead = Arc::new(AtomicBool::new(false));
 
         // cursed
@@ -230,7 +231,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
                         // Send handshake
                         let handshake_message =
-                            ReliableMessage::<D>::Identification(UserIdentification {
+                            ReliableMessage::<Q>::Identification(UserIdentification {
                                 user: player.clone(),
                                 lobby_id,
                                 auth,
@@ -242,7 +243,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                         }
 
                         // Wait for AuthOk
-                        let control_msg = match ReliableMessage::<D>::read(&mut control_recv).await
+                        let control_msg = match ReliableMessage::<Q>::read(&mut control_recv).await
                         {
                             Ok(msg) => msg,
                             Err(e) => {
@@ -282,12 +283,13 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
                             // states.insert(lobby_info.tick, state.clone());
 
-                            let mut smoother = T::Smoother::default();
-                            let decay_ratio =
-                                visual_tick_micros as f32 / T::TICK_RATE_MICROS as f32;
+                            let mut smoother =
+                                <Q::UserLogic as DeformUserLogic>::Smoother::default();
+                            let decay_ratio = visual_tick_micros as f32
+                                / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
                             smoother.scale_decay(decay_ratio);
 
-                            let tick_info = QuicBackend {
+                            let tick_info = QuicBackend::<Q> {
                                 info_per_tick: HashMap::new(),
                                 local_tick: 0,
                                 remote_tick: 0,
@@ -309,9 +311,8 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                                 last_sim_instant: Instant::now(),
 
                                 avg_rtt: Duration::from_millis(50),
-                                user_logic: T::default(),
-
-                                phantom: PhantomData::<D>,
+                                // FIX: allow user to pass in a value
+                                user_logic: Q::UserLogic::default(),
                             };
 
                             if let Err(e) = tick_info.tick_loop().await
@@ -351,10 +352,10 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         })
     }
 
-    pub async fn tick_loop(mut self) -> UserFacingResult<T> {
+    pub async fn tick_loop(mut self) -> UserFacingResult<Q::UserLogic> {
         // read the first tick from the sdk_game_state
         // TODO: do this above, at setup??
-        let current_tick_info: TickInfo<T> = {
+        let current_tick_info: TickInfo<Q::UserLogic> = {
             let shared = self
                 .sdk_game_state
                 .lock()
@@ -364,9 +365,13 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         };
         self.info_per_tick.insert(0, current_tick_info);
 
-        let mut tick_sleep = Box::pin(sleep(Duration::from_micros(T::TICK_RATE_MICROS)));
+        let mut tick_sleep = Box::pin(sleep(Duration::from_micros(
+            <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
+        )));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
-        let mut inputs_ticker = interval(Duration::from_micros(T::TICK_RATE_MICROS));
+        let mut inputs_ticker = interval(Duration::from_micros(
+            <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
+        ));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         let mut terminated = false;
@@ -410,7 +415,9 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                         self.info_per_tick.get(&self.local_tick),
                     ) {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                        let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
+                        let t = (elapsed
+                            / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32)
+                            .clamp(0.0, 1.0);
                         let mut visual_state = current.clone();
                         self.smoother
                             .apply(&prev.game_state, &mut visual_state.game_state, t);
@@ -489,7 +496,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
                 }
 
                 // Receive control messages on the reliable stream
-                .. if let control_msg = ReliableMessage::<D>::read(&mut self.control_recv) => {
+                .. if let control_msg = ReliableMessage::<Q>::read(&mut self.control_recv) => {
                     match control_msg? {
                         ReliableMessage::Finish => {
                             self.last_remote_status = LobbyStatus::Finished;
@@ -546,7 +553,9 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         // Full RTT is required, not RTT/2: remote_tick is already RTT/2 old when received,
         // so inputs travel another RTT/2 before reaching the server, totalling one full RTT
         // of server advancement since the observed state was sent. +1 absorbs commit-timer jitter.
-        self.min_ticks_ahead = (rtt_micros / T::TICK_RATE_MICROS as f64).ceil() as u64 + 1;
+        self.min_ticks_ahead =
+            (rtt_micros / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64).ceil() as u64
+                + 1;
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
         // #[cfg(feature = "tracy")]
@@ -582,7 +591,8 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
     fn compute_dilated_tick_interval(&mut self) -> Duration {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("compute_dilated_tick_interval");
-        let base_sleep_ms: f32 = T::TICK_RATE_MICROS as f32 / 1000.0;
+        let base_sleep_ms: f32 =
+            <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32 / 1000.0;
         let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
         let max_sleep_ms: f32 = base_sleep_ms * 4.0;
 
@@ -612,7 +622,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         Duration::from_micros(micros)
     }
 
-    pub fn advance_local_simulation(&mut self) -> UserFacingResult<T> {
+    pub fn advance_local_simulation(&mut self) -> UserFacingResult<Q::UserLogic> {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("advance_local_simulation");
 
@@ -634,7 +644,8 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
 
         // clone the old array so that we have the correct pubkeys
         // the inputs will be overwritten
-        let mut new_players_inputs: HashMap<Pubkey, T::Inputs> = current_info.inputs.clone();
+        let mut new_players_inputs: HashMap<Pubkey, <Q::UserLogic as DeformUserLogic>::Inputs> =
+            current_info.inputs.clone();
 
         for (player, inputs) in new_players_inputs.iter_mut() {
             *inputs = if *player == self.player {
@@ -678,7 +689,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
             return Ok(());
         }
 
-        let ix = UnreliableServerInstruction::<T::Inputs>::BatchSetInputs(self.inputs.clone());
+        let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(self.inputs.clone());
         let bytes = wincode::serialize(&ix)?;
 
         self.connection
@@ -692,13 +703,13 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         &mut self,
         bytes: &[u8],
         tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> UserFacingResult<T> {
+    ) -> UserFacingResult<Q::UserLogic> {
         // #[cfg(feature = "tracy")]
         // let _span = tracy_client::span!("process_server_update");
 
         let UnreliableServerResponse {
             lobby_info: new_lobby_state,
-        }: UnreliableServerResponse<T> =
+        }: UnreliableServerResponse<Q::UserLogic> =
             wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
         // #[cfg(feature = "tracy")]
@@ -712,7 +723,7 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
         let old_remote_tick = self.remote_tick;
         let new_remote_tick = new_lobby_state.tick;
         let new_remote_status = new_lobby_state.status;
-        let new_tick_info: TickInfo<T> = new_lobby_state.try_into()?;
+        let new_tick_info: TickInfo<Q::UserLogic> = new_lobby_state.try_into()?;
 
         // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
         if matches!(new_remote_status, LobbyStatus::Finished) {
@@ -952,10 +963,10 @@ impl<T: DeformUserLogic, D: DeformQuicLogic + Send + 'static> QuicBackend<T, D> 
     pub fn handle_rollback(
         &mut self,
         // the state that will be used as the new source of truth
-        new_tick_info: TickInfo<T>,
+        new_tick_info: TickInfo<Q::UserLogic>,
         conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> UserFacingResult<T> {
+    ) -> UserFacingResult<Q::UserLogic> {
         // #[cfg(feature = "tracy")]
         // if let Some(client) = tracy_client::Client::running() {
         //     client.message("rollback", 0);

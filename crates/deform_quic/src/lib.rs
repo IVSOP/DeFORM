@@ -22,7 +22,7 @@ wincode::pod_wrapper! {
 
 /// Trait that defines what data types the server, as well as the logic functions/callbacks.
 // has to be debug for printing reliable messages (wtf)
-pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
+pub trait DeformQuicLogic: Clone + Sized + Debug + Send + 'static {
     type CustomReliableMessage: for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::CustomReliableMessage>
         + SchemaWrite<DefaultConfig, Src = Self::CustomReliableMessage>
         + Clone
@@ -37,6 +37,11 @@ pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
         + Send
         + Sync;
 
+    // this looks messy at first but is actually the cleaner solution (that I know of)
+    // I wanted to avoid user having to specify <Q, U> and also <Q<U>> looks very messy in the structs below
+    // and this makes it so each server logic has a specific user logic associated
+    type UserLogic: DeformUserLogic;
+
     // https://github.com/rust-lang/rust/issues/29661
     // type Result<T = ()> = Result<T, Self::Error>;
 
@@ -45,28 +50,30 @@ pub trait DeformQuicLogic: DeformUserLogic + Debug + Send + 'static {
     /// - Err -> send an error message to the client and close the connection
     /// - Ok(()) -> ReliableMessage::Authorized will be sent.
     // TODO: use different error types??
-    fn authorize_connection<D: DeformQuicLogic>(
-        identification: &UserIdentification<D>,
-    ) -> Result<(), D::Error>;
+    fn authorize_connection(
+        identification: &UserIdentification<Self>,
+    ) -> Result<(), <Self::UserLogic as DeformUserLogic>::Error>;
+
+    fn new_match_logic(&self) -> Self::UserLogic;
 }
 
 // TODO: user might want custom information here. make this an associated type instead?
 #[derive(Clone, SchemaRead, SchemaWrite, Debug)]
-pub struct UserIdentification<D: DeformQuicLogic> {
+pub struct UserIdentification<Q: DeformQuicLogic> {
     pub user: Pubkey,
     pub lobby_id: u64,
-    pub auth: D::Auth,
+    pub auth: Q::Auth,
 }
 
 /// Messages on the reliable control stream (the bi-directional stream
 /// opened during auth and kept open for the lifetime of the connection).
 #[derive(Clone, SchemaRead, SchemaWrite, Debug)]
-pub enum ReliableMessage<D: DeformQuicLogic> {
-    Identification(UserIdentification<D>),
+pub enum ReliableMessage<Q: DeformQuicLogic> {
+    Identification(UserIdentification<Q>),
     Authorized,
     Finish,
-    Custom(D::CustomReliableMessage),
-    Error(UserFacingError<D>),
+    Custom(Q::CustomReliableMessage),
+    Error(UserFacingError<Q::UserLogic>),
 }
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
@@ -85,7 +92,7 @@ pub struct UnreliableServerResponse<T: DeformUserLogic> {
 
 const MAX_CONTROL_MSG_SIZE: usize = 4096;
 
-impl<D: DeformQuicLogic> ReliableMessage<D> {
+impl<Q: DeformQuicLogic> ReliableMessage<Q> {
     pub async fn write(&self, send: &mut quinn::SendStream) -> DeformResult {
         let data = wincode::serialize(self)
             .map_err(|e| DeformError::Serialize(format!("control message: {e:?}")))?;
@@ -118,7 +125,7 @@ impl<D: DeformQuicLogic> ReliableMessage<D> {
     }
 }
 
-pub fn new_quic_client<T: DeformUserLogic, D: DeformQuicLogic>(
+pub fn new_quic_client<Q: DeformQuicLogic>(
     server_addr: String,
     server_name: String,
     lobby_id: u64,
@@ -126,9 +133,9 @@ pub fn new_quic_client<T: DeformUserLogic, D: DeformQuicLogic>(
     players: HashSet<Pubkey>,
     skip_cert_verify: bool,
     visual_tick_micros: u64,
-    auth: D::Auth,
-) -> DeformResult<DeformClient<T>> {
-    client::QuicBackend::<T, D>::init(
+    auth: Q::Auth,
+) -> DeformResult<DeformClient<Q::UserLogic>> {
+    client::QuicBackend::<Q>::init(
         server_addr,
         server_name,
         lobby_id,

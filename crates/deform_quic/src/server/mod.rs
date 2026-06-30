@@ -8,8 +8,8 @@ use std::{
 use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, DeformUserLogic,
-    accounts::lobby::Lobby,
+    DeformError, DeformUserLogic, Pubkey,
+    accounts::lobby::{Lobby, LobbyStatus, PLayerStatus},
     error::{UserFacingError, UserFacingResult},
 };
 use quinn::{Connection, RecvStream, SendStream, ServerConfig, crypto::rustls::QuicServerConfig};
@@ -36,7 +36,7 @@ mod matches;
 // TODO: tracing and logs
 // TODO: return errors that are not anyhow
 
-pub struct DeformQuicServer<T: DeformQuicLogic + DeformUserLogic> {
+pub struct DeformQuicServer<Q: DeformQuicLogic> {
     /// NOTE: you can use [`build_tls_config()`] as a helper:
     /// ```ignore
     /// let tls_config = build_tls_config(auth_config)?;
@@ -47,13 +47,18 @@ pub struct DeformQuicServer<T: DeformQuicLogic + DeformUserLogic> {
     pub addr: SocketAddr,
     pub max_conn_per_ip: u64,
 
-    pub matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
+    pub matches: Arc<RwLock<HashMap<u64, MatchInfo<Q>>>>,
     pub num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
     pub match_config: MatchConfig,
+
+    pub user_server_logic: Arc<Q>,
 }
 
-impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
-    pub fn new_with_defaults(auth_config: &AuthConfig) -> anyhow::Result<Self> {
+impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
+    pub fn new_with_defaults(
+        auth_config: &AuthConfig,
+        user_server_logic: Q,
+    ) -> anyhow::Result<Self> {
         let tls_config = build_tls_config(auth_config)?;
         let quic_server_config =
             ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls_config)?));
@@ -65,6 +70,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
             matches: Arc::new(RwLock::new(HashMap::new())),
             num_connections_per_ip: Arc::new(RwLock::new(HashMap::new())),
             match_config: MatchConfig::WaitForTimeout(Duration::from_secs(10)),
+            user_server_logic: Arc::new(user_server_logic),
         };
 
         config.apply_custom_quinn_defaults();
@@ -83,7 +89,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
         self.quinn_config.transport_config(Arc::new(transport));
     }
 
-    pub async fn init_server(mut self, logic: T, rpc_client: Arc<RpcClient>) -> anyhow::Result<()> {
+    pub async fn init_server(mut self, rpc_client: Arc<RpcClient>) -> anyhow::Result<()> {
         // // TODO: get this out of here, the client has to call it
         // rustls::crypto::ring::default_provider()
         //     .install_default()
@@ -252,38 +258,35 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
 
     /// Checks auth and join a match, handling the player handling loop to client_loop()
     pub async fn process_connection(
+        &self,
         connection: Connection,
         client_ip: IpAddr,
         is_loopback: bool,
         rpc_client: Arc<RpcClient>,
-        matches: Arc<RwLock<HashMap<u64, MatchInfo<T>>>>,
+        matches: Arc<RwLock<HashMap<u64, MatchInfo<Q>>>>,
         num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
         send_stream: &mut SendStream,
         recv_stream: &mut RecvStream,
-    ) -> UserFacingResult<T> {
-        // TODO: do this with the Incoming instead of the Connection?
+    ) -> UserFacingResult<Q::UserLogic> {
         if !is_loopback {
             let mut num_connections_per_ip_guard = num_connections_per_ip.write().await;
             let entry = num_connections_per_ip_guard.entry(client_ip).or_insert(0);
             *entry += 1;
         }
 
-        let identification = match ReliableMessage::<T>::read(recv_stream).await? {
+        let identification = match ReliableMessage::<Q>::read(recv_stream).await? {
             ReliableMessage::Identification(identification) => identification,
             _ => Err(DeformError::Auth(
                 "Expected an auth message as the first message".into(),
             ))?,
         };
 
-        // FIX: this is not good enough. need to check the lobby on-chain to check that the player actually belongs
-        // however, when the match already exists, we could just read it from there as well
-        // I think Authorized should not be sent here, for this reason
-        T::authorize_connection(&identification).map_err(|e| UserFacingError::User(e))?;
+        Q::authorize_connection(&identification).map_err(|e| UserFacingError::User(e))?;
 
         // if an existing match does exist, a read lock would be enough
         // however, if it does not exist, we need an atomic way to insert things into the match while guaranteeing that the same match is not created in parallel
         // so the workaround is to keep this write lock, which gets released as soon as possible
-        let matches_guard = matches.write().await;
+        let mut matches_guard = matches.write().await;
 
         // check if lobby already has an existing match
         if let Some(existing_match) = matches_guard.get(&identification.lobby_id).cloned() {
@@ -319,7 +322,7 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
                 )))?;
             } else {
                 // only now can we send Authorized
-                let _ = ReliableMessage::<T>::Authorized.write(send_stream).await?;
+                let _ = ReliableMessage::<Q>::Authorized.write(send_stream).await?;
             }
 
             if started_match.game_ended {
@@ -334,31 +337,114 @@ impl<T: DeformQuicLogic + DeformUserLogic> DeformQuicServer<T> {
 
             Self::client_loop().await?;
         } else {
+            let match_started_token = CancellationToken::new();
+            matches_guard.insert(
+                identification.lobby_id,
+                MatchInfo::Initializing(match_started_token.clone()),
+            );
+            drop(matches_guard);
+
+            let lobby_state =
+                Self::check_lobby(&rpc_client, identification.lobby_id, &Q::game_program(), 10)
+                    .await?;
+
+            let _ = ReliableMessage::<Q>::Authorized.write(send_stream).await?;
+
             let (state_sender, state_receiver) =
-                broadcast::channel::<InternalServerResponse<T>>(64);
-            let (match_sender, match_receiver) = mpsc::channel::<MatchMessage<T>>(256);
+                broadcast::channel::<InternalServerResponse<Q>>(64);
+            let (match_sender, match_receiver) = mpsc::channel::<MatchMessage<Q::UserLogic>>(256);
             let release_notify = Arc::new(tokio::sync::Notify::new());
+
+            let mut expected_players = HashSet::new();
+            for player in lobby_state.player_infos.keys() {
+                expected_players.insert(*player);
+            }
 
             let match_info = MatchInfo::Started(Match {
                 state_sender,
                 match_sender,
                 game_ended: false,
                 release_notify,
-                expected_players: HashSet::new(), // FIX:
+                expected_players,
             });
 
-            // FIX:
-            // 1) check lobby, if player belongs, then send Authorized
-            // 2) create match and insert it
-            // 3) if match already existed, revert to the case above
-            // 4) init a task that works on the match
-            // 5) call client_loop()
+            matches
+                .write()
+                .await
+                .insert(identification.lobby_id, match_info);
+
+            match_started_token.cancel();
+
+            tokio::spawn(matches::match_loop(
+                self.match_config,
+                matches.clone(),
+                lobby_state,
+                state_sender,
+                release_notify,
+                match_receiver,
+                user_logic,
+            ));
+
+            Self::client_loop().await?;
         }
 
         Ok(())
     }
 
-    async fn client_loop() -> UserFacingResult<T> {
+    async fn client_loop() -> UserFacingResult<Q::UserLogic> {
+        // FIX:
         Ok(())
+    }
+
+    /// Checks that lobby meets all preconditions, but does NOT check the player connecting
+    // TODO: use min fetch slot here
+    pub async fn check_lobby(
+        rpc_client: &RpcClient,
+        lobby_id: u64,
+        game_program: &Pubkey,
+        max_attempts: usize,
+    ) -> UserFacingResult<Q::UserLogic, Lobby<Q::UserLogic>> {
+        let (lobby_pda, _) = Lobby::<Q::UserLogic>::find_program_address(lobby_id, game_program);
+
+        for _attempt in 1..=max_attempts {
+            // info!("Attempting to fetch lobby {}", connection_info.lobby_id);
+
+            match rpc_client.get_account_data(&lobby_pda).await {
+                Ok(lobby_bytes) => {
+                    let info = Lobby::<Q::UserLogic>::from_bytes(&lobby_bytes)?;
+
+                    let all_ready = info
+                        .player_infos
+                        .values()
+                        .all(|player_info| player_info.status == PLayerStatus::Ready);
+
+                    if !(info.status == LobbyStatus::NotStarted && all_ready) {
+                        // warn!(
+                        //     "Preconditions not met for lobby {}, retrying... (attempt {}/{})",
+                        //     connection_info.lobby_id, attempt, max_attempts
+                        // );
+                        sleep(Duration::from_millis(400)).await;
+                        continue;
+                    }
+
+                    // TODO: allow custom checks from the user
+
+                    return Ok(info);
+                }
+                Err(_e) => {
+                    // warn!("Failed to fetch lobby {}: {}", connection_info.lobby_id, e);
+                    sleep(Duration::from_millis(400)).await;
+                }
+            }
+        }
+
+        // anyhow::bail!(
+        //     "Lobby not meeting preconditions after {} attempts",
+        //     max_attempts
+        // )
+
+        Err(UserFacingError::Deform(DeformError::InvalidState(
+            "Lobby is not in a valid state!".into(),
+        )))
     }
 }
