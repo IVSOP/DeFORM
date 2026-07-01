@@ -16,6 +16,7 @@ wincode = { workspace = true }
 glam = { workspace = true }
 thiserror = { workspace = true }
 solana-address = { workspace = true }
+solana-instruction = { workspace = true }
 
 [features]
 default = ["client"]

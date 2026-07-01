@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
-use deform_core::Pubkey;
 use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
 };
+use deform_core::{GameProgramClient, Pubkey};
 use solana_signature::Signature;
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
@@ -41,6 +41,7 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     // I wanted to avoid user having to specify <Q, U> and also <Q<U>> looks very messy in the structs below
     // and this makes it so each server logic has a specific user logic associated
     type UserLogic: DeformUserLogic;
+    type ProgramClient: GameProgramClient<Self::UserLogic>;
 
     // https://github.com/rust-lang/rust/issues/29661
     // type Result<T = ()> = Result<T, Self::Error>;

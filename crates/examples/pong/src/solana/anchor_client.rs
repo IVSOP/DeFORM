@@ -1,5 +1,4 @@
-use anyhow::Result;
-use deform_core::{Pubkey, accounts::lobby::Lobby};
+use deform_core::{GameProgramClient, Pubkey, accounts::lobby::Lobby};
 use solana_instruction::Instruction;
 
 use crate::{
@@ -13,12 +12,18 @@ use crate::{
     },
 };
 
-pub struct AnchorClient {
-    pub program_id: Pubkey,
-}
+pub const GAME_PROGRAM: Pubkey = crate::generated::ANCHOR_PROGRAM_ID;
 
-impl AnchorClient {
-    pub fn create_lobby(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
+#[derive(Clone)]
+pub struct PongAnchorClient;
+
+// impl specific to PongGame!!
+impl GameProgramClient<PongGame> for PongAnchorClient {
+    fn game_program(&self) -> Pubkey {
+        GAME_PROGRAM
+    }
+
+    fn create_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
         CreateLobby {
             user,
             lobby,
@@ -27,7 +32,7 @@ impl AnchorClient {
         .instruction(CreateLobbyInstructionArgs { id })
     }
 
-    pub fn join_lobby(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
+    fn join_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
         JoinLobby {
             user,
             lobby,
@@ -36,34 +41,35 @@ impl AnchorClient {
         .instruction(JoinLobbyInstructionArgs { id })
     }
 
-    pub fn ready(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
+    fn ready_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
         Ready { user, lobby }.instruction(ReadyInstructionArgs { id })
     }
 
-    pub fn write_and_close(
+    fn write_and_close_ix(
         &self,
         admin: Pubkey,
-        lobby: Pubkey,
+        lobby_pubkey: Pubkey,
         creator: Pubkey,
-        id: u64,
-        scores: Vec<PlayerScore>,
+        lobby: Lobby<PongGame>,
     ) -> Instruction {
-        let scores = scores
-            .into_iter()
+        let scores = lobby
+            .game_state
+            .unwrap()
+            .players
+            .iter()
             .map(|s| PlayerScore {
-                player: s.player,
-                score: s.score,
+                player: *s.0,
+                score: s.1.score,
             })
             .collect();
         WriteAndClose {
             admin,
-            lobby,
+            lobby: lobby_pubkey,
             creator,
         }
-        .instruction(WriteAndCloseInstructionArgs { id, scores })
-    }
-
-    pub fn deserialize_lobby(&self, data: &[u8]) -> Result<Lobby<PongGame>> {
-        Ok(Lobby::<PongGame>::from_bytes(data)?)
+        .instruction(WriteAndCloseInstructionArgs {
+            id: lobby.id,
+            scores,
+        })
     }
 }

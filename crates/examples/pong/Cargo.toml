@@ -10,7 +10,7 @@ name = "pong"
 required-features = ["client"]
 
 [features]
-default = ["client", "anchor"]
+default = ["client", "anchor", "bevy/dynamic_linking"]
 client = ["deform_core/client", "dep:bevy", "dep:deform_offline", "dep:bevy_egui", "dep:bevy-egui-notify", "dep:anyhow", "dep:solana-sdk", "dep:solana-client", "dep:solana-rpc-client", "dep:clap", "dep:serde_json", "dep:deform_quic", "dep:tokio", "dep:tracing", "dep:tracing-subscriber"]
 anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 

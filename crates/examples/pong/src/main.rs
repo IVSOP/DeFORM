@@ -6,10 +6,11 @@ use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
 use clap::{Parser, Subcommand};
-use deform_core::{DeformClient, DeformUserLogic, Pubkey, accounts::lobby::Lobby};
+use deform_core::{
+    DeformClient, DeformUserLogic, GameProgramClient, Pubkey, accounts::lobby::Lobby,
+};
 use deform_offline::new_offline_client;
 use deform_quic::server::{DeformQuicServer, auth_config::AuthConfig};
-
 use solana_client::{
     rpc_client::RpcClient,
     rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, UiAccountEncoding},
@@ -68,6 +69,7 @@ fn serve(port: u16, rpc_url: &str) -> anyhow::Result<()> {
     let mut server = DeformQuicServer::<PongQuicLogic>::new_with_defaults(
         &AuthConfig::DebugConfig,
         PongQuicLogic,
+        PongAnchorClient,
     )?;
     server.addr = format!("0.0.0.0:{port}").parse()?;
 
@@ -88,7 +90,7 @@ fn serve(port: u16, rpc_url: &str) -> anyhow::Result<()> {
 fn fetch_lobbies(rpc_url: &str) -> anyhow::Result<()> {
     let rpc_client = RpcClient::new(rpc_url.to_string());
 
-    let program_id = to_sdk_pubkey(&PongGame::game_program());
+    let program_id = to_sdk_pubkey(&GAME_PROGRAM);
 
     let discriminator_bytes = wincode::serialize(&deform_core::accounts::AccountType::Lobby)?;
 
@@ -159,7 +161,10 @@ fn run_game() {
         .run();
 }
 
-use pong::{solana::anchor_client::AnchorClient, *};
+use pong::{
+    solana::anchor_client::{GAME_PROGRAM, PongAnchorClient},
+    *,
+};
 
 #[derive(Component)]
 pub struct Ball;
@@ -194,24 +199,20 @@ enum AppState {
 struct NetworkPreset {
     name: &'static str,
     rpc_url: &'static str,
-    program_id: &'static str,
 }
 
 const NETWORK_PRESETS: &[NetworkPreset] = &[
     NetworkPreset {
         name: "Devnet",
         rpc_url: "https://api.devnet.solana.com",
-        program_id: "5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r",
     },
     NetworkPreset {
         name: "Mainnet",
         rpc_url: "https://api.mainnet-beta.solana.com",
-        program_id: "5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r",
     },
     NetworkPreset {
         name: "Localhost",
         rpc_url: "http://127.0.0.1:8899",
-        program_id: "5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r",
     },
 ];
 
@@ -224,7 +225,7 @@ struct MenuState {
     selected_preset_idx: usize,
 
     rpc_client: Option<RpcClient>,
-    program_client: AnchorClient,
+    program_client: PongAnchorClient,
 
     lobby_id: u64,
     lobby_id_text: String,
@@ -301,9 +302,7 @@ fn setup(
         keypair: None,
         selected_preset_idx: 0,
         rpc_client: None,
-        program_client: AnchorClient {
-            program_id: Pubkey::default(),
-        },
+        program_client: PongAnchorClient,
         lobby_id: 0,
         lobby_id_text: "0".into(),
         lobby_data: None,
@@ -345,16 +344,19 @@ fn start_offline(
     players_q: &mut Query<(&mut Player, &mut Visibility)>,
     visual_tick_micros: u64,
 ) -> Result<()> {
-    use deform_core::accounts::lobby::{PlayerInfo, PLayerStatus, LobbyStatus};
+    use deform_core::accounts::lobby::{LobbyStatus, PLayerStatus, PlayerInfo};
 
     let bot_player = Pubkey::new_from_array([255; 32]);
 
     let mut player_infos = HashMap::new();
     for pk in [main_player, bot_player] {
-        player_infos.insert(pk, PlayerInfo {
-            status: PLayerStatus::Ready,
-            inputs: PongInputs::default(),
-        });
+        player_infos.insert(
+            pk,
+            PlayerInfo {
+                status: PLayerStatus::Ready,
+                inputs: PongInputs::default(),
+            },
+        );
     }
 
     let lobby = Lobby::<PongGame>::new(
@@ -579,9 +581,8 @@ fn egui_in_menu(
             if ui.button("Connect").clicked() {
                 let preset = &NETWORK_PRESETS[menu.selected_preset_idx];
                 let rpc = RpcClient::new(preset.rpc_url.to_string());
-                let program_id = Pubkey::from_str_const(preset.program_id);
                 menu.rpc_client = Some(rpc);
-                menu.program_client = AnchorClient { program_id };
+                menu.program_client = PongAnchorClient;
                 toasts.0.info(format!("Connected to {}", preset.name));
             }
         });
@@ -615,8 +616,7 @@ fn egui_in_menu(
             let program_client = &menu.program_client;
             let keypair = menu.keypair.as_ref().unwrap();
             let lobby_id = menu.lobby_id;
-            let (lobby_pda, _) =
-                Lobby::<PongGame>::find_program_address(lobby_id, &program_client.program_id);
+            let (lobby_pda, _) = Lobby::<PongGame>::find_program_address(lobby_id, &GAME_PROGRAM);
             let user = Pubkey::from(keypair.pubkey().to_bytes());
 
             ui.label(format!("Lobby PDA: {lobby_pda}"));
@@ -625,7 +625,7 @@ fn egui_in_menu(
 
             ui.horizontal(|ui| {
                 if ui.button("Create Lobby").clicked() {
-                    let ix = program_client.create_lobby(user, lobby_pda, lobby_id);
+                    let ix = program_client.create_lobby_ix(user, lobby_pda, lobby_id);
                     match send_and_confirm_tx(rpc, ix, keypair) {
                         Ok(()) => {
                             toasts.0.info("Lobby created!");
@@ -637,7 +637,7 @@ fn egui_in_menu(
                 }
 
                 if ui.button("Join Lobby").clicked() {
-                    let ix = program_client.join_lobby(user, lobby_pda, lobby_id);
+                    let ix = program_client.join_lobby_ix(user, lobby_pda, lobby_id);
                     match send_and_confirm_tx(rpc, ix, keypair) {
                         Ok(()) => {
                             toasts.0.info("Joined lobby!");
@@ -649,7 +649,7 @@ fn egui_in_menu(
                 }
 
                 if ui.button("Ready").clicked() {
-                    let ix = program_client.ready(user, lobby_pda, lobby_id);
+                    let ix = program_client.ready_ix(user, lobby_pda, lobby_id);
                     match send_and_confirm_tx(rpc, ix, keypair) {
                         Ok(()) => {
                             toasts.0.info("Ready!");
@@ -663,7 +663,8 @@ fn egui_in_menu(
 
             if ui.button("Read Lobby").clicked() {
                 match rpc.get_account_data(&to_sdk_pubkey(&lobby_pda)) {
-                    Ok(data) => match program_client.deserialize_lobby(&data) {
+                    // FIX: how tf is the server deserializing the lobby???
+                    Ok(data) => match Lobby::<PongGame>::from_bytes(&data) {
                         Ok(lobby) => {
                             toasts.0.info(format!(
                                 "Lobby loaded, players: {}",

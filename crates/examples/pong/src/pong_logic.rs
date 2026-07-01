@@ -125,10 +125,6 @@ impl DeformUserLogic for PongGame {
         Ok(PongGame)
     }
 
-    fn game_program() -> Pubkey {
-        crate::generated::ANCHOR_PROGRAM_ID
-    }
-
     fn advance_frame(
         &mut self,
         state: &Self::GameState,
@@ -228,6 +224,8 @@ impl DeformUserLogic for PongGame {
 
 #[cfg(feature = "client")]
 mod quic_logic {
+    use crate::solana::anchor_client::PongAnchorClient;
+
     use super::*;
     use deform_quic::{DeformQuicLogic, UserIdentification};
     use wincode::{SchemaRead, SchemaWrite};
@@ -248,6 +246,7 @@ mod quic_logic {
         type CustomReliableMessage = NoCustomMessage;
         type Auth = NoAuth;
         type UserLogic = PongGame;
+        type ProgramClient = PongAnchorClient;
 
         fn authorize_connection(
             _identification: &UserIdentification<Self>,

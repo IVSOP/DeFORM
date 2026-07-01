@@ -8,7 +8,7 @@ use std::{
 use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, DeformUserLogic, Pubkey,
+    DeformError, GameProgramClient, Pubkey,
     accounts::lobby::{Lobby, LobbyStatus, PLayerStatus},
     error::{UserFacingError, UserFacingResult},
 };
@@ -50,12 +50,14 @@ pub struct DeformQuicServer<Q: DeformQuicLogic> {
     pub match_config: MatchConfig,
 
     pub user_server_logic: Arc<Q>,
+    pub game_program_client: Arc<Q::ProgramClient>,
 }
 
 impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
     pub fn new_with_defaults(
         auth_config: &AuthConfig,
         user_server_logic: Q,
+        game_program_client: Q::ProgramClient,
     ) -> anyhow::Result<Self> {
         let tls_config = build_tls_config(auth_config)?;
         let quic_server_config =
@@ -69,6 +71,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             num_connections_per_ip: Arc::new(RwLock::new(HashMap::new())),
             match_config: MatchConfig::WaitForTimeout(Duration::from_secs(10)),
             user_server_logic: Arc::new(user_server_logic),
+            game_program_client: Arc::new(game_program_client),
         };
 
         config.apply_custom_quinn_defaults();
@@ -368,7 +371,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             let lobby_state = Self::check_lobby(
                 &rpc_client,
                 identification.lobby_id,
-                &<Q::UserLogic as DeformUserLogic>::game_program(),
+                &server.game_program_client.game_program(),
                 10,
             )
             .await?;

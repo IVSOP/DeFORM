@@ -779,6 +779,7 @@ dependencies = [
  "glam",
  "serde",
  "solana-address 2.6.1",
+ "solana-instruction",
  "solana-program-error",
  "thiserror 2.0.18",
  "tokio",
