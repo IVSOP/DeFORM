@@ -11,7 +11,7 @@ use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
 mod client;
-mod server;
+pub mod server;
 
 pub const ALPN_PROTOCOL: &[u8] = b"deform/1";
 

@@ -6,7 +6,7 @@ use anyhow::Result;
 
 use crate::ALPN_PROTOCOL;
 
-pub(crate) enum AuthConfig {
+pub enum AuthConfig {
     /// Emit self signed certs, for development
     DebugConfig,
     /// Reads certs from a pem file
@@ -16,7 +16,7 @@ pub(crate) enum AuthConfig {
     },
 }
 
-pub(crate) fn build_tls_config(config: &AuthConfig) -> Result<rustls::ServerConfig> {
+pub fn build_tls_config(config: &AuthConfig) -> Result<rustls::ServerConfig> {
     let (certs, key) = match config {
         AuthConfig::DebugConfig => {
             let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;

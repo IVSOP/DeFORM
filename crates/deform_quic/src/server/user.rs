@@ -7,6 +7,7 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::sleep,
 };
+use tracing::info;
 
 use crate::{
     DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
@@ -70,10 +71,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             });
         }
 
-        // info!(
-        //     "client_loop disconnecting playerID {} in lobby {}",
-        //     player_id, connection_info.lobby_id
-        // );
+        info!(player = %pubkey, "Client loop ended");
         Ok(())
     }
 
@@ -99,10 +97,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                         // Give a grace period, then close the connection
                         sleep(Duration::from_secs(5)).await;
 
-                        // info!(
-                        //     "Closing connection with player {} in lobby {}",
-                        //     connection_info.player_pubkey, connection_info.lobby_id
-                        // );
                         connection.close(quinn::VarInt::from_u32(0), b"game_over");
 
                         finished = true;

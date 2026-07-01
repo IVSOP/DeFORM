@@ -3445,6 +3445,7 @@ dependencies = [
  "solana-signature",
  "tokio",
  "tokio-util",
+ "tracing",
  "webpki-roots 0.26.11",
  "wincode",
 ]
@@ -6303,6 +6304,7 @@ dependencies = [
  "clap",
  "deform_core",
  "deform_offline",
+ "deform_quic",
  "glam",
  "num-derive",
  "num-traits",
@@ -6314,9 +6316,13 @@ dependencies = [
  "solana-cpi",
  "solana-instruction",
  "solana-program-error",
+ "solana-rpc-client",
  "solana-sdk",
  "solana-system-interface 3.2.0",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
  "wincode",
 ]
 

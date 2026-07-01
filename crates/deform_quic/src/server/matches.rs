@@ -14,10 +14,11 @@ use deform_core::{
     error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
-    sync::{Notify, RwLock, broadcast, mpsc},
+    sync::{Notify, broadcast, mpsc},
     time::interval,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{info, warn};
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
@@ -86,40 +87,38 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     server: Arc<DeformQuicServer<Q>>,
     mut lobby_state: Lobby<Q::UserLogic>,
 
-    // TODO: cleaner to have the function access this from the matches array instead??
     state_sender: broadcast::Sender<InternalServerResponse<Q>>,
     release_notify: Arc<tokio::sync::Notify>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
 ) -> UserFacingResult<Q::UserLogic> {
+    let lobby_id = lobby_state.id;
+
     // inputs per-tick of each player
     // NOTE: a player existing in this map means the player is currently joined
     let mut players_data: HashMap<Pubkey, HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs>> =
         HashMap::new();
 
     // always wait for the first player to join
-    wait_for_first_player(&mut match_receiver, &lobby_state, &mut players_data).await?;
+    wait_for_first_player(&mut match_receiver, &mut players_data).await?;
 
-    // TODO: depending on match_config, wait for all players to join
     match server.match_config {
-        MatchConfig::WaitPlayers => {
-            loop {
-                match match_receiver.recv().await {
-                    Some(MatchMessage::PlayerJoined { pubkey }) => {
-                        players_data.insert(pubkey, HashMap::new());
+        MatchConfig::WaitPlayers => loop {
+            match match_receiver.recv().await {
+                Some(MatchMessage::PlayerJoined { pubkey }) => {
+                    players_data.insert(pubkey, HashMap::new());
 
-                        if players_data.len() == lobby_state.player_infos.len() {
-                            // info!("Starting lobby {} (both players joined)", lobby_state.lobby);
-                            break;
-                        }
-                    }
-                    Some(_) => {}
-                    None => {
-                        Err(DeformError::ChannelClosed)?;
+                    if players_data.len() == lobby_state.player_infos.len() {
+                        info!(lobby_id, "Starting lobby (all players joined)");
+                        break;
                     }
                 }
+                Some(_) => {}
+                None => {
+                    Err(DeformError::ChannelClosed)?;
+                }
             }
-        }
+        },
         MatchConfig::WaitForTimeout(timeout) => {
             let timeout = tokio::time::sleep(timeout);
             tokio::pin!(timeout);
@@ -131,7 +130,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                                 players_data.insert(pubkey, HashMap::new());
 
                                 if players_data.len() == lobby_state.player_infos.len() {
-                                    // info!("Starting lobby {} (both players joined)", lobby_state.lobby);
+                                    info!(lobby_id, "Starting lobby (all players joined)");
                                     break;
                                 }
                             }
@@ -142,7 +141,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                         }
                     }
                     .. if let _ = &mut timeout => {
-                        // info!("Starting lobby {} (10s timeout elapsed)", lobby_state.lobby);
+                        info!(lobby_id, "Starting lobby (timeout elapsed)");
                         break;
                     }
                 });
@@ -197,28 +196,27 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                         last_applied_inputs.insert(*player, inputs.clone());
                     };
 
-                    // no nee
-                    // player_inputs.insert(current_tick, new_inputs);
-
                     // remove old inputs, including from current tick since they have already been copied
                     player_inputs.retain(|k, _| *k > current_tick);
                 }
 
-                if let Err(e) = user_logic.advance_frame(
+                match user_logic.advance_frame(
                     lobby_state.game_state.as_ref().unwrap(),
                     &last_applied_inputs,
                 ) {
-                    let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
-                        ReliableMessage::Error(UserFacingError::User(e)),
-                    ));
-                    break;
+                    Ok(new_state) => {
+                        lobby_state.game_state = Some(new_state);
+                    }
+                    Err(e) => {
+                        let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
+                            ReliableMessage::Error(UserFacingError::User(e)),
+                        ));
+                        break;
+                    }
                 }
 
                 lobby_state.tick = new_tick;
 
-                // broadcast the new state
-                // #[cfg(feature = "debug")]
-                // info!("Broadcasting state for lobby {}: tick={}", state.lobby, new_tick);
                 let message = UnreliableServerResponse {
                     lobby_info: lobby_state.clone(),
                 };
@@ -234,6 +232,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
                         ReliableMessage::Finish,
                     ));
+                    info!(lobby_id, tick = new_tick, "Match finished");
                     break;
                 }
             }
@@ -247,14 +246,15 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     if let Some(player_inputs) = players_data.get_mut(&pubkey) {
                         for (tick, new_input) in inputs.iter() {
                             if tick < &lobby_state.tick {
-                                // warn!(
-                                //     "Inputs ignored: got tick {}, but current tick is {} (delta {})",
-                                //     tick,
-                                //     lobby_state.tick,
-                                //     lobby_state.tick - tick
-                                // );
+                                warn!(
+                                    lobby_id,
+                                    player = %pubkey,
+                                    input_tick = tick,
+                                    current_tick = lobby_state.tick,
+                                    "Inputs ignored: tick is in the past"
+                                );
                             } else if player_inputs.len() > MAX_INPUTS {
-                                // warn!("There are already too many inputs");
+                                warn!(lobby_id, player = %pubkey, "Too many pending inputs");
                                 break;
                             } else {
                                 // only insert if entry did not already exist
@@ -265,21 +265,13 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                             }
                         }
                     }
-                    // info!(
-                    //     "Processed inputs for player {} in lobby {}: {} slots",
-                    //     inputs.player_id,
-                    //     lobby_state.lobby,
-                    //     inputs.inputs.len()
-                    // );
                 }
             }
         });
     }
 
-    // info!(
-    //     "Crank loop for lobby {} finished  {}-{}",
-    //     lobby_state.lobby, game_state.players[0].score, game_state.players[1].score
-    // );
+    info!(lobby_id, "Match loop ended");
+
     match server.matches.write().await.get_mut(&lobby_state.id) {
         Some(MatchInfo::Started(match_info)) => {
             match_info.game_ended.store(true, Ordering::SeqCst);
@@ -300,7 +292,6 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
 async fn wait_for_first_player<T: DeformUserLogic>(
     match_receiver: &mut mpsc::Receiver<MatchMessage<T>>,
-    lobby_state: &Lobby<T>,
     players_data: &mut HashMap<Pubkey, HashMap<u64, T::Inputs>>,
 ) -> UserFacingResult<T> {
     loop {

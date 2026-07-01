@@ -20,6 +20,7 @@ use tokio::{
     time::sleep,
 };
 use tokio_util::sync::CancellationToken;
+use tracing::{debug, error, info, warn};
 
 use crate::{
     DeformQuicLogic, ReliableMessage,
@@ -32,10 +33,6 @@ use crate::{
 pub mod auth_config;
 pub mod matches;
 pub mod user;
-
-// TODO: how to let the client have full custom behaviour?? hooks?
-// TODO: tracing and logs
-// TODO: return errors that are not anyhow
 
 pub struct DeformQuicServer<Q: DeformQuicLogic> {
     /// NOTE: you can use [`build_tls_config()`] as a helper:
@@ -117,7 +114,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                             .await;
                         }
                         None => {
-                            // info!("QUIC endpoint closed");
+                            info!("QUIC endpoint closed");
                             break;
                         }
                     }
@@ -129,7 +126,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     loop {
                         let matches_len = shared_server.matches.read().await.len();
                         if matches_len > 0 {
-                            // info!("Waiting for {} active crank(s) to finish...", matches_len);
+                            info!("Waiting for {} active match(es) to finish...", matches_len);
                             sleep(Duration::from_secs(1)).await;
                         } else {
                             break;
@@ -146,7 +143,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
     async fn register_signal(cancellation_token: CancellationToken) {
         tokio::spawn(async move {
-            // TODO: make this return error somehow
             let mut sigterm = signal(SignalKind::terminate())
                 .with_context(|| "Failed to register SIGTERM handler")
                 .unwrap();
@@ -155,17 +151,16 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             tokio_select!(match .. {
                 .. if let result = tokio::signal::ctrl_c() => {
                     if result.is_err() {
-                        // error!("Failed to listen for ctrl_c signal");
+                        error!("Failed to listen for ctrl_c signal");
                         return;
                     }
                 }
                 .. if let _ = sigterm.recv() => {}
             });
 
-            // set an atomic bool so that new connections can be rejected
-            // info!(
-            //     "Shutdown signal received. Rejecting new cranks, waiting for active ones to finish..."
-            // );
+            info!(
+                "Shutdown signal received. Rejecting new matches, waiting for active ones to finish..."
+            );
             cancellation_token.cancel();
         });
     }
@@ -188,8 +183,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         // spoofed and the extra round-trip would break local
         // dev/test workflows.
         if !is_loopback && !incoming.remote_address_validated() {
-            if let Err(_e) = incoming.retry() {
-                // warn!("Failed to send QUIC Retry: {}", e);
+            if let Err(e) = incoming.retry() {
+                warn!("Failed to send QUIC Retry: {}", e);
             }
             return;
         }
@@ -200,7 +195,10 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             let num_connections_per_ip_guard = server.num_connections_per_ip.read().await;
             if let Some(num_connections) = num_connections_per_ip_guard.get(&client_ip) {
                 if *num_connections >= server.max_conn_per_ip {
-                    // log...
+                    warn!(
+                        "Refusing connection from {}: too many connections",
+                        client_ip
+                    );
                     incoming.refuse();
                     return;
                 }
@@ -215,8 +213,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         tokio::spawn(async move {
             let connection = match incoming.await {
                 Ok(connection) => connection,
-                Err(_e) => {
-                    // TODO: handle error. maybe just debug log it and close the connection?
+                Err(e) => {
+                    debug!("Incoming connection failed from {}: {}", client_ip, e);
                     return;
                 }
             };
@@ -226,9 +224,9 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.contains("cryptographic handshake failed") {
-                        // debug!("Rejected probe from {}: {}", client_ip, msg);
+                        debug!("Rejected probe from {}: {}", client_ip, msg);
                     } else {
-                        //
+                        warn!("Failed to accept bi-stream from {}: {}", client_ip, msg);
                     }
                     return;
                 }
@@ -247,7 +245,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             )
             .await
             {
-                // warn!("Sending error to client {}: {}", remote, e);
+                warn!("Sending error to client {}: {}", client_ip, e);
                 let _ = ReliableMessage::<Q>::Error(e).write(&mut send_stream).await;
                 let _ = send_stream.finish();
                 connection.close(quinn::VarInt::from_u32(1), b"error");
@@ -434,8 +432,11 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
     ) -> UserFacingResult<Q::UserLogic, Lobby<Q::UserLogic>> {
         let (lobby_pda, _) = Lobby::<Q::UserLogic>::find_program_address(lobby_id, game_program);
 
-        for _attempt in 1..=max_attempts {
-            // info!("Attempting to fetch lobby {}", connection_info.lobby_id);
+        for attempt in 1..=max_attempts {
+            info!(
+                "Attempting to fetch lobby {} (attempt {}/{})",
+                lobby_id, attempt, max_attempts
+            );
 
             match rpc_client.get_account_data(&lobby_pda).await {
                 Ok(lobby_bytes) => {
@@ -447,10 +448,10 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                         .all(|player_info| player_info.status == PLayerStatus::Ready);
 
                     if !(info.status == LobbyStatus::NotStarted && all_ready) {
-                        // warn!(
-                        //     "Preconditions not met for lobby {}, retrying... (attempt {}/{})",
-                        //     connection_info.lobby_id, attempt, max_attempts
-                        // );
+                        warn!(
+                            "Preconditions not met for lobby {}, retrying... (attempt {}/{})",
+                            lobby_id, attempt, max_attempts
+                        );
                         sleep(Duration::from_millis(400)).await;
                         continue;
                     }
@@ -459,17 +460,15 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
                     return Ok(info);
                 }
-                Err(_e) => {
-                    // warn!("Failed to fetch lobby {}: {}", connection_info.lobby_id, e);
+                Err(e) => {
+                    warn!(
+                        "Failed to fetch lobby {}: {} (attempt {}/{})",
+                        lobby_id, e, attempt, max_attempts
+                    );
                     sleep(Duration::from_millis(400)).await;
                 }
             }
         }
-
-        // anyhow::bail!(
-        //     "Lobby not meeting preconditions after {} attempts",
-        //     max_attempts
-        // )
 
         Err(UserFacingError::Deform(DeformError::InvalidState(
             "Lobby is not in a valid state!".into(),

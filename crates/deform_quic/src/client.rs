@@ -108,12 +108,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let terminate_clone = terminate.clone();
         let backend_dead_clone = backend_dead.clone();
 
-        // #[cfg(feature = "log")]
-        // info!("QUIC init with rpc: {}", rpc_url);
-        // #[cfg(feature = "log")]
-        // info!(
+        // tracing::info!(
         //     "QUIC init with server: {} (SNI: {})",
-        //     server_addr, server_name
+        //     server_addr,
+        //     server_name
         // );
 
         let _rss_thread = thread::spawn(move || {
@@ -387,7 +385,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         if current_tick < min_target_tick {
                             let delta_ticks = min_target_tick - current_tick;
                             // #[cfg(feature = "log")]
-                            // warn!("Ticking to catch up to remote slot - from {current_tick} to {min_target_tick}");
+                            // tracing::warn!(
+                            //     "Ticking to catch up to remote slot - from {current_tick} to {min_target_tick}"
+                            // );
                             for _ in 0..delta_ticks {
                                 self.advance_local_simulation()?
                                 // finish is handled when server tells us, not here
@@ -470,7 +470,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 // Shutdown signal
                 .. if let _ = self.terminate.notified() => {
                     // #[cfg(feature = "log")]
-                    // warn!("Shutdown signal received; exiting");
+                    // tracing::warn!("Shutdown signal received; exiting");
                     terminated = true;
                     break;
                 }
@@ -896,7 +896,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         self.inputs.retain(|tick, _| *tick >= new_remote_tick);
 
         // #[cfg(feature = "log")]
-        // warn!("QUIC received {}", new_lobby_state.tick);
+        // tracing::trace!("QUIC received tick {}", new_remote_tick);
 
         // #[cfg(feature = "tracy")]
         // if let Some(client) = tracy_client::Client::running() {
@@ -988,9 +988,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         self.local_tick = conflicting_tick;
 
         // #[cfg(feature = "log")]
-        // warn!(
-        //     "Rollback was triggered. Rolling back to {} and recomputing to {}",
-        //     new_tick, previous_local_tick
+        // tracing::debug!(
+        //     "Rollback triggered: rolling back to {} and recomputing to {}",
+        //     conflicting_tick,
+        //     previous_local_tick
         // );
         // run the simulation until we catch up to the current local tick
         // this will automatically reuse any registered inputs, and re-predict as needed
@@ -1017,7 +1018,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let old_deadline = tick_sleep.deadline();
         tick_sleep.as_mut().reset(new_deadline.min(old_deadline));
         // #[cfg(feature = "log")]
-        // warn!("after rollback, ticks is {}", self.local_tick);
+        // tracing::debug!("after rollback, local tick is {}", self.local_tick);
 
         Ok(())
     }

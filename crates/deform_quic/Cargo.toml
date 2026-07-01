@@ -24,5 +24,6 @@ glam = { workspace = true }
 better_tokio_select = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
+tracing = { workspace = true }
 
 [features]
