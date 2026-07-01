@@ -2,7 +2,7 @@ use better_tokio_select::tokio_select;
 use glam::FloatExt;
 use quinn::crypto::rustls::QuicClientConfig;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     pin::Pin,
     sync::{
         Arc,
@@ -19,7 +19,7 @@ use tokio::{
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformReadState, DeformResult, DeformUserLogic,
     Pubkey, Smooth, TickInfo,
-    accounts::lobby::LobbyStatus,
+    accounts::lobby::{Lobby, LobbyStatus},
     error::{UserFacingError, UserFacingResult},
 };
 
@@ -83,22 +83,23 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     pub fn init(
         server_addr: String,
         server_name: String,
-        lobby_id: u64,
+        lobby: Lobby<Q::UserLogic>,
         player: Pubkey,
-        players: HashSet<Pubkey>,
         skip_cert_verify: bool,
         visual_tick_micros: u64,
         auth: Q::Auth,
-    ) -> DeformResult<DeformClient<Q::UserLogic>> {
+    ) -> UserFacingResult<Q::UserLogic, DeformClient<Q::UserLogic>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) =
             mpsc::unbounded_channel::<<Q::UserLogic as DeformUserLogic>::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<Q::UserLogic>::new(
-            &players,
-        )));
+        let sdk_game_state = Arc::new(std::sync::Mutex::new(
+            DeformReadState::<Q::UserLogic>::new_from_lobby(&lobby)?,
+        ));
+        let user_logic =
+            Q::UserLogic::new_from_lobby(&lobby).map_err(|e| UserFacingError::User(e))?;
         let backend_dead = Arc::new(AtomicBool::new(false));
 
         // cursed
@@ -231,7 +232,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         let handshake_message =
                             ReliableMessage::<Q>::Identification(UserIdentification {
                                 user: player.clone(),
-                                lobby_id,
+                                lobby_id: lobby.id,
                                 auth,
                             });
 
@@ -309,8 +310,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 last_sim_instant: Instant::now(),
 
                                 avg_rtt: Duration::from_millis(50),
-                                // FIX: allow user to pass in a value
-                                user_logic: Q::UserLogic::default(),
+                                user_logic,
                             };
 
                             if let Err(e) = tick_info.tick_loop().await

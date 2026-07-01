@@ -1,13 +1,14 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard},
 };
 
 use tokio::sync::{mpsc, Notify};
 
 use crate::{
-    accounts::lobby::LobbyStatus, error::UserFacingResult, DeformError, DeformGameState,
-    DeformResult, DeformUserLogic, Pubkey, TickInfo,
+    accounts::lobby::{Lobby, LobbyStatus},
+    error::{UserFacingError, UserFacingResult},
+    DeformError, DeformGameState, DeformResult, DeformUserLogic, TickInfo,
 };
 
 /// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
@@ -42,21 +43,21 @@ pub struct DeformReadState<T: DeformUserLogic> {
 
 impl<T: DeformUserLogic> DeformReadState<T> {
     /// Create a new state when players are known
-    pub fn new(players: &HashSet<Pubkey>) -> Self {
-        let game_state = T::GameState::new(players);
+    pub fn new_from_lobby(lobby: &Lobby<T>) -> UserFacingResult<T, Self> {
+        let game_state = T::GameState::new_from_lobby(lobby);
         let mut inputs = HashMap::new();
-        for player in players.iter() {
-            inputs.insert(player.clone(), T::Inputs::default());
+        for player in lobby.player_infos.keys() {
+            inputs.insert(*player, T::Inputs::default());
         }
         let tick_info = TickInfo { game_state, inputs };
 
-        Self {
+        Ok(Self {
             tick_info,
             remote_status: Default::default(),
             stats: Default::default(),
-            user_logic: Default::default(),
+            user_logic: T::new_from_lobby(lobby).map_err(|e| UserFacingError::User(e))?,
             internal_error: Ok(()),
-        }
+        })
     }
 }
 

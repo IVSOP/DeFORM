@@ -1,6 +1,6 @@
 use better_tokio_select::tokio_select;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -16,7 +16,7 @@ use tokio::{
 use deform_core::{
     DeformClient, DeformError, DeformReadState, DeformResult, DeformUserLogic, Pubkey, Smooth,
     TickInfo,
-    accounts::lobby::LobbyStatus,
+    accounts::lobby::{Lobby, LobbyStatus},
     error::{UserFacingError, UserFacingResult},
 };
 
@@ -46,16 +46,19 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
 impl<T: DeformUserLogic> OfflineBackend<T> {
     pub fn init(
         player: Pubkey,
-        players: HashSet<Pubkey>,
+        lobby: Lobby<T>,
         bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
         visual_tick_micros: u64,
-    ) -> DeformResult<DeformClient<T>> {
+    ) -> UserFacingResult<T, DeformClient<T>> {
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new(&players)));
+        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new_from_lobby(
+            &lobby,
+        )?));
         let backend_dead = Arc::new(AtomicBool::new(false));
+        let user_logic = T::new_from_lobby(&lobby).map_err(|e| UserFacingError::User(e))?;
 
         // cursed
         let sdk_game_state_clone = sdk_game_state.clone();
@@ -103,7 +106,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                                 terminate: terminate_clone,
                                 set_inputs_receiver,
                                 sdk_game_state: sdk_game_state_clone.clone(),
-                                user_logic: T::default(),
+                                user_logic,
                                 bot_fn,
                                 smoother,
                                 visual_tick_micros,

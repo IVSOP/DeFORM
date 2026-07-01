@@ -157,9 +157,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     // mark game as started
     lobby_state.status = LobbyStatus::Started;
     // init the game state
-    lobby_state.game_state = Some(<Q::UserLogic as DeformUserLogic>::GameState::new(
-        &players_hashset,
-    ));
+    lobby_state.game_state =
+        Some(<Q::UserLogic as DeformUserLogic>::GameState::new_from_lobby(&lobby_state));
 
     let mut tick_timer = interval(Duration::from_micros(16667));
 

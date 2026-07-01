@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use deform_core::{
     DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth, accounts::lobby::Lobby,
@@ -42,6 +42,7 @@ pub struct PongGameState {
     pub ball_pos: Vec2,
     #[wincode(with = "PodVec2")]
     pub ball_vel: Vec2,
+    pub creator: Pubkey,
     #[smooth(map)]
     pub players: HashMap<Pubkey, PlayerState>,
 }
@@ -64,11 +65,11 @@ impl PongGameState {
 }
 
 impl DeformGameState for PongGameState {
-    fn new(players: &HashSet<Pubkey>) -> Self {
-        let mut state_players = HashMap::new();
-        for player in players.iter() {
-            state_players.insert(
-                player.clone(),
+    fn new_from_lobby<T: DeformUserLogic>(lobby: &Lobby<T>) -> Self {
+        let mut players = HashMap::new();
+        for player in lobby.player_infos.keys() {
+            players.insert(
+                *player,
                 PlayerState {
                     paddle_y: 0.0,
                     score: 0,
@@ -79,7 +80,8 @@ impl DeformGameState for PongGameState {
         Self {
             ball_pos: Vec2::ZERO,
             ball_vel: Vec2::ZERO,
-            players: state_players,
+            creator: lobby.creator,
+            players,
         }
     }
 
@@ -101,7 +103,7 @@ pub struct PongInputs {
 impl DeformInputs for PongInputs {}
 
 // workaround since Infallible does not have Serialize
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct PongGame;
 
 #[derive(Debug, Clone, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
@@ -139,12 +141,9 @@ impl DeformUserLogic for PongGame {
             return Ok(new);
         }
 
-        // Sort players by pubkey for deterministic left/right assignment
-        let mut sorted: Vec<_> = inputs.keys().collect();
-        sorted.sort();
-
-        let left_pk = sorted.first().copied();
-        let right_pk = sorted.get(1).copied();
+        // Creator is always on the left, the other player on the right
+        let left_pk = Some(&new.creator);
+        let right_pk = inputs.keys().find(|pk| **pk != new.creator);
 
         // Apply inputs
         for pk in [left_pk, right_pk].into_iter().flatten() {
@@ -226,6 +225,40 @@ impl DeformUserLogic for PongGame {
         Ok(new)
     }
 }
+
+#[cfg(feature = "client")]
+mod quic_logic {
+    use super::*;
+    use deform_quic::{DeformQuicLogic, UserIdentification};
+    use wincode::{SchemaRead, SchemaWrite};
+
+    #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+    pub enum NoCustomMessage {
+        // so compiler does not complain about wincode
+        Never,
+    }
+
+    #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+    pub struct NoAuth;
+
+    #[derive(Clone, Debug)]
+    pub struct PongQuicLogic;
+
+    impl DeformQuicLogic for PongQuicLogic {
+        type CustomReliableMessage = NoCustomMessage;
+        type Auth = NoAuth;
+        type UserLogic = PongGame;
+
+        fn authorize_connection(
+            _identification: &UserIdentification<Self>,
+        ) -> Result<(), PongError> {
+            Ok(())
+        }
+    }
+}
+
+#[cfg(feature = "client")]
+pub use quic_logic::{NoAuth, PongQuicLogic};
 
 pub fn pong_bot(state: &PongGameState, bot: &Pubkey, prev_inputs: &PongInputs) -> PongInputs {
     if state.ball_vel.x <= 0.0 {

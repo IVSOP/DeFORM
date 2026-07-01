@@ -1,8 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt::Debug;
 
 use deform_core::Pubkey;
-use deform_core::error::UserFacingError;
+use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
 };
@@ -127,19 +127,17 @@ impl<Q: DeformQuicLogic> ReliableMessage<Q> {
 pub fn new_quic_client<Q: DeformQuicLogic>(
     server_addr: String,
     server_name: String,
-    lobby_id: u64,
+    lobby: Lobby<Q::UserLogic>,
     player: Pubkey,
-    players: HashSet<Pubkey>,
     skip_cert_verify: bool,
     visual_tick_micros: u64,
     auth: Q::Auth,
-) -> DeformResult<DeformClient<Q::UserLogic>> {
+) -> UserFacingResult<Q::UserLogic, DeformClient<Q::UserLogic>> {
     client::QuicBackend::<Q>::init(
         server_addr,
         server_name,
-        lobby_id,
+        lobby,
         player,
-        players,
         skip_cert_verify,
         visual_tick_micros,
         auth,

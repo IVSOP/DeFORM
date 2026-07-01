@@ -1,4 +1,5 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 use anyhow::anyhow;
 use bevy::{prelude::*, window::Monitor};
@@ -7,6 +8,7 @@ use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
 use clap::{Parser, Subcommand};
 use deform_core::{DeformClient, DeformUserLogic, Pubkey, accounts::lobby::Lobby};
 use deform_offline::new_offline_client;
+use deform_quic::server::{DeformQuicServer, auth_config::AuthConfig};
 
 use solana_client::{
     rpc_client::RpcClient,
@@ -36,6 +38,13 @@ enum CliCommand {
         #[arg(long, default_value = "https://api.devnet.solana.com")]
         rpc_url: String,
     },
+    #[command(about = "Run the QUIC game server")]
+    Serve {
+        #[arg(long, default_value = "4433")]
+        port: u16,
+        #[arg(long, default_value = "https://api.devnet.solana.com")]
+        rpc_url: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -43,7 +52,36 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         CliCommand::Run => run_game(),
         CliCommand::FetchLobbies { rpc_url } => fetch_lobbies(&rpc_url)?,
+        CliCommand::Serve { port, rpc_url } => serve(port, &rpc_url)?,
     }
+    Ok(())
+}
+
+fn serve(port: u16, rpc_url: &str) -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .init();
+
+    let mut server = DeformQuicServer::<PongQuicLogic>::new_with_defaults(
+        &AuthConfig::DebugConfig,
+        PongQuicLogic,
+    )?;
+    server.addr = format!("0.0.0.0:{port}").parse()?;
+
+    tracing::info!("Starting pong server on {}", server.addr);
+
+    let rpc_client = Arc::new(solana_rpc_client::nonblocking::rpc_client::RpcClient::new(
+        rpc_url.to_string(),
+    ));
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(server.init_server(rpc_client))?;
+
     Ok(())
 }
 
@@ -307,22 +345,34 @@ fn start_offline(
     players_q: &mut Query<(&mut Player, &mut Visibility)>,
     visual_tick_micros: u64,
 ) -> Result<()> {
-    // Max pubkey so the bot always sorts last (= right side), matching
-    // pong_bot's assumption that it defends the right paddle.
-    let bot_player = Pubkey::new_from_array([255; 32]);
-    let players = HashSet::from([main_player, bot_player]);
+    use deform_core::accounts::lobby::{PlayerInfo, PLayerStatus, LobbyStatus};
 
-    let client =
-        new_offline_client::<PongGame>(main_player, players, pong_bot, visual_tick_micros)?;
+    let bot_player = Pubkey::new_from_array([255; 32]);
+
+    let mut player_infos = HashMap::new();
+    for pk in [main_player, bot_player] {
+        player_infos.insert(pk, PlayerInfo {
+            status: PLayerStatus::Ready,
+            inputs: PongInputs::default(),
+        });
+    }
+
+    let lobby = Lobby::<PongGame>::new(
+        0,
+        0,
+        main_player,
+        LobbyStatus::NotStarted,
+        None,
+        player_infos,
+        0,
+    );
+
+    let client = new_offline_client::<PongGame>(main_player, lobby, pong_bot, visual_tick_micros)?;
     commands.insert_resource(MultiplayerClient(client));
 
-    // Game logic assigns sides by sorted pubkey: smaller = left, larger = right.
-    // Mirror that here so the rendered paddles match the simulation.
-    let mut sorted = [main_player, bot_player];
-    sorted.sort();
-
+    // Creator (main_player) is always on the left
     player_entities.0.clear();
-    for (pk, entity) in sorted.into_iter().zip([slots.left, slots.right]) {
+    for (pk, entity) in [(main_player, slots.left), (bot_player, slots.right)] {
         if let Ok((mut p, mut vis)) = players_q.get_mut(entity) {
             p.0 = pk;
             *vis = Visibility::Visible;
