@@ -79,6 +79,7 @@ pub enum UnreliableServerInstruction<I: DeformInputs> {
     BatchSetInputs(HashMap<u64, I>),
 }
 
+// FIX: change to Bytes that quinn uses?? or at least change to Arc??
 #[repr(transparent)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct SerializedUnreliableServerResponse(pub Vec<u8>);

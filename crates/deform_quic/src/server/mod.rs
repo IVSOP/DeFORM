@@ -29,8 +29,9 @@ use crate::{
     },
 };
 
-mod auth_config;
-mod matches;
+pub mod auth_config;
+pub mod matches;
+pub mod user;
 
 // TODO: how to let the client have full custom behaviour?? hooks?
 // TODO: tracing and logs
@@ -349,9 +350,15 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
             let match_sender = started_match.match_sender.clone();
             let state_receiver = started_match.state_sender.subscribe();
-            let state_sender = started_match.state_sender.clone();
 
-            Self::client_loop().await?;
+            Self::client_loop(
+                identification.user,
+                match_sender,
+                connection,
+                send_stream,
+                state_receiver,
+            )
+            .await?;
         } else {
             let match_started_token = CancellationToken::new();
             matches_guard.insert(
@@ -395,6 +402,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
             match_started_token.cancel();
 
+            // TODO: Result from match_loop gets ignored
             tokio::spawn(matches::match_loop(
                 server,
                 lobby_state,
@@ -403,14 +411,16 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 match_receiver,
             ));
 
-            Self::client_loop().await?;
+            Self::client_loop(
+                identification.user,
+                match_sender,
+                connection,
+                send_stream,
+                state_receiver,
+            )
+            .await?;
         }
 
-        Ok(())
-    }
-
-    async fn client_loop() -> UserFacingResult<Q::UserLogic> {
-        // FIX:
         Ok(())
     }
 

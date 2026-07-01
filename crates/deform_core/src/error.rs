@@ -4,6 +4,8 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::DeformUserLogic;
 
+// TODO: this is not very good
+// quinn has good errors, like SendDatagramError, but I don't want the core library to import quinn. what to do?
 #[derive(Clone, Debug, Error, serde::Serialize, SchemaRead, SchemaWrite)]
 #[non_exhaustive]
 pub enum DeformError {
