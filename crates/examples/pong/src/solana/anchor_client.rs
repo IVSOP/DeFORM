@@ -2,7 +2,6 @@ use deform_core::{GameProgramClient, Pubkey, accounts::lobby::Lobby};
 use solana_instruction::Instruction;
 
 use crate::{
-    PongGame,
     generated::{
         instructions::{
             CreateLobby, CreateLobbyInstructionArgs, JoinLobby, JoinLobbyInstructionArgs, Ready,
@@ -10,6 +9,7 @@ use crate::{
         },
         types::PlayerScore,
     },
+    pong_logic::PongGame,
 };
 
 pub const GAME_PROGRAM: Pubkey = crate::generated::ANCHOR_PROGRAM_ID;

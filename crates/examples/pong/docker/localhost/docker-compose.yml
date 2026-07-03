@@ -1,0 +1,28 @@
+services:
+  surfpool:
+    # image: surfpool/surfpool
+    # local image built with `docker buildx build --platform linux/amd64 -t surfpool/surfpool:programsubscribe-local --load .` on the surfpool repo
+    image: surfpool/surfpool:programsubscribe-local
+    container_name: surfpool-instance
+    ports:
+    - "8899:8899"
+    - "8900:8900"
+    # - "18488:18488"
+    volumes:
+      - ../../../../../surfpool/:/workspace
+      - ../../../../../anchor_program/target:/artifacts:ro
+      - ../../../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json:/root/.config/solana/id.json:ro
+    command: start --no-tui
+    restart: unless-stopped
+
+  pong_server:
+    build:
+      context: ../../../..          # Points to workspace root
+      dockerfile: examples/pong/docker/localhost/Dockerfile
+    image: pong_server:latest
+    container_name: pong_server
+    ports:
+      - "4433:4433"
+    environment:
+      - RUST_LOG=info
+    restart: unless-stopped

@@ -1,2 +1,2 @@
-#[cfg(feature = "client")]
+#[cfg(feature = "bin")]
 pub mod anchor_client;

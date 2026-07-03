@@ -222,7 +222,7 @@ impl DeformUserLogic for PongGame {
     }
 }
 
-#[cfg(feature = "client")]
+#[cfg(feature = "bin")]
 mod quic_logic {
     use crate::solana::anchor_client::PongAnchorClient;
 
@@ -256,7 +256,7 @@ mod quic_logic {
     }
 }
 
-#[cfg(feature = "client")]
+#[cfg(feature = "bin")]
 pub use quic_logic::{NoAuth, PongQuicLogic};
 
 pub fn pong_bot(state: &PongGameState, bot: &Pubkey, prev_inputs: &PongInputs) -> PongInputs {
