@@ -16,11 +16,8 @@ services:
     restart: unless-stopped
 
   pong_server:
-    build:
-      context: ../../../..          # Points to workspace root
-      dockerfile: examples/pong/docker/localhost/Dockerfile
-    image: pong_server:latest
-    container_name: pong_server
+    image: pong-server:latest
+    container_name: pong-server
     ports:
       - "4433:4433"
     environment:

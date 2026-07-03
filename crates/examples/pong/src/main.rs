@@ -111,7 +111,7 @@ fn to_sdk_ix(ix: solana_instruction::Instruction) -> solana_sdk::instruction::In
             .accounts
             .iter()
             .map(|a| solana_sdk::instruction::AccountMeta {
-                pubkey: Address::new_from_array(ix.program_id.to_bytes()),
+                pubkey: Address::new_from_array(a.pubkey.to_bytes()),
                 is_signer: a.is_signer,
                 is_writable: a.is_writable,
             })
