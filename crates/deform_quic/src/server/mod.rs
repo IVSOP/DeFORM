@@ -368,33 +368,68 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             );
             drop(matches_guard);
 
-            let lobby_state = Self::check_lobby(
-                &rpc_client,
-                identification.lobby_id,
-                &server.game_program_client.game_program(),
-                10,
-            )
-            .await?;
+            // WARN: ---------------------------------------------------------------
+            // between these two points, any error must remove the match and call the cancellation token
+            // TODO: this solution is messy but a function could be worse, what to do?
+            let init_result: UserFacingResult<Q::UserLogic, _> = async {
+                let lobby_state = Self::check_lobby(
+                    &rpc_client,
+                    identification.lobby_id,
+                    &server.game_program_client.game_program(),
+                    10,
+                )
+                .await?;
 
-            let _ = ReliableMessage::<Q>::Authorized.write(send_stream).await?;
+                ReliableMessage::<Q>::Authorized.write(send_stream).await?;
 
-            let (state_sender, state_receiver) =
-                broadcast::channel::<InternalServerResponse<Q>>(64);
-            let (match_sender, match_receiver) = mpsc::channel::<MatchMessage<Q::UserLogic>>(256);
-            let release_notify = Arc::new(tokio::sync::Notify::new());
+                let (state_sender, state_receiver) =
+                    broadcast::channel::<InternalServerResponse<Q>>(64);
+                let (match_sender, match_receiver) =
+                    mpsc::channel::<MatchMessage<Q::UserLogic>>(256);
+                let release_notify = Arc::new(tokio::sync::Notify::new());
 
-            let mut expected_players = HashSet::new();
-            for player in lobby_state.player_infos.keys() {
-                expected_players.insert(*player);
+                let mut expected_players = HashSet::new();
+                for player in lobby_state.player_infos.keys() {
+                    expected_players.insert(*player);
+                }
+
+                let match_info = MatchInfo::Started(Match {
+                    state_sender: state_sender.clone(),
+                    match_sender: match_sender.clone(),
+                    game_ended: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+                    release_notify: release_notify.clone(),
+                    expected_players: Arc::new(expected_players),
+                });
+
+                Ok((
+                    lobby_state,
+                    match_info,
+                    state_sender,
+                    state_receiver,
+                    match_sender,
+                    match_receiver,
+                    release_notify,
+                ))
             }
+            .await;
 
-            let match_info = MatchInfo::Started(Match {
-                state_sender: state_sender.clone(),
-                match_sender: match_sender.clone(),
-                game_ended: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                release_notify: release_notify.clone(),
-                expected_players: Arc::new(expected_players),
-            });
+            let (
+                lobby_state,
+                match_info,
+                state_sender,
+                state_receiver,
+                match_sender,
+                match_receiver,
+                release_notify,
+            ) = match init_result {
+                Ok(val) => val,
+                Err(e) => {
+                    match_started_token.cancel();
+                    matches.write().await.remove(&identification.lobby_id);
+                    return Err(e);
+                }
+            };
+            // WARN: see above ------------------------------------------------------
 
             matches
                 .write()

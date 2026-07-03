@@ -100,8 +100,10 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         HashMap::new();
 
     // always wait for the first player to join
+    // FIX: pass cancellation token into here
     wait_for_first_player(&mut match_receiver, &mut players_data).await?;
 
+    // TODO: should these also await a cancellation token?
     match server.match_config {
         MatchConfig::WaitPlayers => loop {
             match match_receiver.recv().await {
