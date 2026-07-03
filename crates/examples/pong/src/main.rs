@@ -36,14 +36,14 @@ enum CliCommand {
     Run,
     #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
     FetchLobbies {
-        #[arg(long, default_value = "https://api.devnet.solana.com")]
+        #[arg(long, default_value = "https://127.0.0.1:8899")]
         rpc_url: String,
     },
     #[command(about = "Run the QUIC game server")]
     Serve {
         #[arg(long, default_value = "4433")]
         port: u16,
-        #[arg(long, default_value = "https://api.devnet.solana.com")]
+        #[arg(long, default_value = "http://127.0.0.1:8899")]
         rpc_url: String,
     },
 }
@@ -203,16 +203,16 @@ struct NetworkPreset {
 
 const NETWORK_PRESETS: &[NetworkPreset] = &[
     NetworkPreset {
+        name: "Localhost",
+        rpc_url: "http://127.0.0.1:8899",
+    },
+    NetworkPreset {
         name: "Devnet",
         rpc_url: "https://api.devnet.solana.com",
     },
     NetworkPreset {
         name: "Mainnet",
         rpc_url: "https://api.mainnet-beta.solana.com",
-    },
-    NetworkPreset {
-        name: "Localhost",
-        rpc_url: "http://127.0.0.1:8899",
     },
 ];
 
@@ -231,6 +231,9 @@ struct MenuState {
     lobby_id_text: String,
 
     lobby_data: Option<Lobby<PongGame>>,
+
+    server_addr: String,
+    skip_cert_verify: bool,
 }
 
 fn scan_json_files() -> Vec<String> {
@@ -306,6 +309,8 @@ fn setup(
         lobby_id: 0,
         lobby_id_text: "0".into(),
         lobby_data: None,
+        server_addr: "127.0.0.1:4433".into(),
+        skip_cert_verify: true,
     });
 
     // Pre-spawn paddle slots (hidden until a game starts and assigns players)
@@ -385,6 +390,58 @@ fn start_offline(
     Ok(())
 }
 
+fn start_online(
+    commands: &mut Commands,
+    lobby: Lobby<PongGame>,
+    main_player: Pubkey,
+    server_addr: &str,
+    skip_cert_verify: bool,
+    player_entities: &mut ResMut<PlayerEntities>,
+    slots: &PaddleSlots,
+    players_q: &mut Query<(&mut Player, &mut Visibility)>,
+    visual_tick_micros: u64,
+) -> Result<()> {
+    let creator = lobby.creator;
+    let right_player = lobby
+        .player_infos
+        .keys()
+        .find(|pk| **pk != creator)
+        .copied();
+
+    let client = deform_quic::new_quic_client::<PongQuicLogic>(
+        server_addr.to_string(),
+        server_addr
+            .split(':')
+            .next()
+            .unwrap_or(server_addr)
+            .to_string(),
+        lobby,
+        main_player,
+        skip_cert_verify,
+        visual_tick_micros,
+        NoAuth,
+    )?;
+    commands.insert_resource(MultiplayerClient(client));
+
+    player_entities.0.clear();
+
+    if let Ok((mut p, mut vis)) = players_q.get_mut(slots.left) {
+        p.0 = creator;
+        *vis = Visibility::Visible;
+    }
+    player_entities.0.insert(creator, slots.left);
+
+    if let Some(right) = right_player {
+        if let Ok((mut p, mut vis)) = players_q.get_mut(slots.right) {
+            p.0 = right;
+            *vis = Visibility::Visible;
+        }
+        player_entities.0.insert(right, slots.right);
+    }
+
+    Ok(())
+}
+
 fn update_inputs(inputs: Single<&mut PongInputs>, kb_input: Res<ButtonInput<KeyCode>>) {
     let mut new_direction: i8 = 0;
     if kb_input.pressed(KeyCode::KeyW) {
@@ -450,13 +507,19 @@ fn send_and_confirm_tx(
     rpc: &RpcClient,
     ix: solana_instruction::Instruction,
     keypair: &Keypair,
+    is_localhost: bool,
 ) -> anyhow::Result<()> {
     let ix = to_sdk_ix(ix);
     let blockhash = rpc.get_latest_blockhash()?;
     let msg = Message::new(&[ix], Some(&keypair.pubkey()));
     let mut tx = Transaction::new_unsigned(msg);
     tx.sign(&[keypair], blockhash);
-    let sig = rpc.send_and_confirm_transaction(&tx)?;
+    let sig = if is_localhost {
+        // confirming tx is taking wayyyy too long on localhost for some reason
+        rpc.send_transaction(&tx)?
+    } else {
+        rpc.send_and_confirm_transaction(&tx)?
+    };
     info!("tx confirmed: {sig}");
     Ok(())
 }
@@ -626,7 +689,7 @@ fn egui_in_menu(
             ui.horizontal(|ui| {
                 if ui.button("Create Lobby").clicked() {
                     let ix = program_client.create_lobby_ix(user, lobby_pda, lobby_id);
-                    match send_and_confirm_tx(rpc, ix, keypair) {
+                    match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                         Ok(()) => {
                             toasts.0.info("Lobby created!");
                         }
@@ -638,7 +701,7 @@ fn egui_in_menu(
 
                 if ui.button("Join Lobby").clicked() {
                     let ix = program_client.join_lobby_ix(user, lobby_pda, lobby_id);
-                    match send_and_confirm_tx(rpc, ix, keypair) {
+                    match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                         Ok(()) => {
                             toasts.0.info("Joined lobby!");
                         }
@@ -650,7 +713,7 @@ fn egui_in_menu(
 
                 if ui.button("Ready").clicked() {
                     let ix = program_client.ready_ix(user, lobby_pda, lobby_id);
-                    match send_and_confirm_tx(rpc, ix, keypair) {
+                    match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                         Ok(()) => {
                             toasts.0.info("Ready!");
                         }
@@ -685,6 +748,55 @@ fn egui_in_menu(
             if let Some(lobby) = new_lobby_data {
                 menu.lobby_data = Some(lobby);
             }
+
+            if let Some(lobby) = &menu.lobby_data {
+                ui.label(format!("Creator: {}", &lobby.creator.to_string()[..8]));
+                ui.label(format!("Players: {}", lobby.player_infos.len()));
+                for pk in lobby.player_infos.keys() {
+                    let role = if *pk == lobby.creator { "L" } else { "R" };
+                    ui.label(format!("  [{}] {}", role, &pk.to_string()[..8]));
+                }
+            }
+
+            ui.separator();
+
+            // --- Server / Play Online ---
+            ui.heading("Server");
+            ui.horizontal(|ui| {
+                ui.label("Address:");
+                ui.add(egui::TextEdit::singleline(&mut menu.server_addr).desired_width(200.0));
+            });
+            ui.checkbox(&mut menu.skip_cert_verify, "Skip TLS verification (dev)");
+
+            if menu.lobby_data.is_some() {
+                if ui.button("Play Online").clicked() {
+                    let lobby = menu.lobby_data.clone().unwrap();
+                    let visual_tick_micros = monitor_q
+                        .iter()
+                        .filter_map(|m| m.refresh_rate_millihertz)
+                        .max()
+                        .map(|mhz| 1_000_000_000 / mhz as u64)
+                        .unwrap_or(PongGame::TICK_RATE_MICROS);
+                    match start_online(
+                        &mut commands,
+                        lobby,
+                        user,
+                        &menu.server_addr,
+                        menu.skip_cert_verify,
+                        &mut player_entities,
+                        &paddle_slots,
+                        &mut players_q,
+                        visual_tick_micros,
+                    ) {
+                        Ok(()) => next_state.set(AppState::InGame),
+                        Err(e) => {
+                            toasts.0.error(format!("Online error: {e}"));
+                        }
+                    }
+                }
+            } else {
+                ui.colored_label(egui::Color32::YELLOW, "Read a lobby first to play online.");
+            }
         } else {
             ui.colored_label(
                 egui::Color32::YELLOW,
@@ -701,19 +813,17 @@ fn egui_in_game(mut contexts: EguiContexts, client: Res<MultiplayerClient>) -> R
         shared.tick_info.game_state.clone()
     };
 
-    let mut sorted: Vec<_> = state.players.iter().collect();
-    sorted.sort_by_key(|(pk, _)| *pk);
+    let creator = state.creator;
+    let right_pk = state.players.keys().find(|pk| **pk != creator).copied();
 
     egui::Window::new("Scoreboard").show(contexts.ctx_mut()?, |ui| {
-        for (i, (_pk, ps)) in sorted.iter().enumerate() {
-            let label = if i == 0 {
-                "Player 1 (Left)"
-            } else {
-                "Player 2 (Right)"
-            };
-            ui.horizontal(|ui| {
-                ui.label(format!("{}: {}", label, ps.score));
-            });
+        if let Some(ps) = state.players.get(&creator) {
+            ui.label(format!("Player 1 (Left): {}", ps.score));
+        }
+        if let Some(right) = right_pk {
+            if let Some(ps) = state.players.get(&right) {
+                ui.label(format!("Player 2 (Right): {}", ps.score));
+            }
         }
     });
     Ok(())

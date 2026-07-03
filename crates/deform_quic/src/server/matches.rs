@@ -216,6 +216,12 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
                 lobby_state.tick = new_tick;
 
+                for (player, applied_input) in last_applied_inputs.iter() {
+                    if let Some(info) = lobby_state.player_infos.get_mut(player) {
+                        info.inputs = applied_input.clone();
+                    }
+                }
+
                 let message = UnreliableServerResponse {
                     lobby_info: lobby_state.clone(),
                 };
