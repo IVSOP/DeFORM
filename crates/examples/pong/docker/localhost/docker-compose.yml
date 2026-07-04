@@ -20,6 +20,8 @@ services:
     container_name: pong-server
     ports:
       - "4433:4433"
+    volumes:
+      - ../../../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json:/app/admin.json:ro
     environment:
       - RUST_LOG=info
     restart: unless-stopped

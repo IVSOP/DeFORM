@@ -39,7 +39,7 @@ enum CliCommand {
         port: u16,
         #[arg(long, default_value = "http://127.0.0.1:8899")]
         rpc_url: String,
-        #[arg(long, default_value = "~/.config/solana/id.json")]
+        #[arg(long, default_value = "admin.json")]
         keypair: String,
     },
 }
