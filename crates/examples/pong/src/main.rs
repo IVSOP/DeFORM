@@ -29,17 +29,21 @@ enum CliCommand {
     Run,
     #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
     FetchLobbies {
-        #[arg(long, default_value = "https://127.0.0.1:8899")]
+        #[arg(long, default_value = "https://127.0.0.1:8899", env = "RPC_URL")]
         rpc_url: String,
     },
     #[cfg(feature = "server")]
     #[command(about = "Run the QUIC game server")]
     Serve {
-        #[arg(long, default_value = "4433")]
+        #[arg(long, default_value = "4433", env = "PORT")]
         port: u16,
-        #[arg(long, default_value = "http://127.0.0.1:8899")]
+        #[arg(long, default_value = "http://127.0.0.1:8899", env = "RPC_URL")]
         rpc_url: String,
-        #[arg(long, default_value = "admin.json")]
+        #[arg(
+            long,
+            default_value = "../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json",
+            env = "KEYPAIR_PATH"
+        )]
         keypair: String,
     },
 }
