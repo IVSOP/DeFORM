@@ -16,6 +16,7 @@ serde = { workspace = true }
 solana-address = { workspace = true }
 solana-signature = { workspace = true }
 solana-rpc-client = { workspace = true }
+solana-sdk = { workspace = true }
 quinn = { workspace = true }
 rustls = { workspace = true }
 webpki-roots = { workspace = true }

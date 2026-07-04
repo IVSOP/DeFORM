@@ -14,7 +14,7 @@ use deform_core::{
     error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
-    sync::{Notify, broadcast, mpsc},
+    sync::{broadcast, mpsc},
     time::interval,
 };
 use tokio_util::sync::CancellationToken;
@@ -68,12 +68,6 @@ pub struct Match<Q: DeformQuicLogic> {
 
     pub game_ended: Arc<AtomicBool>,
 
-    /// Use this when the match task should exit and be removed from the map, so that a new match can start
-    // FIX: for now this does nothing. In the future, the user should be able to configure the behaviour:
-    // 1) shutdown match after lobby closes, this remains unused
-    // 2) user gets notified that match has ended, and is then responsible for closing the lobby and notifying us back. OR they just provide a function, it can even be async
-    pub release_notify: Arc<Notify>,
-
     pub expected_players: Arc<HashSet<Pubkey>>,
 }
 
@@ -91,7 +85,6 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     mut lobby_state: Lobby<Q::UserLogic>,
 
     state_sender: broadcast::Sender<InternalServerResponse<Q>>,
-    release_notify: Arc<tokio::sync::Notify>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
 ) -> UserFacingResult<Q::UserLogic> {
@@ -212,10 +205,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                         lobby_state.game_state = Some(new_state);
                     }
                     Err(e) => {
-                        let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
-                            ReliableMessage::Error(UserFacingError::User(e)),
-                        ));
-                        break;
+                        mark_match_as_finished(&server, lobby_state.id).await?;
+                        return Err(UserFacingError::User(e));
                     }
                 }
 
@@ -238,11 +229,11 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                 }
 
                 if lobby_state.game_state.as_ref().unwrap().has_ended() {
-                    // TODO: TREAT ERRORS
-                    let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
-                        ReliableMessage::Finish,
-                    ));
-                    info!(lobby_id, tick = new_tick, "Match finished");
+                    info!(
+                        lobby_id,
+                        tick = new_tick,
+                        "Game has ended, running on_match_end"
+                    );
                     break;
                 }
             }
@@ -282,22 +273,41 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
     info!(lobby_id, "Match loop ended");
 
-    match server.matches.write().await.get_mut(&lobby_state.id) {
-        Some(MatchInfo::Started(match_info)) => {
-            match_info.game_ended.store(true, Ordering::SeqCst);
-        }
-        _ => {
-            Err(DeformError::InvalidState(
-                "match does not exist or has already finished".into(),
-            ))?;
-        }
-    }
+    mark_match_as_finished(&server, lobby_state.id).await?;
 
-    release_notify.notified().await;
+    server
+        .user_server_logic
+        .on_match_end(
+            &lobby_state,
+            &server.rpc_client,
+            &server.admin_keypair,
+            &server.game_program_client,
+        )
+        .await?;
+
+    let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
+        ReliableMessage::Finish,
+    ));
+    info!(lobby_id, "Match finished successfully");
 
     server.matches.write().await.remove(&lobby_state.id);
 
     Ok(())
+}
+
+async fn mark_match_as_finished<Q: DeformQuicLogic>(
+    server: &DeformQuicServer<Q>,
+    lobby_id: u64,
+) -> UserFacingResult<Q::UserLogic> {
+    match server.matches.write().await.get_mut(&lobby_id) {
+        Some(MatchInfo::Started(match_info)) => {
+            match_info.game_ended.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+        _ => Err(UserFacingError::Deform(DeformError::InvalidState(
+            "match does not exist or has already finished".into(),
+        ))),
+    }
 }
 
 async fn wait_for_first_player<T: DeformUserLogic>(

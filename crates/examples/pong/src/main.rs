@@ -39,6 +39,8 @@ enum CliCommand {
         port: u16,
         #[arg(long, default_value = "http://127.0.0.1:8899")]
         rpc_url: String,
+        #[arg(long, default_value = "~/.config/solana/id.json")]
+        keypair: String,
     },
 }
 
@@ -49,7 +51,11 @@ fn main() -> anyhow::Result<()> {
         CliCommand::Run => crate::client::run_game(),
         CliCommand::FetchLobbies { rpc_url } => fetch_lobbies(&rpc_url)?,
         #[cfg(feature = "server")]
-        CliCommand::Serve { port, rpc_url } => crate::server::serve(port, &rpc_url)?,
+        CliCommand::Serve {
+            port,
+            rpc_url,
+            keypair,
+        } => crate::server::serve(port, &rpc_url, &keypair)?,
     }
     Ok(())
 }

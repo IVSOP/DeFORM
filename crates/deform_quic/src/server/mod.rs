@@ -14,6 +14,7 @@ use deform_core::{
 };
 use quinn::{Connection, RecvStream, SendStream, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::signature::Keypair;
 use tokio::{
     signal::unix::{SignalKind, signal},
     sync::{RwLock, broadcast, mpsc},
@@ -49,6 +50,8 @@ pub struct DeformQuicServer<Q: DeformQuicLogic> {
     pub num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
     pub match_config: MatchConfig,
 
+    pub rpc_client: Arc<RpcClient>,
+    pub admin_keypair: Arc<Keypair>,
     pub user_server_logic: Arc<Q>,
     pub game_program_client: Arc<Q::ProgramClient>,
 }
@@ -56,6 +59,8 @@ pub struct DeformQuicServer<Q: DeformQuicLogic> {
 impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
     pub fn new_with_defaults(
         auth_config: &AuthConfig,
+        rpc_client: Arc<RpcClient>,
+        admin_keypair: Arc<Keypair>,
         user_server_logic: Q,
         game_program_client: Q::ProgramClient,
     ) -> anyhow::Result<Self> {
@@ -70,6 +75,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             matches: Arc::new(RwLock::new(HashMap::new())),
             num_connections_per_ip: Arc::new(RwLock::new(HashMap::new())),
             match_config: MatchConfig::WaitForTimeout(Duration::from_secs(10)),
+            rpc_client,
+            admin_keypair,
             user_server_logic: Arc::new(user_server_logic),
             game_program_client: Arc::new(game_program_client),
         };
@@ -90,7 +97,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         self.quinn_config.transport_config(Arc::new(transport));
     }
 
-    pub async fn init_server(self, rpc_client: Arc<RpcClient>) -> anyhow::Result<()> {
+    pub async fn init_server(self) -> anyhow::Result<()> {
         // // TODO: get this out of here, the client has to call it
         // rustls::crypto::ring::default_provider()
         //     .install_default()
@@ -109,12 +116,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 .. if let incoming = endpoint.accept() => {
                     match incoming {
                         Some(incoming) => {
-                            Self::handle_incoming(
-                                shared_server.clone(),
-                                incoming,
-                                rpc_client.clone(),
-                            )
-                            .await;
+                            Self::handle_incoming(shared_server.clone(), incoming).await;
                         }
                         None => {
                             info!("QUIC endpoint closed");
@@ -169,11 +171,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
     }
 
     /// Does a quick filtering of the connection before spawning a task to process it
-    pub async fn handle_incoming(
-        server: Arc<Self>,
-        incoming: quinn::Incoming,
-        rpc_client: Arc<RpcClient>,
-    ) {
+    pub async fn handle_incoming(server: Arc<Self>, incoming: quinn::Incoming) {
         // do some quick filtering to check that the connection is allowed before spawning the handler task
         let client_ip = incoming.remote_address().ip();
         let is_loopback = client_ip.is_loopback();
@@ -208,7 +206,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             }
         }
 
-        let rpc_client = rpc_client.clone();
         let matches = server.matches.clone();
         let num_connections_per_ip = server.num_connections_per_ip.clone();
         let server = server.clone();
@@ -240,7 +237,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 connection.clone(),
                 client_ip.clone(),
                 is_loopback,
-                rpc_client,
                 matches,
                 num_connections_per_ip.clone(),
                 &mut send_stream,
@@ -277,7 +273,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         connection: Connection,
         client_ip: IpAddr,
         is_loopback: bool,
-        rpc_client: Arc<RpcClient>,
         matches: Arc<RwLock<HashMap<u64, MatchInfo<Q>>>>,
         num_connections_per_ip: Arc<RwLock<HashMap<IpAddr, u64>>>,
         send_stream: &mut SendStream,
@@ -373,7 +368,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             // TODO: this solution is messy but a function could be worse, what to do?
             let init_result: UserFacingResult<Q::UserLogic, _> = async {
                 let lobby_state = Self::check_lobby(
-                    &rpc_client,
+                    &server.rpc_client,
                     identification.lobby_id,
                     &server.game_program_client.game_program(),
                     10,
@@ -386,7 +381,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     broadcast::channel::<InternalServerResponse<Q>>(64);
                 let (match_sender, match_receiver) =
                     mpsc::channel::<MatchMessage<Q::UserLogic>>(256);
-                let release_notify = Arc::new(tokio::sync::Notify::new());
 
                 let mut expected_players = HashSet::new();
                 for player in lobby_state.player_infos.keys() {
@@ -397,7 +391,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     state_sender: state_sender.clone(),
                     match_sender: match_sender.clone(),
                     game_ended: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                    release_notify: release_notify.clone(),
                     expected_players: Arc::new(expected_players),
                 });
 
@@ -408,7 +401,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     state_receiver,
                     match_sender,
                     match_receiver,
-                    release_notify,
                 ))
             }
             .await;
@@ -420,7 +412,6 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 state_receiver,
                 match_sender,
                 match_receiver,
-                release_notify,
             ) = match init_result {
                 Ok(val) => val,
                 Err(e) => {
@@ -431,21 +422,23 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             };
             // WARN: see above ------------------------------------------------------
 
-            matches
-                .write()
-                .await
-                .insert(identification.lobby_id, match_info);
+            let lobby_id = identification.lobby_id;
+
+            matches.write().await.insert(lobby_id, match_info);
 
             match_started_token.cancel();
 
-            // TODO: Result from match_loop gets ignored
-            tokio::spawn(matches::match_loop(
-                server,
-                lobby_state,
-                state_sender,
-                release_notify,
-                match_receiver,
-            ));
+            let error_sender = state_sender.clone();
+            tokio::spawn(async move {
+                if let Err(e) =
+                    matches::match_loop(server, lobby_state, state_sender, match_receiver).await
+                {
+                    error!(lobby_id, "Match ended with error: {e}");
+                    let _ = error_sender.send(InternalServerResponse::SendReliableMessage(
+                        ReliableMessage::Error(e),
+                    ));
+                }
+            });
 
             Self::client_loop(
                 identification.user,

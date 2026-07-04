@@ -3473,6 +3473,7 @@ dependencies = [
  "serde",
  "solana-address 2.6.1",
  "solana-rpc-client",
+ "solana-sdk",
  "solana-signature",
  "tokio",
  "tokio-util",

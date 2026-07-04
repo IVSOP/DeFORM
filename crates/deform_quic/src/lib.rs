@@ -1,12 +1,22 @@
 use std::collections::HashMap;
 use std::fmt::Debug;
 
+use std::future::Future;
+use std::time::Duration;
+
 use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
 };
 use deform_core::{GameProgramClient, Pubkey};
+use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+use solana_sdk::message::{AccountMeta, Instruction, Message};
+use solana_sdk::signature::Keypair;
+use solana_sdk::signer::Signer;
+use solana_sdk::transaction::Transaction;
 use solana_signature::Signature;
+use tokio::time::sleep;
+use tracing::{info, warn};
 use wincode::config::DefaultConfig;
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -54,6 +64,80 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     fn authorize_connection(
         identification: &UserIdentification<Self>,
     ) -> Result<(), <Self::UserLogic as DeformUserLogic>::Error>;
+
+    /// Called after the game ends (when [`deform_core::DeformGameState::has_ended`] returns true) but before
+    /// the match is removed
+    ///
+    /// The default implementation calls [`GameProgramClient::write_and_close_ix`] and sends the
+    /// transaction in a retry loop of 10 attempts until it is confirmed.
+    ///
+    /// - Ok(()) -> the match is finalized and removed
+    /// - Err -> the error is broadcast to clients, and the match is removed
+    fn on_match_end(
+        &self,
+        lobby: &Lobby<Self::UserLogic>,
+        rpc_client: &RpcClient,
+        admin: &Keypair,
+        program_client: &Self::ProgramClient,
+    ) -> impl Future<Output = DeformResult> + Send {
+        let admin_pubkey = admin.pubkey();
+        let (lobby_pda, _) = Lobby::<Self::UserLogic>::find_program_address(
+            lobby.id,
+            &program_client.game_program(),
+        );
+
+        let ix = program_client.write_and_close_ix(
+            admin_pubkey,
+            lobby_pda,
+            lobby.creator,
+            lobby.clone(),
+        );
+
+        let sdk_ix = Instruction {
+            program_id: Pubkey::new_from_array(ix.program_id.to_bytes()),
+            accounts: ix
+                .accounts
+                .iter()
+                .map(|a| AccountMeta {
+                    pubkey: Pubkey::new_from_array(a.pubkey.to_bytes()),
+                    is_signer: a.is_signer,
+                    is_writable: a.is_writable,
+                })
+                .collect(),
+            data: ix.data,
+        };
+
+        async move {
+            let mut last_err = None;
+
+            for attempt in 1..=10u32 {
+                let blockhash = rpc_client.get_latest_blockhash().await.map_err(|e| {
+                    DeformError::Rpc(format!("get blockhash (attempt {attempt}/10): {e}"))
+                })?;
+
+                let msg = Message::new(&[sdk_ix.clone()], Some(&admin_pubkey));
+                let mut tx = Transaction::new_unsigned(msg);
+                tx.sign(&[admin], blockhash);
+
+                match rpc_client.send_and_confirm_transaction(&tx).await {
+                    Ok(sig) => {
+                        info!(%sig, "write_and_close confirmed");
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        warn!(attempt, "write_and_close failed: {e}");
+                        last_err = Some(e);
+                        sleep(Duration::from_millis(400)).await;
+                    }
+                }
+            }
+
+            Err(DeformError::Rpc(format!(
+                "write_and_close failed after 10 attempts: {}",
+                last_err.unwrap()
+            )))
+        }
+    }
 }
 
 // TODO: user might want custom information here. make this an associated type instead?
