@@ -71,7 +71,7 @@ pub struct Match<Q: DeformQuicLogic> {
     /// Use this when the match task should exit and be removed from the map, so that a new match can start
     // FIX: for now this does nothing. In the future, the user should be able to configure the behaviour:
     // 1) shutdown match after lobby closes, this remains unused
-    // 2) user gets notified that match has ended, and is then responsible for closing the lobby and notifying us back
+    // 2) user gets notified that match has ended, and is then responsible for closing the lobby and notifying us back. OR they just provide a function, it can even be async
     pub release_notify: Arc<Notify>,
 
     pub expected_players: Arc<HashSet<Pubkey>>,
