@@ -19,10 +19,11 @@ services:
     image: pong-server:latest
     container_name: pong-server
     ports:
-      - "4433:4433"
+      - "4433:4433/udp"
     volumes:
       - ../../../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json:/app/admin.json:ro
     environment:
       - RUST_LOG=info
       - KEYPAIR_PATH=admin.json
+      - RPC_URL=http://surfpool:8899
     restart: unless-stopped
