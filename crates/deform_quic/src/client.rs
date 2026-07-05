@@ -384,30 +384,36 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             tokio_select!(match .. {
                 // Tick every ~16ms (or more, depending on time dilation)
                 .. if let _ = &mut tick_sleep => {
-                    if self.last_remote_status != LobbyStatus::Finished {
-                        let min_target_tick = self.remote_tick + self.min_ticks_ahead;
-                        let current_tick = self.local_tick;
+                    match self.last_remote_status {
+                        LobbyStatus::Finished => break,
+                        // Grace period: the match has not started on the server, so there is no
+                        // authoritative stream to reconcile against. Predicting here would just get
+                        // rolled back the moment the match goes live, so we hold at the initial state.
+                        // The first `Started` datagram bootstraps us via the FastForward path.
+                        LobbyStatus::NotStarted => {}
+                        LobbyStatus::Started => {
+                            let min_target_tick = self.remote_tick + self.min_ticks_ahead;
+                            let current_tick = self.local_tick;
 
-                        if current_tick < min_target_tick {
-                            let delta_ticks = min_target_tick - current_tick;
-                            // #[cfg(feature = "log")]
-                            // tracing::warn!(
-                            //     "Ticking to catch up to remote slot - from {current_tick} to {min_target_tick}"
-                            // );
-                            for _ in 0..delta_ticks {
-                                self.advance_local_simulation()?
-                                // finish is handled when server tells us, not here
+                            if current_tick < min_target_tick {
+                                let delta_ticks = min_target_tick - current_tick;
+                                // #[cfg(feature = "log")]
+                                // tracing::warn!(
+                                //     "Ticking to catch up to remote slot - from {current_tick} to {min_target_tick}"
+                                // );
+                                for _ in 0..delta_ticks {
+                                    self.advance_local_simulation()?
+                                    // finish is handled when server tells us, not here
+                                }
+                            } else {
+                                let max_target_tick = self.remote_tick + self.max_ticks_ahead;
+                                if current_tick < max_target_tick {
+                                    self.advance_local_simulation()?
+                                    // finish is handled when server tells us, not here
+                                }
                             }
-                        } else {
-                            let max_target_tick = self.remote_tick + self.max_ticks_ahead;
-                            if current_tick < max_target_tick {
-                                self.advance_local_simulation()?
-                                // finish is handled when server tells us, not here
-                            }
+                            self.last_sim_instant = Instant::now();
                         }
-                        self.last_sim_instant = Instant::now();
-                    } else {
-                        break;
                     }
 
                     // Advance the anchored deadline by the (variable) dilated interval rather than
@@ -451,7 +457,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 // Commit inputs periodically
                 .. if let _ = inputs_ticker.tick() => {
-                    if self.last_remote_status != LobbyStatus::Finished {
+                    // only while the match is live; no authoritative tick exists otherwise
+                    if self.last_remote_status == LobbyStatus::Started {
                         #[cfg(feature = "tracy")]
                         {
                             if let Some(max_input) = self.inputs.keys().max() {
