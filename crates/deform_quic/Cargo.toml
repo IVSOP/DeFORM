@@ -26,5 +26,7 @@ better_tokio_select = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
 tracing = { workspace = true }
+tracy-client = { workspace = true, optional = true }
 
 [features]
+tracy = ["dep:tracy-client"]

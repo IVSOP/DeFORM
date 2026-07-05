@@ -435,14 +435,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 // Commit inputs periodically
                 .. if let _ = inputs_ticker.tick() => {
                     if self.last_remote_status != LobbyStatus::Finished {
-                        // #[cfg(feature = "tracy")]
-                        // {
-                        //     if let Some(max_input) = self.inputs.keys().max() {
-                        //         if let Some(client) = tracy_client::Client::running() {
-                        //             client.plot(tracy_client::plot_name!("commit_inputs"), *max_input as f64);
-                        //         }
-                        //     }
-                        // }
+                        #[cfg(feature = "tracy")]
+                        {
+                            if let Some(max_input) = self.inputs.keys().max() {
+                                if let Some(client) = tracy_client::Client::running() {
+                                    client.plot(
+                                        tracy_client::plot_name!("commit_inputs"),
+                                        *max_input as f64,
+                                    );
+                                }
+                            }
+                        }
 
                         self.commit_inputs().await?;
                     }
@@ -453,15 +456,15 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     if self.last_remote_status != LobbyStatus::Finished {
                         self.avg_rtt = self.connection.rtt();
 
-                        // #[cfg(feature = "tracy")]
-                        // {
-                        //     if let Some(client) = tracy_client::Client::running() {
-                        //         client.plot(
-                        //             tracy_client::plot_name!("RTT"),
-                        //             self.avg_rtt.as_secs_f64() * 1000.0,
-                        //         );
-                        //     }
-                        // }
+                        #[cfg(feature = "tracy")]
+                        {
+                            if let Some(client) = tracy_client::Client::running() {
+                                client.plot(
+                                    tracy_client::plot_name!("RTT"),
+                                    self.avg_rtt.as_secs_f64() * 1000.0,
+                                );
+                            }
+                        }
 
                         self.update_ticks_ahead()?;
                     }
@@ -540,8 +543,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
     /// Change our ticks ahead target based on the current RTT
     pub fn update_ticks_ahead(&mut self) -> DeformResult {
-        // #[cfg(feature = "tracy")]
-        // let _span = tracy_client::span!("update_ticks_ahead");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("update_ticks_ahead");
 
         let rtt_secs = self.avg_rtt.as_secs_f64();
         let mut rtt_micros = rtt_secs * 1_000_000.0;
@@ -558,19 +561,19 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 + 1;
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
-        // #[cfg(feature = "tracy")]
-        // {
-        //     if let Some(client) = tracy_client::Client::running() {
-        //         client.plot(
-        //             tracy_client::plot_name!("min ticks ahead"),
-        //             self.min_ticks_ahead as f64,
-        //         );
-        //         client.plot(
-        //             tracy_client::plot_name!("max ticks ahead"),
-        //             self.max_ticks_ahead as f64,
-        //         );
-        //     }
-        // }
+        #[cfg(feature = "tracy")]
+        {
+            if let Some(client) = tracy_client::Client::running() {
+                client.plot(
+                    tracy_client::plot_name!("min ticks ahead"),
+                    self.min_ticks_ahead as f64,
+                );
+                client.plot(
+                    tracy_client::plot_name!("max ticks ahead"),
+                    self.max_ticks_ahead as f64,
+                );
+            }
+        }
 
         {
             let mut shared = self
@@ -589,8 +592,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     ///
     /// We have a `min_ticks_ahead` target that is computed based on the latency to the server. A % is taken using this value. For example, if the target is 10, and we are exactly 10 ticks ahead of the server, the % is 0. If we are 20 ticks ahead of the server, the % is 10. So, the percentage varies according to how much we expect to be ahead of the server.
     fn compute_dilated_tick_interval(&mut self) -> Duration {
-        // #[cfg(feature = "tracy")]
-        // let _span = tracy_client::span!("compute_dilated_tick_interval");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("compute_dilated_tick_interval");
         let base_sleep_ms: f32 =
             <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32 / 1000.0;
         let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
@@ -614,25 +617,25 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         let micros = (sleep_ms * 1000.0) as u64;
 
-        // #[cfg(feature = "tracy")]
-        // if let Some(client) = tracy_client::Client::running() {
-        //     client.plot(tracy_client::plot_name!("sleep_time"), sleep_ms as f64);
-        // }
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.plot(tracy_client::plot_name!("sleep_time"), sleep_ms as f64);
+        }
 
         Duration::from_micros(micros)
     }
 
     pub fn advance_local_simulation(&mut self) -> UserFacingResult<Q::UserLogic> {
-        // #[cfg(feature = "tracy")]
-        // let _span = tracy_client::span!("advance_local_simulation");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("advance_local_simulation");
 
-        // #[cfg(feature = "tracy")]
-        // if let Some(client) = tracy_client::Client::running() {
-        //     client.plot(
-        //         tracy_client::plot_name!("current_vs_remote"),
-        //         current_tick as f64 - self.remote_tick as f64,
-        //     );
-        // }
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.plot(
+                tracy_client::plot_name!("current_vs_remote"),
+                self.local_tick as f64 - self.remote_tick as f64,
+            );
+        }
 
         let current_tick = self.local_tick;
         let new_tick = self.local_tick + 1;
@@ -660,10 +663,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             }
         }
 
-        // #[cfg(feature = "tracy")]
-        // if let Some(client) = tracy_client::Client::running() {
-        //     client.plot(tracy_client::plot_name!("advance_sim"), new_slot as f64);
-        // }
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.plot(tracy_client::plot_name!("advance_sim"), new_tick as f64);
+        }
 
         let new_state = self
             .user_logic
@@ -682,8 +685,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     }
 
     pub async fn commit_inputs(&mut self) -> DeformResult {
-        // #[cfg(feature = "tracy")]
-        // let _span = tracy_client::span!("commit_inputs");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("commit_inputs");
 
         if self.inputs.is_empty() {
             return Ok(());
@@ -704,24 +707,24 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         bytes: &[u8],
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
-        // #[cfg(feature = "tracy")]
-        // let _span = tracy_client::span!("process_server_update");
+        #[cfg(feature = "tracy")]
+        let _span = tracy_client::span!("process_server_update");
 
         let UnreliableServerResponse {
             lobby_info: new_lobby_state,
         }: UnreliableServerResponse<Q::UserLogic> =
             wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
-        // #[cfg(feature = "tracy")]
-        // if let Some(client) = tracy_client::Client::running() {
-        //     client.plot(
-        //         tracy_client::plot_name!("last_tick_slot"),
-        //         new_lobby_state.last_tick_slot as f64,
-        //     );
-        // }
-
         let old_remote_tick = self.remote_tick;
         let new_remote_tick = new_lobby_state.tick;
+
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.plot(
+                tracy_client::plot_name!("last_tick_slot"),
+                new_remote_tick as f64,
+            );
+        }
         let new_remote_status = new_lobby_state.status;
         let new_tick_info: TickInfo<Q::UserLogic> = new_lobby_state.try_into()?;
 
@@ -898,13 +901,13 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         // #[cfg(feature = "log")]
         // tracing::trace!("QUIC received tick {}", new_remote_tick);
 
-        // #[cfg(feature = "tracy")]
-        // if let Some(client) = tracy_client::Client::running() {
-        //     client.plot(
-        //         tracy_client::plot_name!("remote_tick (clean)"),
-        //         new_lobby_state.tick as f64,
-        //     );
-        // }
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.plot(
+                tracy_client::plot_name!("remote_tick (clean)"),
+                new_remote_tick as f64,
+            );
+        }
 
         match scenario {
             // if a gap was detected, no need to compare inputs. we have to rollback either way.
@@ -967,10 +970,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
-        // #[cfg(feature = "tracy")]
-        // if let Some(client) = tracy_client::Client::running() {
-        //     client.message("rollback", 0);
-        // }
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.message("rollback", 0);
+        }
 
         let previous_local_tick = self.local_tick;
         // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick

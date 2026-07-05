@@ -17,8 +17,10 @@ glam = { workspace = true }
 thiserror = { workspace = true }
 solana-address = { workspace = true }
 solana-instruction = { workspace = true }
+tracy-client = { workspace = true, optional = true }
 
 [features]
 default = ["client"]
 client = ["dep:tokio"]
 anchor = ["solana-address/borsh", "dep:anchor-lang"]
+tracy = ["dep:tracy-client"]
