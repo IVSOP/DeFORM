@@ -13,7 +13,7 @@ use std::{
 };
 use tokio::{
     sync::{Notify, mpsc, oneshot},
-    time::{Sleep, interval, sleep},
+    time::{Sleep, interval, sleep_until},
 };
 
 use deform_core::{
@@ -53,6 +53,10 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub smoother: <Q::UserLogic as DeformUserLogic>::Smoother,
     pub visual_tick_micros: u64,
     pub last_sim_instant: Instant,
+    /// Absolute deadline for the next simulation tick. Anchored to the previous deadline
+    /// (not to `Instant::now()`), so time spent doing per-tick work and scheduling jitter
+    /// do not accumulate as drift relative to the server's fixed-rate clock.
+    pub next_tick_deadline: tokio::time::Instant,
 
     pub avg_rtt: Duration,
     /// If ticks are below this, simulation is fast forwarded. Also used to compute time dilation.
@@ -308,6 +312,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 smoother,
                                 visual_tick_micros,
                                 last_sim_instant: Instant::now(),
+                                // real value is set at the top of `tick_loop`
+                                next_tick_deadline: tokio::time::Instant::now(),
 
                                 avg_rtt: Duration::from_millis(50),
                                 user_logic,
@@ -363,9 +369,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         };
         self.info_per_tick.insert(0, current_tick_info);
 
-        let mut tick_sleep = Box::pin(sleep(Duration::from_micros(
-            <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
-        )));
+        self.next_tick_deadline = tokio::time::Instant::now()
+            + Duration::from_micros(<Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
+        let mut tick_sleep = Box::pin(sleep_until(self.next_tick_deadline));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
         let mut inputs_ticker = interval(Duration::from_micros(
             <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
@@ -404,7 +410,18 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         break;
                     }
 
-                    tick_sleep = Box::pin(sleep(self.compute_dilated_tick_interval()));
+                    // Advance the anchored deadline by the (variable) dilated interval rather than
+                    // sleeping from `now`, so the work done in this arm does not accumulate as drift.
+                    // Dilation is preserved: `compute_dilated_tick_interval` still decides the step.
+                    let dilated = self.compute_dilated_tick_interval();
+                    self.next_tick_deadline += dilated;
+                    // If a stall pushed us a full tick past the deadline, resync to `now` so we
+                    // don't fire a burst of back-to-back catch-up ticks (manual MissedTickBehavior::Delay).
+                    let now = tokio::time::Instant::now();
+                    if self.next_tick_deadline < now {
+                        self.next_tick_deadline = now;
+                    }
+                    tick_sleep.as_mut().reset(self.next_tick_deadline);
                 }
 
                 // Visual: interpolate between previous and current sim state
@@ -632,7 +649,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         #[cfg(feature = "tracy")]
         if let Some(client) = tracy_client::Client::running() {
             client.plot(
-                tracy_client::plot_name!("current_vs_remote"),
+                tracy_client::plot_name!("current_vs_remote_adv"),
                 self.local_tick as f64 - self.remote_tick as f64,
             );
         }
@@ -709,6 +726,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     ) -> UserFacingResult<Q::UserLogic> {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("process_server_update");
+
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.plot(
+                tracy_client::plot_name!("current_vs_remote_reception"),
+                self.local_tick as f64 - self.remote_tick as f64,
+            );
+        }
 
         let UnreliableServerResponse {
             lobby_info: new_lobby_state,
@@ -855,8 +880,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 self.last_remote_status = new_remote_status;
                 self.inputs.clear();
 
-                // trigger immediate catch-up on the next select iteration
-                tick_sleep.as_mut().reset(tokio::time::Instant::now());
+                // trigger immediate catch-up on the next select iteration, re-anchoring the deadline
+                self.next_tick_deadline = tokio::time::Instant::now();
+                tick_sleep.as_mut().reset(self.next_tick_deadline);
 
                 return Ok(());
             }
@@ -1017,9 +1043,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             .on_rollback(pre_rollback_info, post_rollback_info)
             .map_err(|e| UserFacingError::User(e))?;
 
-        let new_deadline = tokio::time::Instant::now() + self.compute_dilated_tick_interval();
-        let old_deadline = tick_sleep.deadline();
-        tick_sleep.as_mut().reset(new_deadline.min(old_deadline));
+        let dilated = self.compute_dilated_tick_interval();
+        let new_deadline = tokio::time::Instant::now() + dilated;
+        // keep the anchored deadline, but never push the next tick further out than it already was
+        self.next_tick_deadline = new_deadline.min(self.next_tick_deadline);
+        tick_sleep.as_mut().reset(self.next_tick_deadline);
         // #[cfg(feature = "log")]
         // tracing::debug!("after rollback, local tick is {}", self.local_tick);
 
