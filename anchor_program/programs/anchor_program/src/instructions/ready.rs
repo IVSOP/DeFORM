@@ -2,10 +2,13 @@ use crate::error::GameProgramError;
 use crate::state::UserLogic;
 use crate::util::create_pda_account;
 use anchor_lang::prelude::*;
-use deform_core::accounts::{
-    inputs::InputsAccount,
-    lobby::{Lobby, LobbyStatus, PLayerStatus},
-    AccountType,
+use deform_core::{
+    accounts::{
+        inputs::InputsAccount,
+        lobby::{Lobby, LobbyStatus, PLayerStatus},
+        AccountType,
+    },
+    DeformUserLogic,
 };
 
 #[derive(Accounts)]
@@ -96,6 +99,14 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Res
         let inputs_data = wincode::serialize(&inputs_account)
             .map_err(|_| error!(GameProgramError::SerializeInputsAccount))?;
 
+        // the account is allocated at its max size (so it never needs resizing once
+        // delegated), so the serialized bytes must fit within that budget
+        let space = UserLogic::MAX_INPUTS_ACCOUNT_BYTES;
+        require!(
+            inputs_data.len() <= space,
+            GameProgramError::InputsAccountTooLarge
+        );
+
         let seeds: &[&[u8]] = &[
             b"inputs",
             &id.to_le_bytes(),
@@ -107,7 +118,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Res
             &inputs_info,
             ctx.accounts.system_program.key(),
             ctx.program_id,
-            inputs_data.len(),
+            space,
             seeds,
         )?;
 

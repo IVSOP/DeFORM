@@ -27,6 +27,8 @@ pub enum GameProgramError {
     InputsAccountAlreadyInitialized,
     #[msg("Failed to serialize inputs account")]
     SerializeInputsAccount,
+    #[msg("Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES")]
+    InputsAccountTooLarge,
     #[msg("Unauthorized")]
     Unauthorized,
     #[msg("Creator mismatch")]
