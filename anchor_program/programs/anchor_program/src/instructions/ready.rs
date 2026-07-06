@@ -1,6 +1,7 @@
 use crate::error::GameProgramError;
 use crate::state::UserLogic;
-use anchor_lang::{prelude::*, system_program};
+use crate::util::create_pda_account;
+use anchor_lang::prelude::*;
 use deform_core::accounts::{
     inputs::InputsAccount,
     lobby::{Lobby, LobbyStatus, PLayerStatus},
@@ -95,27 +96,19 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Res
         let inputs_data = wincode::serialize(&inputs_account)
             .map_err(|_| error!(GameProgramError::SerializeInputsAccount))?;
 
-        let rent = Rent::get()?;
-        let lamports = rent.minimum_balance(inputs_data.len());
-
         let seeds: &[&[u8]] = &[
             b"inputs",
             &id.to_le_bytes(),
             user_key.as_array(),
             &[inputs_bump],
         ];
-        system_program::create_account(
-            CpiContext::new_with_signer(
-                ctx.accounts.system_program.key(),
-                system_program::CreateAccount {
-                    from: ctx.accounts.user.to_account_info(),
-                    to: inputs_info.clone(),
-                },
-                &[seeds],
-            ),
-            lamports,
-            inputs_data.len() as u64,
+        create_pda_account(
+            &ctx.accounts.user.to_account_info(),
+            &inputs_info,
+            ctx.accounts.system_program.key(),
             ctx.program_id,
+            inputs_data.len(),
+            seeds,
         )?;
 
         inputs_info.data.borrow_mut()[..inputs_data.len()].copy_from_slice(&inputs_data);

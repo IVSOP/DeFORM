@@ -19,6 +19,8 @@ pub enum GameProgramError {
     PlayerNotInLobby,
     #[msg("Player already ready")]
     PlayerAlreadyReady,
+    #[msg("Lobby account already initialized")]
+    LobbyAlreadyInitialized,
     #[msg("Inputs account not provided")]
     MissingInputsAccount,
     #[msg("Inputs account already initialized")]

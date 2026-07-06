@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use anchor_lang::{prelude::*, system_program};
+use anchor_lang::prelude::*;
 use deform_core::accounts::{
     lobby::{Lobby, LobbyStatus, PLayerStatus, PlayerInfo},
     AccountType,
 };
 
-use crate::{error::GameProgramError, state::*};
+use crate::{error::GameProgramError, state::*, util::create_pda_account};
 
 #[derive(Accounts)]
 pub struct CreateLobbyAccounts<'info> {
@@ -20,8 +20,16 @@ pub struct CreateLobbyAccounts<'info> {
 
 pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     let program_id = ctx.program_id;
+    let lobby_info = ctx.accounts.lobby.to_account_info();
+
     let (pda, bump) = Lobby::<UserLogic>::find_program_address(id, program_id);
-    require_keys_eq!(ctx.accounts.lobby.key(), pda);
+    require_keys_eq!(lobby_info.key(), pda);
+
+    // must be uninitialized (still owned by the system program, no data)
+    require!(
+        lobby_info.data_is_empty() && lobby_info.owner == &ctx.accounts.system_program.key(),
+        GameProgramError::LobbyAlreadyInitialized
+    );
 
     let creator = *ctx.accounts.user.key;
 
@@ -49,26 +57,17 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     let data =
         wincode::serialize(&lobby_account).map_err(|_| error!(GameProgramError::SerializeLobby))?;
 
-    let rent = Rent::get()?;
-    let lamports = rent.minimum_balance(data.len());
-
     let seeds: &[&[u8]] = &[b"lobby", &id.to_le_bytes(), &[bump]];
-    // NOTE: this will ensure the account is not already initialized
-    system_program::create_account(
-        CpiContext::new_with_signer(
-            ctx.accounts.system_program.key(),
-            system_program::CreateAccount {
-                from: ctx.accounts.user.to_account_info(),
-                to: ctx.accounts.lobby.to_account_info(),
-            },
-            &[seeds],
-        ),
-        lamports,
-        data.len() as u64,
+    create_pda_account(
+        &ctx.accounts.user.to_account_info(),
+        &lobby_info,
+        ctx.accounts.system_program.key(),
         program_id,
+        data.len(),
+        seeds,
     )?;
 
-    ctx.accounts.lobby.to_account_info().data.borrow_mut()[..data.len()].copy_from_slice(&data);
+    lobby_info.data.borrow_mut()[..data.len()].copy_from_slice(&data);
 
     Ok(())
 }
