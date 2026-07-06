@@ -552,7 +552,18 @@ pub fn egui_in_menu(
                     }
 
                     if ui.button("Ready").clicked() {
-                        let ix = program_client.ready_ix(user, lobby_pda, lobby_id);
+                        let ix = program_client.ready_ix(user, lobby_pda, lobby_id, false);
+                        match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
+                            Ok(()) => {
+                                toasts.0.info("Ready!");
+                            }
+                            Err(e) => {
+                                toasts.0.error(format!("Ready failed: {e}"));
+                            }
+                        }
+                    }
+                    if ui.button("Ready (FOC)").clicked() {
+                        let ix = program_client.ready_ix(user, lobby_pda, lobby_id, true);
                         match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                             Ok(()) => {
                                 toasts.0.info("Ready!");

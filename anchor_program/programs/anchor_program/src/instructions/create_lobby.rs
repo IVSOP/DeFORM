@@ -6,7 +6,7 @@ use deform_core::accounts::{
     AccountType,
 };
 
-use crate::{error::GameError, state::*};
+use crate::{error::GameProgramError, state::*};
 
 #[derive(Accounts)]
 pub struct CreateLobbyAccounts<'info> {
@@ -46,12 +46,14 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     };
 
     // serialize into a Vec
-    let data = wincode::serialize(&lobby_account).map_err(|_| error!(GameError::SerializeLobby))?;
+    let data =
+        wincode::serialize(&lobby_account).map_err(|_| error!(GameProgramError::SerializeLobby))?;
 
     let rent = Rent::get()?;
     let lamports = rent.minimum_balance(data.len());
 
     let seeds: &[&[u8]] = &[b"lobby", &id.to_le_bytes(), &[bump]];
+    // NOTE: this will ensure the account is not already initialized
     system_program::create_account(
         CpiContext::new_with_signer(
             ctx.accounts.system_program.key(),

@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 
+// TODO: lots of errors are repeated from the errors in deform_core
 #[error_code]
-pub enum GameError {
+pub enum GameProgramError {
     #[msg("Failed to serialize lobby")]
     SerializeLobby,
     #[msg("Failed to deserialize lobby")]
@@ -18,6 +19,12 @@ pub enum GameError {
     PlayerNotInLobby,
     #[msg("Player already ready")]
     PlayerAlreadyReady,
+    #[msg("Inputs account not provided")]
+    MissingInputsAccount,
+    #[msg("Inputs account already initialized")]
+    InputsAccountAlreadyInitialized,
+    #[msg("Failed to serialize inputs account")]
+    SerializeInputsAccount,
     #[msg("Unauthorized")]
     Unauthorized,
     #[msg("Creator mismatch")]

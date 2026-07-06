@@ -41,8 +41,8 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
         .instruction(JoinLobbyInstructionArgs { id })
     }
 
-    fn ready_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
-        Ready { user, lobby }.instruction(ReadyInstructionArgs { id })
+    fn ready_ix(&self, user: Pubkey, lobby: Pubkey, id: u64, fully_onchain: bool) -> Instruction {
+        Ready { user, lobby }.instruction(ReadyInstructionArgs { id, fully_onchain })
     }
 
     fn write_and_close_ix(

@@ -3,7 +3,7 @@ use deform_core::accounts::lobby::Lobby;
 use deform_core::accounts::AccountType;
 
 use crate::constants::ADMIN;
-use crate::error::GameError;
+use crate::error::GameProgramError;
 use crate::state::*;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -14,7 +14,7 @@ pub struct PlayerScore {
 
 #[derive(Accounts)]
 pub struct WriteAndCloseAccounts<'info> {
-    #[account(mut, address = ADMIN @ GameError::Unauthorized)]
+    #[account(mut, address = ADMIN @ GameProgramError::Unauthorized)]
     pub admin: Signer<'info>,
     /// CHECK: PDA derived and verified manually because LobbyAccount uses wincode, not borsh.
     #[account(mut)]
@@ -33,22 +33,23 @@ pub fn handler(
 
     let lobby_account = {
         let data = lobby_info.data.borrow();
-        Lobby::<UserLogic>::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
+        Lobby::<UserLogic>::from_bytes(&data)
+            .map_err(|_| error!(GameProgramError::DeserializeLobby))?
     };
 
     match lobby_account.account_type {
         AccountType::Lobby => {}
-        _ => return Err(error!(GameError::InvalidAccountType)),
+        _ => return Err(error!(GameProgramError::InvalidAccountType)),
     }
 
     let pda = Lobby::<UserLogic>::create_program_address(id, &ctx.program_id, lobby_account.bump)
         .map_err(|_| ProgramError::InvalidSeeds)?;
-    require_keys_eq!(lobby_info.key(), pda, GameError::InvalidPda);
+    require_keys_eq!(lobby_info.key(), pda, GameProgramError::InvalidPda);
 
     require_keys_eq!(
         ctx.accounts.creator.key(),
         lobby_account.creator,
-        GameError::CreatorMismatch
+        GameProgramError::CreatorMismatch
     );
 
     let creator_info = ctx.accounts.creator.to_account_info();

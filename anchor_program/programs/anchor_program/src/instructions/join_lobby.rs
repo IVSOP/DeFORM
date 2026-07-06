@@ -2,7 +2,7 @@ use anchor_lang::{prelude::*, system_program};
 use deform_core::accounts::lobby::{Lobby, LobbyStatus, PLayerStatus, PlayerInfo};
 use deform_core::accounts::AccountType;
 
-use crate::error::GameError;
+use crate::error::GameProgramError;
 use crate::state::*;
 
 #[derive(Accounts)]
@@ -22,29 +22,30 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
     // deser
     let mut lobby_account = {
         let data = lobby_info.data.borrow();
-        Lobby::<UserLogic>::from_bytes(&data).map_err(|_| error!(GameError::DeserializeLobby))?
+        Lobby::<UserLogic>::from_bytes(&data)
+            .map_err(|_| error!(GameProgramError::DeserializeLobby))?
     };
 
     // check account type
     match lobby_account.account_type {
         AccountType::Lobby => {}
-        _ => return Err(error!(GameError::InvalidAccountType)),
+        _ => return Err(error!(GameProgramError::InvalidAccountType)),
     }
 
     // check pda
     let pda = Lobby::<UserLogic>::create_program_address(id, &ctx.program_id, lobby_account.bump)
         .map_err(|_| ProgramError::InvalidSeeds)?;
-    require_keys_eq!(lobby_info.key(), pda, GameError::InvalidPda);
+    require_keys_eq!(lobby_info.key(), pda, GameProgramError::InvalidPda);
 
     // lobby must not be started
     require!(
         lobby_account.status == LobbyStatus::NotStarted,
-        GameError::LobbyNotJoinable
+        GameProgramError::LobbyNotJoinable
     );
     // player must not already be in lobby
     require!(
         !lobby_account.player_infos.contains_key(&user_key),
-        GameError::PlayerAlreadyInLobby
+        GameProgramError::PlayerAlreadyInLobby
     );
 
     // add the player
@@ -58,7 +59,7 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
 
     // reserialize
     let new_data =
-        wincode::serialize(&lobby_account).map_err(|_| error!(GameError::SerializeLobby))?;
+        wincode::serialize(&lobby_account).map_err(|_| error!(GameProgramError::SerializeLobby))?;
 
     let new_len = new_data.len();
     let old_len = lobby_info.data_len();

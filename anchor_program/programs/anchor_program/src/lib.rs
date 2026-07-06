@@ -22,8 +22,8 @@ pub mod anchor_program {
         join_lobby::handler(ctx, id)
     }
 
-    pub fn ready(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
-        ready::handler(ctx, id)
+    pub fn ready(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Result<()> {
+        ready::handler(ctx, id, fully_onchain)
     }
 
     pub fn write_and_close(

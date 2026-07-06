@@ -7,7 +7,7 @@ use crate::{accounts::AccountType, DeformError, DeformResult, DeformUserLogic, P
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, SchemaRead, SchemaWrite)]
-pub struct PlayerInputsAccount<T: DeformUserLogic> {
+pub struct InputsAccount<T: DeformUserLogic> {
     pub account_type: AccountType,
     pub bump: u8,
     pub lobby_id: u64,
@@ -15,10 +15,10 @@ pub struct PlayerInputsAccount<T: DeformUserLogic> {
     pub inputs: HashMap<u64, T::Inputs>,
 }
 
-impl<T: DeformUserLogic> PlayerInputsAccount<T> {
+impl<T: DeformUserLogic> InputsAccount<T> {
     pub fn new(lobby_id: u64, player: Pubkey, bump: u8) -> Self {
         Self {
-            account_type: AccountType::Lobby,
+            account_type: AccountType::Inputs,
             bump,
             lobby_id,
             player,
@@ -41,7 +41,7 @@ impl<T: DeformUserLogic> PlayerInputsAccount<T> {
     ) -> Result<Pubkey, AddressError> {
         Pubkey::create_program_address(
             &[
-                b"lobby",
+                b"inputs",
                 &lobby_id.to_le_bytes(),
                 player.as_array(),
                 &[bump],
