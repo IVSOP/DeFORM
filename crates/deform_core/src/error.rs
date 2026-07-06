@@ -47,6 +47,12 @@ pub enum DeformError {
 
     #[error("serialize: {0}")]
     Auth(String),
+
+    #[error("serialize inputs account: {0}")]
+    SerializeInputsAccount(String),
+
+    #[error("deserialize inputs account: {0}")]
+    DeserializeInputsAccount(String),
 }
 
 pub type DeformResult<T = ()> = Result<T, DeformError>;
@@ -67,6 +73,8 @@ impl From<DeformError> for ProgramError {
             DeformError::DeserializeLobby(_) => 11,
             DeformError::BackendPanicked(_) => 12,
             DeformError::Auth(_) => 13,
+            DeformError::SerializeInputsAccount(_) => 14,
+            DeformError::DeserializeInputsAccount(_) => 15,
         })
     }
 }

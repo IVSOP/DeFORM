@@ -51,6 +51,21 @@ pub trait DeformUserLogic: Debug + Clone + Send + 'static {
     /// Microseconds per simulation tick. For 60 fps, use `16667`.
     const TICK_RATE_MICROS: u64;
 
+    // TODO: this is really ugly
+    /// Ephemeral rollups are very finicky when it comes to resizing accounts, and the docs are not clear.
+    /// Thus, I want to have accounts at their max size before delegating them.
+    /// This means I need to know the max possible size of the game state and the inputs.
+    ///
+    /// A possible solution would be to have the user provide an instance of the object that contains the max possible size,
+    /// but this has other limitations, such as
+    /// - needing data to construct the instance
+    /// - not able to be generous, and having to exactly provide the biggest possible data instance is very limiting
+    ///
+    /// As such, I have the user specify in number of serialized bytes. I also cannot have the user specify max bytes for game state/inputs only,
+    /// as this would easily break for types that are dynamic, have enums, etc, and even if that were not the case I would have to guess how wincode is serializing things
+    const MAX_INPUTS_ACCOUNT_BYTES: usize = 256;
+    const MAX_LOBBY_ACCOUNT_BYTES: usize = 1024;
+
     fn new_from_lobby(lobby: &Lobby<Self>) -> Result<Self, Self::Error>;
 
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.
