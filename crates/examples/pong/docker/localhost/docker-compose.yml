@@ -12,7 +12,38 @@ services:
       - ../../../../../surfpool/:/workspace
       - ../../../../../anchor_program/target:/artifacts:ro
       - ../../../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json:/root/.config/solana/id.json:ro
-    command: start --no-tui
+    # Fork devnet: mAGic… (the ER validator identity) is MagicBlock's real devnet
+    # validator — a clean 0-data account, already funded, with its validator fees
+    # vault already created. So the ER's fee-vault startup checks pass with no manual
+    # provisioning. (Default is mainnet-beta, where mAGic… carries data and has no vault.)
+    command: start --no-tui --network devnet
+    restart: unless-stopped
+
+  # MagicBlock Ephemeral Rollup validator. Clones state from `surfpool` (the base
+  # layer) and runs delegated accounts at ~50ms. Config lives in ../magicblock/config.toml
+  # (repo root), mounted read-only and passed as the positional argument.
+  ephemeral-validator:
+    # Built from ../magicblock/Dockerfile, which wraps the current npm-distributed
+    # validator (0.13.3). The Docker Hub image is a year stale with an old config schema.
+    build:
+      context: ../../../../../magicblock
+      dockerfile: Dockerfile
+    image: deform/ephemeral-validator:0.13.3
+    container_name: ephemeral-validator
+    depends_on:
+      surfpool:
+        condition: service_healthy
+    ports:
+      - "7799:7799"   # ER JSON-RPC (from `listen` in config.toml)
+      - "7800:7800"   # ER WebSocket (listen port + 1)
+    volumes:
+      - ../../../../../magicblock/config.toml:/app/config.toml:ro
+    environment:
+      - RUST_LOG=info   # wrapper defaults to "quiet"; surface validator logs
+    ulimits:
+      nofile:
+        soft: 1000000
+        hard: 1000000
     restart: unless-stopped
 
   pong_server:

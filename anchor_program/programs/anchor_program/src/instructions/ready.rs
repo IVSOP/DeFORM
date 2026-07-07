@@ -107,6 +107,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Res
             GameProgramError::InputsAccountTooLarge
         );
 
+        // TODO: this should be a call to PlayerInputs
         let seeds: &[&[u8]] = &[
             b"inputs",
             &id.to_le_bytes(),

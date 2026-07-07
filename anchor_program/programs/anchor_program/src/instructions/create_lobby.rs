@@ -57,6 +57,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
     let data =
         wincode::serialize(&lobby_account).map_err(|_| error!(GameProgramError::SerializeLobby))?;
 
+    // TODO: this should be a call to Lobby
     let seeds: &[&[u8]] = &[b"lobby", &id.to_le_bytes(), &[bump]];
     create_pda_account(
         &ctx.accounts.user.to_account_info(),

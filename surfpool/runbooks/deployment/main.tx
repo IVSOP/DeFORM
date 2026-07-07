@@ -19,6 +19,26 @@ action "fund_admin" "svm::setup_surfnet" {
     }
 }
 
+action "fund_validator" "svm::setup_surfnet" {
+    description = "Fund account with SOL during Surfnet setup"
+    set_account {
+        public_key = "mAGicPQYBMvcYveUZA5F5UNNwyHvfYh5xkLS2Fr1mev"
+        lamports = svm::sol_to_lamports(10)
+    }
+}
+
+# Not needed once surfpool forks devnet: the real validator fees vault (EpJnX…, owner
+# DELeGG, 8 bytes) is cloned from devnet automatically. Kept commented as a fallback in
+# case surfpool is pointed at a network where mAGic… is not a provisioned validator.
+# action "whitelist_er_validator" "svm::setup_surfnet" {
+#     description = "Pre-create the validator fees vault PDA so DELeGG treats mAGic… as a whitelisted ER validator (init_validator_fees_vault is upgrade-authority-only, so we can't call it against cloned mainnet)"
+#     set_account {
+#         public_key = "EpJnX7ueXk7fKojBymqmVuCuwyhDQsYcLVL1XMsBbvDX"
+#         owner      = "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+#         lamports   = svm::sol_to_lamports(1)
+#     }
+# }
+
 action "deploy_game_program" "svm::deploy_program" {
     description = "Deploy game program"
     program = svm::get_program_from_anchor_project(
