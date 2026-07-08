@@ -5,7 +5,9 @@ use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
 use deform_core::{
-    DeformClient, DeformUserLogic, GameProgramClient, Pubkey, accounts::lobby::Lobby,
+    DeformClient, DeformUserLogic, Pubkey,
+    accounts::{inputs::InputsAccount, lobby::Lobby},
+    game_program_client::{GameProgramClient, ReadyArgs},
 };
 use deform_offline::new_offline_client;
 use solana_address::Address;
@@ -552,7 +554,11 @@ pub fn egui_in_menu(
                     }
 
                     if ui.button("Ready").clicked() {
-                        let ix = program_client.ready_ix(user, lobby_pda, lobby_id, false);
+                        let ix = program_client.ready_ix(ReadyArgs::Web2 {
+                            user,
+                            lobby: lobby_pda,
+                            id: lobby_id,
+                        });
                         match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                             Ok(()) => {
                                 toasts.0.info("Ready!");
@@ -563,7 +569,17 @@ pub fn egui_in_menu(
                         }
                     }
                     if ui.button("Ready (FOC)").clicked() {
-                        let ix = program_client.ready_ix(user, lobby_pda, lobby_id, true);
+                        let (inputs_pda, _) = InputsAccount::<PongGame>::find_program_address(
+                            lobby_id,
+                            &user,
+                            &GAME_PROGRAM,
+                        );
+                        let ix = program_client.ready_ix(ReadyArgs::FullyOnchain {
+                            user,
+                            lobby: lobby_pda,
+                            id: lobby_id,
+                            inputs: inputs_pda,
+                        });
                         match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                             Ok(()) => {
                                 toasts.0.info("Ready!");

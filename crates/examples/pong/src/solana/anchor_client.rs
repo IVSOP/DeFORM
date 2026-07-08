@@ -1,4 +1,8 @@
-use deform_core::{GameProgramClient, Pubkey, accounts::lobby::Lobby};
+use deform_core::{
+    Pubkey,
+    accounts::lobby::Lobby,
+    game_program_client::{GameProgramClient, ReadyArgs},
+};
 use solana_instruction::Instruction;
 
 use crate::{
@@ -41,8 +45,34 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
         .instruction(JoinLobbyInstructionArgs { id })
     }
 
-    fn ready_ix(&self, user: Pubkey, lobby: Pubkey, id: u64, fully_onchain: bool) -> Instruction {
-        Ready { user, lobby }.instruction(ReadyInstructionArgs { id, fully_onchain })
+    fn ready_ix(&self, args: ReadyArgs) -> Instruction {
+        match args {
+            ReadyArgs::Web2 { user, lobby, id } => Ready {
+                user,
+                lobby,
+                inputs: None,
+                system_program: solana_system_interface::program::ID,
+            }
+            .instruction(ReadyInstructionArgs {
+                id,
+                fully_onchain: false,
+            }),
+            ReadyArgs::FullyOnchain {
+                user,
+                lobby,
+                id,
+                inputs,
+            } => Ready {
+                user,
+                lobby,
+                inputs: Some(inputs),
+                system_program: solana_system_interface::program::ID,
+            }
+            .instruction(ReadyInstructionArgs {
+                id,
+                fully_onchain: true,
+            }),
+        }
     }
 
     fn write_and_close_ix(

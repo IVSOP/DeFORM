@@ -8,9 +8,10 @@ use std::{
 use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, GameProgramClient, Pubkey,
+    DeformError, Pubkey,
     accounts::lobby::{Lobby, LobbyStatus, PLayerStatus},
     error::{UserFacingError, UserFacingResult},
+    game_program_client::GameProgramClient,
 };
 use quinn::{Connection, RecvStream, SendStream, ServerConfig, crypto::rustls::QuicServerConfig};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;

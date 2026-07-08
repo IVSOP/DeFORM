@@ -34,12 +34,27 @@ pub enum AnchorProgramError {
     /// 6007 - Player already ready
     #[error("Player already ready")]
     PlayerAlreadyReady = 0x1777,
-    /// 6008 - Unauthorized
+    /// 6008 - Lobby account already initialized
+    #[error("Lobby account already initialized")]
+    LobbyAlreadyInitialized = 0x1778,
+    /// 6009 - Inputs account not provided
+    #[error("Inputs account not provided")]
+    MissingInputsAccount = 0x1779,
+    /// 6010 - Inputs account already initialized
+    #[error("Inputs account already initialized")]
+    InputsAccountAlreadyInitialized = 0x177A,
+    /// 6011 - Failed to serialize inputs account
+    #[error("Failed to serialize inputs account")]
+    SerializeInputsAccount = 0x177B,
+    /// 6012 - Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES
+    #[error("Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES")]
+    InputsAccountTooLarge = 0x177C,
+    /// 6013 - Unauthorized
     #[error("Unauthorized")]
-    Unauthorized = 0x1778,
-    /// 6009 - Creator mismatch
+    Unauthorized = 0x177D,
+    /// 6014 - Creator mismatch
     #[error("Creator mismatch")]
-    CreatorMismatch = 0x1779,
+    CreatorMismatch = 0x177E,
 }
 
 impl From<AnchorProgramError> for solana_program_error::ProgramError {

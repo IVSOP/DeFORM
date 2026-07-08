@@ -16,6 +16,10 @@ pub struct Ready {
     pub user: solana_address::Address,
 
     pub lobby: solana_address::Address,
+
+    pub inputs: Option<solana_address::Address>,
+
+    pub system_program: solana_address::Address,
 }
 
 impl Ready {
@@ -29,11 +33,21 @@ impl Ready {
         args: ReadyInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.user, true,
-        ));
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(self.user, true));
         accounts.push(solana_instruction::AccountMeta::new(self.lobby, false));
+        if let Some(inputs) = self.inputs {
+            accounts.push(solana_instruction::AccountMeta::new(inputs, false));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::ANCHOR_PROGRAM_ID,
+                false,
+            ));
+        }
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false,
+        ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = ReadyInstructionData::new().try_to_vec().unwrap();
         let mut args = args.try_to_vec().unwrap();
@@ -86,12 +100,16 @@ impl ReadyInstructionArgs {
 ///
 /// ### Accounts:
 ///
-///   0. `[signer]` user
+///   0. `[writable, signer]` user
 ///   1. `[writable]` lobby
+///   2. `[writable, optional]` inputs
+///   3. `[optional]` system_program (default to `11111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
 pub struct ReadyBuilder {
     user: Option<solana_address::Address>,
     lobby: Option<solana_address::Address>,
+    inputs: Option<solana_address::Address>,
+    system_program: Option<solana_address::Address>,
     id: Option<u64>,
     fully_onchain: Option<bool>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
@@ -109,6 +127,18 @@ impl ReadyBuilder {
     #[inline(always)]
     pub fn lobby(&mut self, lobby: solana_address::Address) -> &mut Self {
         self.lobby = Some(lobby);
+        self
+    }
+    /// `[optional account]`
+    #[inline(always)]
+    pub fn inputs(&mut self, inputs: Option<solana_address::Address>) -> &mut Self {
+        self.inputs = inputs;
+        self
+    }
+    /// `[optional account, default to '11111111111111111111111111111111']`
+    #[inline(always)]
+    pub fn system_program(&mut self, system_program: solana_address::Address) -> &mut Self {
+        self.system_program = Some(system_program);
         self
     }
     #[inline(always)]
@@ -141,6 +171,10 @@ impl ReadyBuilder {
         let accounts = Ready {
             user: self.user.expect("user is not set"),
             lobby: self.lobby.expect("lobby is not set"),
+            inputs: self.inputs,
+            system_program: self
+                .system_program
+                .unwrap_or(solana_address::address!("11111111111111111111111111111111")),
         };
         let args = ReadyInstructionArgs {
             id: self.id.clone().expect("id is not set"),
@@ -159,6 +193,10 @@ pub struct ReadyCpiAccounts<'a, 'b> {
     pub user: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
+
+    pub inputs: Option<&'b solana_account_info::AccountInfo<'a>>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `ready` CPI instruction.
@@ -169,6 +207,10 @@ pub struct ReadyCpi<'a, 'b> {
     pub user: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
+
+    pub inputs: Option<&'b solana_account_info::AccountInfo<'a>>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: ReadyInstructionArgs,
 }
@@ -183,6 +225,8 @@ impl<'a, 'b> ReadyCpi<'a, 'b> {
             __program: program,
             user: accounts.user,
             lobby: accounts.lobby,
+            inputs: accounts.inputs,
+            system_program: accounts.system_program,
             __args: args,
         }
     }
@@ -209,12 +253,21 @@ impl<'a, 'b> ReadyCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.user.key,
-            true,
-        ));
+        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        accounts.push(solana_instruction::AccountMeta::new(*self.user.key, true));
         accounts.push(solana_instruction::AccountMeta::new(*self.lobby.key, false));
+        if let Some(inputs) = self.inputs {
+            accounts.push(solana_instruction::AccountMeta::new(*inputs.key, false));
+        } else {
+            accounts.push(solana_instruction::AccountMeta::new_readonly(
+                crate::ANCHOR_PROGRAM_ID,
+                false,
+            ));
+        }
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -231,10 +284,14 @@ impl<'a, 'b> ReadyCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.user.clone());
         account_infos.push(self.lobby.clone());
+        if let Some(inputs) = self.inputs {
+            account_infos.push(inputs.clone());
+        }
+        account_infos.push(self.system_program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -251,8 +308,10 @@ impl<'a, 'b> ReadyCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[signer]` user
+///   0. `[writable, signer]` user
 ///   1. `[writable]` lobby
+///   2. `[writable, optional]` inputs
+///   3. `[]` system_program
 #[derive(Clone, Debug)]
 pub struct ReadyCpiBuilder<'a, 'b> {
     instruction: Box<ReadyCpiBuilderInstruction<'a, 'b>>,
@@ -264,6 +323,8 @@ impl<'a, 'b> ReadyCpiBuilder<'a, 'b> {
             __program: program,
             user: None,
             lobby: None,
+            inputs: None,
+            system_program: None,
             id: None,
             fully_onchain: None,
             __remaining_accounts: Vec::new(),
@@ -278,6 +339,23 @@ impl<'a, 'b> ReadyCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn lobby(&mut self, lobby: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.lobby = Some(lobby);
+        self
+    }
+    /// `[optional account]`
+    #[inline(always)]
+    pub fn inputs(
+        &mut self,
+        inputs: Option<&'b solana_account_info::AccountInfo<'a>>,
+    ) -> &mut Self {
+        self.instruction.inputs = inputs;
+        self
+    }
+    #[inline(always)]
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
         self
     }
     #[inline(always)]
@@ -338,6 +416,13 @@ impl<'a, 'b> ReadyCpiBuilder<'a, 'b> {
             user: self.instruction.user.expect("user is not set"),
 
             lobby: self.instruction.lobby.expect("lobby is not set"),
+
+            inputs: self.instruction.inputs,
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -352,6 +437,8 @@ struct ReadyCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     user: Option<&'b solana_account_info::AccountInfo<'a>>,
     lobby: Option<&'b solana_account_info::AccountInfo<'a>>,
+    inputs: Option<&'b solana_account_info::AccountInfo<'a>>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     id: Option<u64>,
     fully_onchain: Option<bool>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.

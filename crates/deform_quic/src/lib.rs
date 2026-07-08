@@ -8,7 +8,7 @@ use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
 };
-use deform_core::{GameProgramClient, Pubkey};
+use deform_core::{Pubkey, game_program_client::GameProgramClient};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::message::{AccountMeta, Instruction, Message};
 use solana_sdk::signature::Keypair;

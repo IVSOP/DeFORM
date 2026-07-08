@@ -1,5 +1,4 @@
 #[cfg(feature = "client")]
-use solana_instruction::Instruction;
 use std::{
     collections::HashMap,
     fmt::{Debug, Display},
@@ -12,6 +11,7 @@ pub mod accounts;
 #[cfg(feature = "client")]
 pub mod client;
 pub mod error;
+pub mod game_program_client;
 pub mod smooth;
 
 #[cfg(feature = "client")]
@@ -179,25 +179,4 @@ pub trait DeformGameState:
 {
     fn new_from_lobby<T: DeformUserLogic>(lobby: &Lobby<T>) -> Self;
     fn has_ended(&self) -> bool;
-}
-
-// TODO: rename, not really a client, more of an instruction builder
-/// Since the on-chain aspects are fully customizable and are just a template for the user, the user must also specify how the instructions are created.
-#[cfg(feature = "client")]
-pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
-    fn game_program(&self) -> Pubkey;
-
-    fn create_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction;
-
-    fn join_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction;
-
-    fn ready_ix(&self, user: Pubkey, lobby: Pubkey, id: u64, fuly_onchain: bool) -> Instruction;
-
-    fn write_and_close_ix(
-        &self,
-        admin: Pubkey,
-        lobby_pubkey: Pubkey,
-        creator: Pubkey,
-        lobby: Lobby<T>,
-    ) -> Instruction;
 }
