@@ -3053,6 +3053,15 @@ dependencies = [
 
 [[package]]
 name = "convert_case"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baaaa0ecca5b51987b9423ccdc971514dd8b0bb7b4060b983d3664dad3f1f89f"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "convert_case"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
@@ -3426,6 +3435,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "deform_derive",
+ "egui-probe",
  "glam",
  "serde",
  "solana-address 2.6.1",
@@ -3536,7 +3546,7 @@ version = "2.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "799a97264921d8623a957f6c3b9011f3b5492f557bbb7a5a19b7fa6d06ba8dcb"
 dependencies = [
- "convert_case",
+ "convert_case 0.10.0",
  "proc-macro2",
  "quote",
  "rustc_version",
@@ -3722,6 +3732,29 @@ dependencies = [
  "profiling",
  "smallvec",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "egui-probe"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4cc89e4fd990df3e50ff7a1eb3872593cbc35e8228c840ededd478b2b299853"
+dependencies = [
+ "egui",
+ "egui-probe-proc",
+]
+
+[[package]]
+name = "egui-probe-proc"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a8bcd5a45d46f8de2c353f38c6fee1e5169aab4edcdb8cbc71c6fd0b7f83bd8e"
+dependencies = [
+ "convert_case 0.8.0",
+ "proc-easy",
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
@@ -6339,6 +6372,7 @@ dependencies = [
  "deform_core",
  "deform_offline",
  "deform_quic",
+ "egui-probe",
  "glam",
  "num-derive",
  "num-traits",
@@ -6416,6 +6450,17 @@ name = "presser"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
+
+[[package]]
+name = "proc-easy"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "446f7efaa53a9589eaca5040dd749d9721e0ee60cf66f6c370e2716c031dcf7b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "proc-macro-crate"

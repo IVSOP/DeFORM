@@ -52,9 +52,11 @@ pub struct PlayerInfo<I: DeformInputs> {
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
 )]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
-#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
+#[derive(Clone, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub enum MainnetRegion {
     Asia = 0,
+    #[default]
     EU = 1,
     US = 2,
     TEE = 3,
@@ -85,9 +87,11 @@ impl MainnetRegion {
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
 )]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
-#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
+#[derive(Clone, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub enum DevnetRegion {
     Asia = 0,
+    #[default]
     EU = 1,
     US = 2,
     TEE = 3,
@@ -118,8 +122,10 @@ impl DevnetRegion {
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
 )]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
-#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
+#[derive(Clone, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
 pub enum LocalRegion {
+    #[default]
     Local = 0,
 }
 
@@ -139,6 +145,7 @@ impl LocalRegion {
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
 )]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
 #[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
 #[repr(u8)]
 pub enum ValidatorNetwork {
@@ -147,18 +154,29 @@ pub enum ValidatorNetwork {
     Localhost(LocalRegion) = 2,
 }
 
+// All variants carry data, so `#[derive(Default)]` (which needs a unit default
+// variant) doesn't apply. egui-probe needs this to construct the payload when the
+// user switches `Network` to `FullyOnChain` in the picker.
+impl Default for ValidatorNetwork {
+    fn default() -> Self {
+        ValidatorNetwork::Localhost(LocalRegion::Local)
+    }
+}
+
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
     feature = "anchor",
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
 )]
 #[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
-#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
+#[derive(Clone, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
 #[repr(u8)]
 pub enum Network {
     // TODO: allow user to pass in a custom region??
     // adding a <N> here will make things messy in the lobby
     // maybe have it in DeformUserLogic or something
+    #[default]
     Web2 = 0,
     FullyOnChain(ValidatorNetwork) = 1,
 }

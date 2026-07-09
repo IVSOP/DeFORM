@@ -13,6 +13,7 @@ use deform_core::{
     game_program_client::{GameProgramClient, ReadyArgs},
 };
 use deform_offline::new_offline_client;
+use egui_probe::Probe;
 use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{signature::Keypair, signer::Signer, signer::keypair::read_keypair_file};
@@ -111,6 +112,9 @@ pub struct MenuState {
     rpc_client: Option<RpcClient>,
     program_client: PongAnchorClient,
 
+    // is either set manually or when reading the lobby
+    network: Network,
+
     lobby_id: u64,
     lobby_id_text: String,
 
@@ -190,6 +194,7 @@ pub fn setup(
         selected_preset_idx: 0,
         rpc_client: None,
         program_client: PongAnchorClient,
+        network: Network::Web2,
         lobby_id: 0,
         lobby_id_text: "0".into(),
         lobby_data: None,
@@ -475,9 +480,9 @@ pub fn egui_in_menu(
                 }
             }
 
-            // --- Network preset ---
+            // --- RPC cluster preset ---
             ui.horizontal(|ui| {
-                ui.label("Network:");
+                ui.label("Cluster:");
                 let preset_name = NETWORK_PRESETS[menu.selected_preset_idx].name;
                 egui::ComboBox::from_id_salt("network_select")
                     .selected_text(preset_name)
@@ -501,6 +506,18 @@ pub fn egui_in_menu(
                     NETWORK_PRESETS[menu.selected_preset_idx].rpc_url
                 ));
             }
+
+            ui.separator();
+
+            // --- Network (composed for the next Create Lobby) ---
+            // egui-probe renders `deform_core::Network` recursively: each variant's
+            // payload unfolds into further combo boxes. The header row carries the
+            // variant selector, so `.with_header` is required (without it, only the
+            // inner fields show — nothing for a payload-less variant like Web2).
+            // Distinct from the RPC cluster above.
+            Probe::new(&mut menu.network)
+                .with_header("Network")
+                .show(ui);
 
             ui.separator();
 
@@ -534,7 +551,12 @@ pub fn egui_in_menu(
 
                 ui.horizontal(|ui| {
                     if ui.button("Create Lobby").clicked() {
-                        let ix = program_client.create_lobby_ix(user, lobby_pda, lobby_id);
+                        let ix = program_client.create_lobby_ix(
+                            user,
+                            lobby_pda,
+                            lobby_id,
+                            menu.network.clone(),
+                        );
                         match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                             Ok(()) => {
                                 toasts.0.info("Lobby created!");
@@ -557,33 +579,30 @@ pub fn egui_in_menu(
                         }
                     }
 
+                    // The network (Web2 vs FullyOnChain) picks the ready variant.
                     if ui.button("Ready").clicked() {
-                        let ix = program_client.ready_ix(ReadyArgs::Web2 {
-                            user,
-                            lobby: lobby_pda,
-                            id: lobby_id,
-                        });
-                        match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
-                            Ok(()) => {
-                                toasts.0.info("Ready!");
+                        let args = match menu.network.clone() {
+                            Network::Web2 => ReadyArgs::Web2 {
+                                user,
+                                lobby: lobby_pda,
+                                id: lobby_id,
+                            },
+                            Network::FullyOnChain(_) => {
+                                let (inputs_pda, _) =
+                                    InputsAccount::<PongGame>::find_program_address(
+                                        lobby_id,
+                                        &user,
+                                        &GAME_PROGRAM,
+                                    );
+                                ReadyArgs::FullyOnchain {
+                                    user,
+                                    lobby: lobby_pda,
+                                    id: lobby_id,
+                                    inputs: inputs_pda,
+                                }
                             }
-                            Err(e) => {
-                                toasts.0.error(format!("Ready failed: {e}"));
-                            }
-                        }
-                    }
-                    if ui.button("Ready (FOC)").clicked() {
-                        let (inputs_pda, _) = InputsAccount::<PongGame>::find_program_address(
-                            lobby_id,
-                            &user,
-                            &GAME_PROGRAM,
-                        );
-                        let ix = program_client.ready_ix(ReadyArgs::FullyOnchain {
-                            user,
-                            lobby: lobby_pda,
-                            id: lobby_id,
-                            inputs: inputs_pda,
-                        });
+                        };
+                        let ix = program_client.ready_ix(args);
                         match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
                             Ok(()) => {
                                 toasts.0.info("Ready!");
@@ -617,6 +636,8 @@ pub fn egui_in_menu(
                 }
 
                 if let Some(lobby) = new_lobby_data {
+                    // Reading a lobby overwrites the picker with its on-chain network.
+                    menu.network = lobby.network.clone();
                     menu.lobby_data = Some(lobby);
                 }
 
@@ -641,27 +662,37 @@ pub fn egui_in_menu(
 
                 if menu.lobby_data.is_some() {
                     if ui.button("Play Online").clicked() {
-                        let lobby = menu.lobby_data.clone().unwrap();
-                        let visual_tick_micros = monitor_q
-                            .iter()
-                            .filter_map(|m| m.refresh_rate_millihertz)
-                            .max()
-                            .map(|mhz| 1_000_000_000 / mhz as u64)
-                            .unwrap_or(PongGame::TICK_RATE_MICROS);
-                        match start_online(
-                            &mut commands,
-                            lobby,
-                            user,
-                            &menu.server_addr,
-                            menu.skip_cert_verify,
-                            &mut player_entities,
-                            &paddle_slots,
-                            &mut players_q,
-                            visual_tick_micros,
-                        ) {
-                            Ok(()) => next_state.set(AppState::InGame),
-                            Err(e) => {
-                                toasts.0.error(format!("Online error: {e}"));
+                        // The lobby's network decides which backend serves the game.
+                        match menu.network.clone() {
+                            Network::Web2 => {
+                                let lobby = menu.lobby_data.clone().unwrap();
+                                let visual_tick_micros = monitor_q
+                                    .iter()
+                                    .filter_map(|m| m.refresh_rate_millihertz)
+                                    .max()
+                                    .map(|mhz| 1_000_000_000 / mhz as u64)
+                                    .unwrap_or(PongGame::TICK_RATE_MICROS);
+                                match start_online(
+                                    &mut commands,
+                                    lobby,
+                                    user,
+                                    &menu.server_addr,
+                                    menu.skip_cert_verify,
+                                    &mut player_entities,
+                                    &paddle_slots,
+                                    &mut players_q,
+                                    visual_tick_micros,
+                                ) {
+                                    Ok(()) => next_state.set(AppState::InGame),
+                                    Err(e) => {
+                                        toasts.0.error(format!("Online error: {e}"));
+                                    }
+                                }
+                            }
+                            // TODO: web3 backend — route the game through the selected
+                            // validator network instead of the QUIC server.
+                            Network::FullyOnChain(_) => {
+                                toasts.0.error("Fully on-chain backend not implemented yet");
                             }
                         }
                     }
