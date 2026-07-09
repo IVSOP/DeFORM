@@ -5,7 +5,7 @@ use anchor_lang::prelude::*;
 use deform_core::{
     accounts::{
         inputs::InputsAccount,
-        lobby::{Lobby, LobbyStatus, PLayerStatus},
+        lobby::{Lobby, LobbyStatus, Network, PLayerStatus},
         AccountType,
     },
     DeformUserLogic,
@@ -24,7 +24,7 @@ pub struct ReadyAccounts<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Result<()> {
+pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     let lobby_info = ctx.accounts.lobby.to_account_info();
     let user_key = *ctx.accounts.user.key;
 
@@ -74,7 +74,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64, fully_onchain: bool) -> Res
             .map_err(|_| error!(GameProgramError::SerializeLobby))?;
     }
 
-    if fully_onchain {
+    if lobby_account.network != Network::Web2 {
         // player inputs account
         let inputs_info = ctx
             .accounts

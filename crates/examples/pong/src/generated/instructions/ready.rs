@@ -87,7 +87,6 @@ impl Default for ReadyInstructionData {
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 pub struct ReadyInstructionArgs {
     pub id: u64,
-    pub fully_onchain: bool,
 }
 
 impl ReadyInstructionArgs {
@@ -111,7 +110,6 @@ pub struct ReadyBuilder {
     inputs: Option<solana_address::Address>,
     system_program: Option<solana_address::Address>,
     id: Option<u64>,
-    fully_onchain: Option<bool>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -146,11 +144,6 @@ impl ReadyBuilder {
         self.id = Some(id);
         self
     }
-    #[inline(always)]
-    pub fn fully_onchain(&mut self, fully_onchain: bool) -> &mut Self {
-        self.fully_onchain = Some(fully_onchain);
-        self
-    }
     /// Add an additional account to the instruction.
     #[inline(always)]
     pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
@@ -178,10 +171,6 @@ impl ReadyBuilder {
         };
         let args = ReadyInstructionArgs {
             id: self.id.clone().expect("id is not set"),
-            fully_onchain: self
-                .fully_onchain
-                .clone()
-                .expect("fully_onchain is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -326,7 +315,6 @@ impl<'a, 'b> ReadyCpiBuilder<'a, 'b> {
             inputs: None,
             system_program: None,
             id: None,
-            fully_onchain: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -361,11 +349,6 @@ impl<'a, 'b> ReadyCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn id(&mut self, id: u64) -> &mut Self {
         self.instruction.id = Some(id);
-        self
-    }
-    #[inline(always)]
-    pub fn fully_onchain(&mut self, fully_onchain: bool) -> &mut Self {
-        self.instruction.fully_onchain = Some(fully_onchain);
         self
     }
     /// Add an additional account to the instruction.
@@ -404,11 +387,6 @@ impl<'a, 'b> ReadyCpiBuilder<'a, 'b> {
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
         let args = ReadyInstructionArgs {
             id: self.instruction.id.clone().expect("id is not set"),
-            fully_onchain: self
-                .instruction
-                .fully_onchain
-                .clone()
-                .expect("fully_onchain is not set"),
         };
         let instruction = ReadyCpi {
             __program: self.instruction.__program,
@@ -440,7 +418,6 @@ struct ReadyCpiBuilderInstruction<'a, 'b> {
     inputs: Option<&'b solana_account_info::AccountInfo<'a>>,
     system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     id: Option<u64>,
-    fully_onchain: Option<bool>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

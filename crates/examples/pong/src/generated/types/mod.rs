@@ -5,6 +5,16 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
+pub(crate) mod r#devnet_region;
+pub(crate) mod r#local_region;
+pub(crate) mod r#mainnet_region;
+pub(crate) mod r#network;
 pub(crate) mod r#player_score;
+pub(crate) mod r#validator_network;
 
+pub use self::r#devnet_region::*;
+pub use self::r#local_region::*;
+pub use self::r#mainnet_region::*;
+pub use self::r#network::*;
 pub use self::r#player_score::*;
+pub use self::r#validator_network::*;

@@ -46,6 +46,123 @@ pub struct PlayerInfo<I: DeformInputs> {
     pub inputs: I,
 }
 
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
+#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub enum MainnetRegion {
+    Asia = 0,
+    EU = 1,
+    US = 2,
+    TEE = 3,
+}
+
+impl MainnetRegion {
+    pub fn address(&self) -> Pubkey {
+        match self {
+            MainnetRegion::Asia => {
+                Pubkey::from_str_const("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57")
+            }
+            MainnetRegion::EU => {
+                Pubkey::from_str_const("MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e")
+            }
+            MainnetRegion::US => {
+                Pubkey::from_str_const("MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd")
+            }
+            MainnetRegion::TEE => {
+                Pubkey::from_str_const("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo")
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
+#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub enum DevnetRegion {
+    Asia = 0,
+    EU = 1,
+    US = 2,
+    TEE = 3,
+}
+
+impl DevnetRegion {
+    pub fn address(&self) -> Pubkey {
+        match self {
+            DevnetRegion::Asia => {
+                Pubkey::from_str_const("MAS1Dt9qreoRMQ14YQuhg8UTZMMzDdKhmkZMECCzk57")
+            }
+            DevnetRegion::EU => {
+                Pubkey::from_str_const("MEUGGrYPxKk17hCr7wpT6s8dtNokZj5U2L57vjYMS8e")
+            }
+            DevnetRegion::US => {
+                Pubkey::from_str_const("MUS3hc9TCw4cGC12vHNoYcCGzJG1txjgQLZWVoeNHNd")
+            }
+            DevnetRegion::TEE => {
+                Pubkey::from_str_const("MTEWGuqxUpYZGFJQcp8tLN7x5v9BSeoFHYWQQ3n3xzo")
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
+#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub enum LocalRegion {
+    Local = 0,
+}
+
+impl LocalRegion {
+    pub fn address(&self) -> Pubkey {
+        match self {
+            LocalRegion::Local => {
+                Pubkey::from_str_const("mAGicPQYBMvcYveUZA5F5UNNwyHvfYh5xkLS2Fr1mev")
+            }
+        }
+    }
+}
+
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
+#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[repr(u8)]
+pub enum ValidatorNetwork {
+    Mainnet(MainnetRegion) = 0,
+    Devnet(DevnetRegion) = 1,
+    Localhost(LocalRegion) = 2,
+}
+
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
+)]
+#[cfg_attr(feature = "anchor", borsh(use_discriminant = true))]
+#[derive(Clone, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[repr(u8)]
+pub enum Network {
+    // TODO: allow user to pass in a custom region??
+    // adding a <N> here will make things messy in the lobby
+    // maybe have it in DeformUserLogic or something
+    Web2 = 0,
+    FullyOnChain(ValidatorNetwork) = 1,
+}
+
 // FIX: let the user pass in additional data as an arbitrary &U
 /// An on-chain lobby account.
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
@@ -57,6 +174,7 @@ pub struct Lobby<T: DeformUserLogic> {
     pub tick: u64,
     pub creator: Pubkey,
     pub status: LobbyStatus,
+    pub network: Network,
     // FIX: serde correct serialization of pubkey
     pub player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
     pub game_state: Option<T::GameState>,
@@ -69,6 +187,7 @@ impl<T: DeformUserLogic> Lobby<T> {
         tick: u64,
         creator: Pubkey,
         status: LobbyStatus,
+        network: Network,
         game_state: Option<T::GameState>,
         player_infos: HashMap<Pubkey, PlayerInfo<T::Inputs>>,
         bump: u8,
@@ -79,6 +198,7 @@ impl<T: DeformUserLogic> Lobby<T> {
             tick,
             creator,
             status,
+            network,
             game_state,
             player_infos,
             bump,

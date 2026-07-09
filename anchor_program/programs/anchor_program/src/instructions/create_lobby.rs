@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anchor_lang::prelude::*;
 use deform_core::accounts::{
-    lobby::{Lobby, LobbyStatus, PLayerStatus, PlayerInfo},
+    lobby::{Lobby, LobbyStatus, Network, PLayerStatus, PlayerInfo},
     AccountType,
 };
 
@@ -18,7 +18,7 @@ pub struct CreateLobbyAccounts<'info> {
     pub system_program: Program<'info, System>,
 }
 
-pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
+pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64, network: Network) -> Result<()> {
     let program_id = ctx.program_id;
     let lobby_info = ctx.accounts.lobby.to_account_info();
 
@@ -47,6 +47,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64) -> Result<()> {
         id,
         tick: 0,
         creator,
+        network,
         status: LobbyStatus::NotStarted,
         game_state: None,
         player_infos,

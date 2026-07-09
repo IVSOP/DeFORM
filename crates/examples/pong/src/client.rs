@@ -6,7 +6,10 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use bevy_egui_notify::{EguiToasts, EguiToastsPlugin};
 use deform_core::{
     DeformClient, DeformUserLogic, Pubkey,
-    accounts::{inputs::InputsAccount, lobby::Lobby},
+    accounts::{
+        inputs::InputsAccount,
+        lobby::{Lobby, Network},
+    },
     game_program_client::{GameProgramClient, ReadyArgs},
 };
 use deform_offline::new_offline_client;
@@ -250,6 +253,7 @@ pub fn start_offline(
         0,
         main_player,
         LobbyStatus::NotStarted,
+        Network::Web2,
         None,
         player_infos,
         0,

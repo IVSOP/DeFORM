@@ -1,6 +1,6 @@
 use deform_core::{
     Pubkey,
-    accounts::lobby::Lobby,
+    accounts::lobby::{DevnetRegion, Lobby, LocalRegion, MainnetRegion, Network, ValidatorNetwork},
     game_program_client::{GameProgramClient, ReadyArgs},
 };
 use solana_instruction::Instruction;
@@ -27,13 +27,22 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
         GAME_PROGRAM
     }
 
-    fn create_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
+    fn create_lobby_ix(
+        &self,
+        user: Pubkey,
+        lobby: Pubkey,
+        id: u64,
+        network: Network,
+    ) -> Instruction {
         CreateLobby {
             user,
             lobby,
             system_program: solana_system_interface::program::ID,
         }
-        .instruction(CreateLobbyInstructionArgs { id })
+        .instruction(CreateLobbyInstructionArgs {
+            id,
+            network: network.into(),
+        })
     }
 
     fn join_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
@@ -53,10 +62,7 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
                 inputs: None,
                 system_program: solana_system_interface::program::ID,
             }
-            .instruction(ReadyInstructionArgs {
-                id,
-                fully_onchain: false,
-            }),
+            .instruction(ReadyInstructionArgs { id }),
             ReadyArgs::FullyOnchain {
                 user,
                 lobby,
@@ -68,10 +74,7 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
                 inputs: Some(inputs),
                 system_program: solana_system_interface::program::ID,
             }
-            .instruction(ReadyInstructionArgs {
-                id,
-                fully_onchain: true,
-            }),
+            .instruction(ReadyInstructionArgs { id }),
         }
     }
 
@@ -101,5 +104,59 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
             id: lobby.id,
             scores,
         })
+    }
+}
+
+// Codama regenerates a structurally-identical copy of `Network` (and its nested
+// types) from the IDL. These `From` impls bridge the canonical `deform_core`
+// types to the generated ones so callers only ever deal with `deform_core::Network`.
+// The Borsh wire format matches because the `deform_core` discriminants are 0,1,2..
+// in positional order, which is exactly what codama's default encoding produces.
+impl From<Network> for crate::generated::types::Network {
+    fn from(network: Network) -> Self {
+        match network {
+            Network::Web2 => Self::Web2,
+            Network::FullyOnChain(v) => Self::FullyOnChain(v.into()),
+        }
+    }
+}
+
+impl From<ValidatorNetwork> for crate::generated::types::ValidatorNetwork {
+    fn from(network: ValidatorNetwork) -> Self {
+        match network {
+            ValidatorNetwork::Mainnet(r) => Self::Mainnet(r.into()),
+            ValidatorNetwork::Devnet(r) => Self::Devnet(r.into()),
+            ValidatorNetwork::Localhost(r) => Self::Localhost(r.into()),
+        }
+    }
+}
+
+impl From<MainnetRegion> for crate::generated::types::MainnetRegion {
+    fn from(region: MainnetRegion) -> Self {
+        match region {
+            MainnetRegion::Asia => Self::Asia,
+            MainnetRegion::EU => Self::EU,
+            MainnetRegion::US => Self::US,
+            MainnetRegion::TEE => Self::TEE,
+        }
+    }
+}
+
+impl From<DevnetRegion> for crate::generated::types::DevnetRegion {
+    fn from(region: DevnetRegion) -> Self {
+        match region {
+            DevnetRegion::Asia => Self::Asia,
+            DevnetRegion::EU => Self::EU,
+            DevnetRegion::US => Self::US,
+            DevnetRegion::TEE => Self::TEE,
+        }
+    }
+}
+
+impl From<LocalRegion> for crate::generated::types::LocalRegion {
+    fn from(region: LocalRegion) -> Self {
+        match region {
+            LocalRegion::Local => Self::Local,
+        }
     }
 }

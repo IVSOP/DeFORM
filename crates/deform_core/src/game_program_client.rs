@@ -1,6 +1,7 @@
 #[cfg(feature = "client")]
 use solana_instruction::Instruction;
 
+use crate::accounts::lobby::Network;
 #[cfg(feature = "client")]
 use crate::{accounts::lobby::Lobby, DeformUserLogic, Pubkey};
 
@@ -25,7 +26,13 @@ pub enum ReadyArgs {
 pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
     fn game_program(&self) -> Pubkey;
 
-    fn create_lobby_ix(&self, user: Pubkey, lobby: Pubkey, lobby_id: u64) -> Instruction;
+    fn create_lobby_ix(
+        &self,
+        user: Pubkey,
+        lobby: Pubkey,
+        lobby_id: u64,
+        network: Network,
+    ) -> Instruction;
 
     fn join_lobby_ix(&self, user: Pubkey, lobby: Pubkey, lobby_id: u64) -> Instruction;
 

@@ -5,6 +5,7 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
+use crate::generated::types::Network;
 use borsh::BorshDeserialize;
 use borsh::BorshSerialize;
 
@@ -77,6 +78,7 @@ impl Default for CreateLobbyInstructionData {
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 pub struct CreateLobbyInstructionArgs {
     pub id: u64,
+    pub network: Network,
 }
 
 impl CreateLobbyInstructionArgs {
@@ -98,6 +100,7 @@ pub struct CreateLobbyBuilder {
     lobby: Option<solana_address::Address>,
     system_program: Option<solana_address::Address>,
     id: Option<u64>,
+    network: Option<Network>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
@@ -126,6 +129,11 @@ impl CreateLobbyBuilder {
         self.id = Some(id);
         self
     }
+    #[inline(always)]
+    pub fn network(&mut self, network: Network) -> &mut Self {
+        self.network = Some(network);
+        self
+    }
     /// Add an additional account to the instruction.
     #[inline(always)]
     pub fn add_remaining_account(&mut self, account: solana_instruction::AccountMeta) -> &mut Self {
@@ -152,6 +160,7 @@ impl CreateLobbyBuilder {
         };
         let args = CreateLobbyInstructionArgs {
             id: self.id.clone().expect("id is not set"),
+            network: self.network.clone().expect("network is not set"),
         };
 
         accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
@@ -278,6 +287,7 @@ impl<'a, 'b> CreateLobbyCpiBuilder<'a, 'b> {
             lobby: None,
             system_program: None,
             id: None,
+            network: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -303,6 +313,11 @@ impl<'a, 'b> CreateLobbyCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn id(&mut self, id: u64) -> &mut Self {
         self.instruction.id = Some(id);
+        self
+    }
+    #[inline(always)]
+    pub fn network(&mut self, network: Network) -> &mut Self {
+        self.instruction.network = Some(network);
         self
     }
     /// Add an additional account to the instruction.
@@ -341,6 +356,11 @@ impl<'a, 'b> CreateLobbyCpiBuilder<'a, 'b> {
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
         let args = CreateLobbyInstructionArgs {
             id: self.instruction.id.clone().expect("id is not set"),
+            network: self
+                .instruction
+                .network
+                .clone()
+                .expect("network is not set"),
         };
         let instruction = CreateLobbyCpi {
             __program: self.instruction.__program,
@@ -369,6 +389,7 @@ struct CreateLobbyCpiBuilderInstruction<'a, 'b> {
     lobby: Option<&'b solana_account_info::AccountInfo<'a>>,
     system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     id: Option<u64>,
+    network: Option<Network>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }
