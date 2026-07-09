@@ -12,6 +12,8 @@ use tracing::info;
 
 #[cfg(feature = "client")]
 pub mod client;
+#[cfg(feature = "client")]
+pub mod menu;
 #[cfg(feature = "server")]
 pub mod server;
 
