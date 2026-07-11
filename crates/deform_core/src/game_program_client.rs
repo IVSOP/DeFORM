@@ -3,7 +3,7 @@ use solana_instruction::Instruction;
 
 use crate::accounts::lobby::Network;
 #[cfg(feature = "client")]
-use crate::{accounts::lobby::Lobby, DeformUserLogic, Pubkey};
+use crate::{accounts::lobby::LobbyFinished, DeformUserLogic, Pubkey};
 
 // TODO: cleanup to not repeat things?
 pub enum ReadyArgs {
@@ -43,6 +43,6 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         admin: Pubkey,
         lobby_pubkey: Pubkey,
         creator: Pubkey,
-        lobby: Lobby<T>,
+        lobby: &LobbyFinished<T>,
     ) -> Instruction;
 }

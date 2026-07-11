@@ -159,18 +159,20 @@ pub enum Network {
 }
 
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub enum Lobby<T: DeformUserLogic> {
-    NotStarted(LobbyNotStarted),
-    Ongoing(LobbyOngoing<T>),
-    Finished(LobbyOngoing<T>),
+pub struct Lobby<T: DeformUserLogic> {
+    pub id: u64,
+    pub creator: Pubkey,
+    pub network: Network,
+    pub bump: u8,
+    pub state: LobbyState<T>,
 }
 
 impl<T: DeformUserLogic> Lobby<T> {
-    pub fn find_lobby_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
+    pub fn find_program_address(id: u64, game: &Pubkey) -> (Pubkey, u8) {
         Pubkey::find_program_address(&[b"lobby", &id.to_le_bytes()], game)
     }
 
-    pub fn create_lobby_program_address(
+    pub fn create_program_address(
         id: u64,
         game: &Pubkey,
         bump: u8,
@@ -178,3 +180,14 @@ impl<T: DeformUserLogic> Lobby<T> {
         Pubkey::create_program_address(&[b"lobby", &id.to_le_bytes(), &[bump]], game)
     }
 }
+
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+pub enum LobbyState<T: DeformUserLogic> {
+    NotStarted(LobbyNotStarted),
+    Ongoing(LobbyOngoing<T>),
+    Finished(LobbyFinished<T>),
+}
+
+#[repr(transparent)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+pub struct LobbyFinished<T: DeformUserLogic>(pub LobbyOngoing<T>);

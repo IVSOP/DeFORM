@@ -1,6 +1,9 @@
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{accounts::lobby::Lobby, DeformUserLogic};
+use crate::{
+    accounts::{inputs::InputsAccount, lobby::Lobby},
+    DeformUserLogic,
+};
 
 pub mod inputs;
 pub mod lobby;
@@ -11,5 +14,5 @@ pub mod lobby;
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum DeformAccount<T: DeformUserLogic> {
     Lobby(Lobby<T>) = 0,
-    Inputs = 1,
+    Inputs(InputsAccount<T>) = 1,
 }
