@@ -16,7 +16,7 @@ use tokio::{
 use deform_core::{
     DeformClient, DeformError, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
     Smooth, TickInfo,
-    accounts::lobby::{Lobby, started::LobbyOngoing},
+    accounts::lobby::{Lobby, LobbyState, started::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
 
@@ -51,9 +51,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
     ) -> UserFacingResult<T, DeformClient<T>> {
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
-        let (lobby, game_state) = match lobby {
-            Lobby::Finished(_) => Err(DeformError::InvalidState("Game already ended!".into()))?,
-            Lobby::NotStarted(ref not_started) => {
+        let (lobby, game_state) = match lobby.state {
+            LobbyState::Finished(_) => {
+                Err(DeformError::InvalidState("Game already ended!".into()))?
+            }
+            LobbyState::NotStarted(ref not_started) => {
                 let mut inputs = HashMap::new();
                 for player in not_started.player_status.keys() {
                     inputs.insert(*player, T::Inputs::default());
@@ -65,22 +67,24 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     T::new_game_from_lobby(not_started).map_err(|e| UserFacingError::User(e))?;
 
                 (
-                    Lobby::Ongoing(LobbyOngoing {
-                        id: not_started.id,
-                        creator: not_started.creator,
-                        network: not_started.network.clone(),
-                        tick: 0,
-                        tick_info: TickInfo {
-                            game_state: game_state.clone(),
-                            inputs,
-                        },
-                        user_logic,
-                        bump: 0,
-                    }),
+                    Lobby {
+                        id: lobby.id,
+                        creator: lobby.creator,
+                        network: lobby.network.clone(),
+                        bump: lobby.bump,
+                        state: LobbyState::Ongoing(LobbyOngoing {
+                            tick: 0,
+                            tick_info: TickInfo {
+                                game_state: game_state.clone(),
+                                inputs,
+                            },
+                            user_logic,
+                        }),
+                    },
                     game_state,
                 )
             }
-            Lobby::Ongoing(ref ongoing) => (
+            LobbyState::Ongoing(ref ongoing) => (
                 // really ugly but only happens once so whatever
                 lobby.clone(),
                 ongoing.tick_info.game_state.clone(),
@@ -174,7 +178,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         loop {
             tokio_select!(match .. {
                 .. if let _ = tick_sleep.tick() => {
-                    if matches!(self.local_lobby, Lobby::Ongoing(_)) {
+                    if matches!(self.local_lobby.state, LobbyState::Ongoing(_)) {
                         self.advance_local_simulation()?;
                         self.last_sim_instant = Instant::now();
                     } else {
@@ -182,7 +186,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     }
                 }
                 .. if let _ = visual_ticker.tick() => {
-                    if let Lobby::Ongoing(ref ongoing) = self.local_lobby {
+                    if let LobbyState::Ongoing(ref ongoing) = self.local_lobby.state {
                         // set the state for the game engine to read as being the exact same, except the game state is replaced with a visually interpolated state
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
                         let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
@@ -200,7 +204,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                                 .lock()
                                 .map_err(|_| DeformError::LockPoisoned)?;
 
-                            shared.lobby = Lobby::Ongoing(fake_visual_lobby);
+                            shared.lobby.state = LobbyState::Ongoing(fake_visual_lobby);
                         }
                     }
                 }
@@ -216,7 +220,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     if new_inputs.is_none() {
                         break;
                     }
-                    if !matches!(self.local_lobby, Lobby::Finished(_))
+                    if !matches!(self.local_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
                         self.player_input = new_inputs;
@@ -225,7 +229,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             });
         }
 
-        if !terminated && !matches!(self.local_lobby, Lobby::Finished(_)) {
+        if !terminated && !matches!(self.local_lobby.state, LobbyState::Finished(_)) {
             // Wait for termination signal
             self.terminate.notified().await;
         }
@@ -237,8 +241,8 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         // FIX: what is a clean way of doing this?
         // I can't just pass in a &mut ongoing I think, since this would be two mutable refs to the struct
         // I trust that the compiler will handle it
-        let ongoing = match self.local_lobby {
-            Lobby::Ongoing(ref mut ongoing) => ongoing,
+        let ongoing = match self.local_lobby.state {
+            LobbyState::Ongoing(ref mut ongoing) => ongoing,
             _ => unreachable!(),
         };
 
