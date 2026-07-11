@@ -1,14 +1,9 @@
-use std::{
-    collections::HashMap,
-    sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard},
-};
+use std::sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard};
 
 use tokio::sync::{mpsc, Notify};
 
 use crate::{
-    accounts::lobby::{Lobby, LobbyStatus},
-    error::{UserFacingError, UserFacingResult},
-    DeformError, DeformGameState, DeformResult, DeformUserLogic, TickInfo,
+    accounts::lobby::Lobby, error::UserFacingResult, DeformError, DeformResult, DeformUserLogic,
 };
 
 /// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
@@ -19,43 +14,25 @@ pub struct DeformClient<T: DeformUserLogic> {
     /// Channel used to set inputs
     // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send
     pub set_inputs_sender: mpsc::UnboundedSender<T::Inputs>,
-    /// Game state to be read by the client
-    pub sdk_game_state: Arc<Mutex<DeformReadState<T>>>,
+    /// Game state to be read by the client, along with other useful info from the backend
+    pub backend_state: Arc<Mutex<DeformSharedBackendState<T>>>,
     /// Set to true by the backend thread when it exits (cleanly or due to error).
     pub backend_dead: Arc<AtomicBool>,
 }
 
 /// The state that is returned by the SDK to your application.
-#[derive(serde::Serialize)]
-pub struct DeformReadState<T: DeformUserLogic> {
-    pub tick_info: TickInfo<T>,
-    /// The last known status the server has sent us
-    pub remote_status: LobbyStatus,
+pub struct DeformSharedBackendState<T: DeformUserLogic> {
+    pub lobby: Lobby<T>,
+    // TODO: how to make this customizable by each backend?
     pub stats: Stats,
-    /// Your own data, so you can read it back when reading the rest of the state.
-    ///
-    /// NOTE: I had a lot of trouble deciding how to do this. The backends need mutable access, so I always have to use a mutex of some sort.
-    /// However, running the callbacks inside the lock is bad as I don't know how long the operations being done by the user are taking.
-    /// So, the approach I have chosen is to keep an owned T in the backend. After operations are done and the [`DeformReadState`] needs to be updated, it is cloned into here.
-    pub user_logic: T,
     pub internal_error: UserFacingResult<T, ()>,
 }
 
-impl<T: DeformUserLogic> DeformReadState<T> {
-    /// Create a new state when players are known
-    pub fn new_from_lobby(lobby: &Lobby<T>) -> UserFacingResult<T, Self> {
-        let game_state = T::GameState::new_from_lobby(lobby);
-        let mut inputs = HashMap::new();
-        for player in lobby.player_infos.keys() {
-            inputs.insert(*player, T::Inputs::default());
-        }
-        let tick_info = TickInfo { game_state, inputs };
-
+impl<T: DeformUserLogic> DeformSharedBackendState<T> {
+    pub fn new_from_lobby(lobby: Lobby<T>) -> UserFacingResult<T, Self> {
         Ok(Self {
-            tick_info,
-            remote_status: Default::default(),
+            lobby,
             stats: Default::default(),
-            user_logic: T::new_from_lobby(lobby).map_err(|e| UserFacingError::User(e))?,
             internal_error: Ok(()),
         })
     }
@@ -70,9 +47,9 @@ impl<T: DeformUserLogic> DeformClient<T> {
     /// Returns the latest state along with other useful information.
     /// To prevent unecessary cloning (and having to derive Clone), this is just a very thin
     /// wrapper of locking the mutex. You must drop it as soon as possible to avoid contention.
-    pub fn read_state(&self) -> DeformResult<MutexGuard<'_, DeformReadState<T>>> {
+    pub fn read_state(&self) -> DeformResult<MutexGuard<'_, DeformSharedBackendState<T>>> {
         let state = self
-            .sdk_game_state
+            .backend_state
             .lock()
             .map_err(|_| DeformError::LockPoisoned)?;
 

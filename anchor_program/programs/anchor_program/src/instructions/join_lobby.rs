@@ -21,7 +21,7 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
 
     // deser
     let mut lobby_account =
-        deser_and_check_lobby(ctx.accounts.lobby.to_account_info(), id, *ctx.program_id)?;
+        deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
 
     // lobby must not be started
     require!(

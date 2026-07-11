@@ -15,12 +15,12 @@ pub mod game_program_client;
 pub mod smooth;
 
 #[cfg(feature = "client")]
-pub use client::{DeformClient, DeformReadState, Stats};
+pub use client::{DeformClient, DeformSharedBackendState, Stats};
 
 pub use error::{DeformError, DeformResult};
 pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
-use crate::accounts::lobby::Lobby;
+use crate::accounts::lobby::not_started::LobbyNotStarted;
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
@@ -33,7 +33,14 @@ pub type Pubkey = solana_address::Address;
 ///
 /// Note that while this trait defines [`DeformUserLogic::Inputs`] and [`DeformUserLogic::GameState`], the backend is the one responsible for holding stateful information. You should use the struct that implements this trait to store aditional data that you want to keep out of the [`DeformUserLogic::GameState`].
 // TODO: make the callbacks receive the entire lobby state instead of just the game state??
-pub trait DeformUserLogic: Debug + Clone + Send + 'static {
+pub trait DeformUserLogic:
+    Debug
+    + Clone
+    + Send
+    + 'static
+    + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Error>
+    + SchemaWrite<DefaultConfig, Src = Self::Error>
+{
     // user must define inputs and game state
     type Inputs: DeformInputs;
     type GameState: DeformGameState;
@@ -63,10 +70,11 @@ pub trait DeformUserLogic: Debug + Clone + Send + 'static {
     ///
     /// As such, I have the user specify in number of serialized bytes. I also cannot have the user specify max bytes for game state/inputs only,
     /// as this would easily break for types that are dynamic, have enums, etc, and even if that were not the case I would have to guess how wincode is serializing things
-    const MAX_INPUTS_ACCOUNT_BYTES: usize = 256;
-    const MAX_LOBBY_ACCOUNT_BYTES: usize = 1024;
+    const MAX_INPUTS_ACCOUNT_BYTES: u64 = 256;
+    const MAX_LOBBY_ACCOUNT_BYTES: u64 = 1024;
 
-    fn new_from_lobby(lobby: &Lobby<Self>) -> Result<Self, Self::Error>;
+    fn new_from_lobby(lobby: &LobbyNotStarted) -> Result<Self, Self::Error>;
+    fn new_game_from_lobby(lobby: &LobbyNotStarted) -> Result<Self::GameState, Self::Error>;
 
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.
     ///
@@ -127,7 +135,8 @@ pub trait DeformUserLogic: Debug + Clone + Send + 'static {
     }
 }
 
-#[derive(serde::Serialize, Clone)]
+// #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
+#[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct TickInfo<T: DeformUserLogic> {
     /// The current game state at this tick
     pub game_state: T::GameState,
@@ -151,6 +160,7 @@ impl<T> Anchor for T {}
 
 pub trait DeformInputs:
     Default
+    + Debug
     + Eq
     + Clone
     + Send
@@ -171,12 +181,12 @@ pub trait DeformInputs:
 
 pub trait DeformGameState:
     Clone
+    + Debug
     + Send
     + Sync
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
 {
-    fn new_from_lobby<T: DeformUserLogic>(lobby: &Lobby<T>) -> Self;
     fn has_ended(&self) -> bool;
 }

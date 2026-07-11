@@ -29,7 +29,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
 
     // deser
     let mut lobby_account =
-        deser_and_check_lobby(ctx.accounts.lobby.to_account_info(), id, *ctx.program_id)?;
+        deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
 
     // lobby not started
     require!(
@@ -84,14 +84,6 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
         let inputs_data = wincode::serialize(&inputs_account)
             .map_err(|_| error!(GameProgramError::SerializeInputsAccount))?;
 
-        // the account is allocated at its max size (so it never needs resizing once
-        // delegated), so the serialized bytes must fit within that budget
-        let space = UserLogic::MAX_INPUTS_ACCOUNT_BYTES;
-        require!(
-            inputs_data.len() <= space,
-            GameProgramError::InputsAccountTooLarge
-        );
-
         // TODO: this should be a call to PlayerInputs
         let seeds: &[&[u8]] = &[
             b"inputs",
@@ -104,7 +96,8 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
             &inputs_info,
             ctx.accounts.system_program.key(),
             ctx.program_id,
-            space,
+            // create account already using the max space
+            UserLogic::MAX_LOBBY_ACCOUNT_BYTES,
             seeds,
         )?;
 

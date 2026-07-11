@@ -1,9 +1,7 @@
 use anchor_lang::prelude::*;
-use deform_core::accounts::lobby::Lobby;
 
 use crate::constants::ADMIN;
 use crate::error::GameProgramError;
-use crate::state::*;
 use crate::util::deser_and_check_lobby;
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -33,10 +31,6 @@ pub fn handler(
 
     let lobby_account =
         deser_and_check_lobby(ctx.accounts.lobby.to_account_info(), id, *ctx.program_id)?;
-
-    let pda = Lobby::<UserLogic>::create_program_address(id, &ctx.program_id, lobby_account.bump)
-        .map_err(|_| ProgramError::InvalidSeeds)?;
-    require_keys_eq!(lobby_info.key(), pda, GameProgramError::InvalidPda);
 
     require_keys_eq!(
         ctx.accounts.creator.key(),

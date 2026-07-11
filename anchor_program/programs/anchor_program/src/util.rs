@@ -20,11 +20,11 @@ pub fn create_pda_account<'info>(
     target: &AccountInfo<'info>,
     system_program_id: Pubkey,
     owner: &Pubkey,
-    space: usize,
+    space: u64,
     signer_seeds: &[&[u8]],
 ) -> Result<()> {
     let rent = Rent::get()?;
-    let required_lamports = rent.minimum_balance(space);
+    let required_lamports = rent.minimum_balance(space as usize);
     let current_lamports = target.lamports();
 
     if current_lamports == 0 {
@@ -39,7 +39,7 @@ pub fn create_pda_account<'info>(
                 &[signer_seeds],
             ),
             required_lamports,
-            space as u64,
+            space,
             owner,
         )?;
     } else {
@@ -66,7 +66,7 @@ pub fn create_pda_account<'info>(
                 },
                 &[signer_seeds],
             ),
-            space as u64,
+            space,
         )?;
         system_program::assign(
             CpiContext::new_with_signer(

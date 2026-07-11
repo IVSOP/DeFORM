@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 
 use anchor_lang::prelude::*;
-use deform_core::accounts::{
-    lobby::{Lobby, LobbyStatus, Network, PLayerStatus, PlayerInfo},
-    AccountType,
-};
+use deform_core::{DeformUserLogic, accounts::{
+    AccountType, lobby::{Lobby, LobbyStatus, Network, PLayerStatus, PlayerInfo}
+}};
 
 use crate::{error::GameProgramError, state::*, util::create_pda_account};
 
@@ -65,7 +64,8 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64, network: Network) -> 
         &lobby_info,
         ctx.accounts.system_program.key(),
         program_id,
-        data.len(),
+        // create account already using the max space
+        UserLogic::MAX_LOBBY_ACCOUNT_BYTES,
         seeds,
     )?;
 

@@ -2,7 +2,7 @@ use better_tokio_select::tokio_select;
 use std::{
     collections::HashMap,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     thread,
@@ -14,9 +14,9 @@ use tokio::{
 };
 
 use deform_core::{
-    DeformClient, DeformError, DeformReadState, DeformResult, DeformUserLogic, Pubkey, Smooth,
-    TickInfo,
-    accounts::lobby::{Lobby, LobbyStatus},
+    DeformClient, DeformError, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
+    Smooth, TickInfo,
+    accounts::lobby::{Lobby, started::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
 
@@ -25,18 +25,17 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     ///
     /// [`OfflineBackend::current_info`] also has inputs, but those are the last inputs that were used to commit the state (current == has produced the current state).
     pub player_input: T::Inputs,
-    pub local_tick: u64,
-    pub last_status: LobbyStatus,
-    pub prev_info: TickInfo<T>,
-    pub current_info: TickInfo<T>,
+    pub local_lobby: Lobby<T>,
+    // needed for visual update
+    pub previous_game_state: T::GameState,
     pub player: Pubkey,
 
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
     pub terminate: Arc<Notify>,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
-    pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<T>>>,
-    pub user_logic: T,
+    // where we write the state to be read by the game engine
+    pub backend_state: Arc<std::sync::Mutex<DeformSharedBackendState<T>>>,
     pub bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
     pub smoother: T::Smoother,
     pub visual_tick_micros: u64,
@@ -52,17 +51,50 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
     ) -> UserFacingResult<T, DeformClient<T>> {
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
+        let (lobby, game_state) = match lobby {
+            Lobby::Finished(_) => Err(DeformError::InvalidState("Game already ended!".into()))?,
+            Lobby::NotStarted(ref not_started) => {
+                let mut inputs = HashMap::new();
+                for player in not_started.player_status.keys() {
+                    inputs.insert(*player, T::Inputs::default());
+                }
+
+                let user_logic =
+                    T::new_from_lobby(not_started).map_err(|e| UserFacingError::User(e))?;
+                let game_state =
+                    T::new_game_from_lobby(not_started).map_err(|e| UserFacingError::User(e))?;
+
+                (
+                    Lobby::Ongoing(LobbyOngoing {
+                        id: not_started.id,
+                        creator: not_started.creator,
+                        network: not_started.network.clone(),
+                        tick: 0,
+                        tick_info: TickInfo {
+                            game_state: game_state.clone(),
+                            inputs,
+                        },
+                        user_logic,
+                        bump: 0,
+                    }),
+                    game_state,
+                )
+            }
+            Lobby::Ongoing(ref ongoing) => (
+                // really ugly but only happens once so whatever
+                lobby.clone(),
+                ongoing.tick_info.game_state.clone(),
+            ),
+        };
+
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(DeformReadState::<T>::new_from_lobby(
-            &lobby,
-        )?));
         let backend_dead = Arc::new(AtomicBool::new(false));
-        let user_logic = T::new_from_lobby(&lobby).map_err(|e| UserFacingError::User(e))?;
-
-        // cursed
-        let sdk_game_state_clone = sdk_game_state.clone();
-        let sdk_game_state_clone_2 = sdk_game_state.clone();
+        let backend_state = Arc::new(Mutex::new(DeformSharedBackendState::new_from_lobby(
+            lobby.clone(),
+        )?));
+        let backend_state_clone = backend_state.clone();
+        let backend_state_clone_2 = backend_state.clone();
 
         let terminate_clone = terminate.clone();
         let backend_dead_clone = backend_dead.clone();
@@ -74,18 +106,6 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             {
                 Ok(rt) => {
                     rt.block_on(async move {
-                        let current_info: TickInfo<T> = {
-                            let shared = match sdk_game_state_clone.lock() {
-                                Ok(state) => state,
-                                Err(_e) => {
-                                    let _ = setup_tx.send(Err(DeformError::LockPoisoned));
-                                    return;
-                                }
-                            };
-
-                            shared.tick_info.clone()
-                        };
-
                         // Setup succeeded
                         let _ = setup_tx.send(Ok(()));
                         // --- Runtime phase ---
@@ -97,16 +117,12 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
 
                             let tick_info = OfflineBackend {
                                 player_input: T::Inputs::default(),
-                                local_tick: 0,
-                                last_status: LobbyStatus::NotStarted,
-                                prev_info: current_info.clone(),
-                                current_info,
-
+                                local_lobby: lobby,
+                                previous_game_state: game_state,
                                 player,
                                 terminate: terminate_clone,
                                 set_inputs_receiver,
-                                sdk_game_state: sdk_game_state_clone.clone(),
-                                user_logic,
+                                backend_state: backend_state.clone(),
                                 bot_fn,
                                 smoother,
                                 visual_tick_micros,
@@ -114,7 +130,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                             };
 
                             if let Err(e) = tick_info.tick_loop().await
-                                && let Ok(mut shared) = sdk_game_state_clone.lock()
+                                && let Ok(mut shared) = backend_state.lock()
                             {
                                 shared.internal_error = Err(e);
                             }
@@ -122,7 +138,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
 
                         if let Err(e) = tick_thread.await {
                             // if error aquiring lock, there is really no way to report it
-                            if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
+                            if let Ok(mut shared) = backend_state_clone.lock() {
                                 shared.internal_error =
                                     Err(DeformError::BackendPanicked(format!("{e:?}")).into());
                             }
@@ -145,7 +161,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         Ok(DeformClient {
             terminate,
             set_inputs_sender,
-            sdk_game_state,
+            backend_state: backend_state_clone_2,
             backend_dead,
         })
     }
@@ -158,8 +174,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         loop {
             tokio_select!(match .. {
                 .. if let _ = tick_sleep.tick() => {
-                    if self.last_status != LobbyStatus::Finished {
-                        self.prev_info = self.current_info.clone();
+                    if matches!(self.local_lobby, Lobby::Ongoing(_)) {
                         self.advance_local_simulation()?;
                         self.last_sim_instant = Instant::now();
                     } else {
@@ -167,21 +182,26 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     }
                 }
                 .. if let _ = visual_ticker.tick() => {
-                    let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                    let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
-                    let mut visual_state = self.current_info.clone();
-                    self.smoother.apply(
-                        &self.prev_info.game_state,
-                        &mut visual_state.game_state,
-                        t,
-                    );
-                    {
-                        let mut shared = self
-                            .sdk_game_state
-                            .lock()
-                            .map_err(|_| DeformError::LockPoisoned)?;
-                        shared.tick_info = visual_state;
-                        shared.remote_status = self.last_status;
+                    if let Lobby::Ongoing(ref ongoing) = self.local_lobby {
+                        // set the state for the game engine to read as being the exact same, except the game state is replaced with a visually interpolated state
+                        let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
+                        let t = (elapsed / T::TICK_RATE_MICROS as f32).clamp(0.0, 1.0);
+                        let mut visual_state = ongoing.tick_info.game_state.clone();
+
+                        self.smoother
+                            .apply(&self.previous_game_state, &mut visual_state, t);
+
+                        let mut fake_visual_lobby = ongoing.clone();
+                        fake_visual_lobby.tick_info.game_state = visual_state;
+
+                        {
+                            let mut shared = self
+                                .backend_state
+                                .lock()
+                                .map_err(|_| DeformError::LockPoisoned)?;
+
+                            shared.lobby = Lobby::Ongoing(fake_visual_lobby);
+                        }
                     }
                 }
                 // Shutdown signal
@@ -196,7 +216,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     if new_inputs.is_none() {
                         break;
                     }
-                    if self.last_status != LobbyStatus::Finished
+                    if !matches!(self.local_lobby, Lobby::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
                         self.player_input = new_inputs;
@@ -205,7 +225,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             });
         }
 
-        if !terminated && self.last_status == LobbyStatus::Finished {
+        if !terminated && !matches!(self.local_lobby, Lobby::Finished(_)) {
             // Wait for termination signal
             self.terminate.notified().await;
         }
@@ -214,19 +234,27 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
     }
 
     pub fn advance_local_simulation(&mut self) -> UserFacingResult<T> {
-        let current_state = &self.current_info.game_state;
+        // FIX: what is a clean way of doing this?
+        // I can't just pass in a &mut ongoing I think, since this would be two mutable refs to the struct
+        // I trust that the compiler will handle it
+        let ongoing = match self.local_lobby {
+            Lobby::Ongoing(ref mut ongoing) => ongoing,
+            _ => unreachable!(),
+        };
+
+        let current_state = &ongoing.tick_info.game_state;
 
         // clone the old array so that we have the correct pubkeys
         // the inputs will be overwritten
-        let mut new_players_inputs: HashMap<Pubkey, T::Inputs> = self.current_info.inputs.clone();
+        let mut new_players_inputs: HashMap<Pubkey, T::Inputs> = ongoing.tick_info.inputs.clone();
 
         for (player, inputs) in new_players_inputs.iter_mut() {
             *inputs = if *player == self.player {
                 // for our own player: get the last inputs from the map
                 self.player_input.clone()
             } else {
-                let prev = self
-                    .current_info
+                let prev = ongoing
+                    .tick_info
                     .inputs
                     .get(player)
                     .cloned()
@@ -235,7 +263,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             }
         }
 
-        let new_state = self
+        let new_state = ongoing
             .user_logic
             .advance_frame(current_state, &new_players_inputs)
             .map_err(UserFacingError::User)?;
@@ -245,8 +273,8 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             inputs: new_players_inputs,
         };
 
-        self.local_tick += 1;
-        self.current_info = next_info;
+        ongoing.tick += 1;
+        ongoing.tick_info = next_info;
 
         Ok(())
     }

@@ -35,4 +35,8 @@ pub enum GameProgramError {
     CreatorMismatch,
     #[msg("Address creation error")]
     AddressError,
+    #[msg("Player is not ready")]
+    PlayerNotReady,
+    #[msg("Lobby is not fully on-chain")]
+    NotFullyOnChain,
 }

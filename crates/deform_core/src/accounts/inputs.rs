@@ -3,12 +3,11 @@ use std::collections::HashMap;
 use solana_address::error::AddressError;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{accounts::AccountType, DeformError, DeformResult, DeformUserLogic, Pubkey};
+use crate::{DeformError, DeformResult, DeformUserLogic, Pubkey};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct InputsAccount<T: DeformUserLogic> {
-    pub account_type: AccountType,
     pub bump: u8,
     pub lobby_id: u64,
     pub player: Pubkey,
@@ -18,7 +17,6 @@ pub struct InputsAccount<T: DeformUserLogic> {
 impl<T: DeformUserLogic> InputsAccount<T> {
     pub fn new(lobby_id: u64, player: Pubkey, bump: u8) -> Self {
         Self {
-            account_type: AccountType::Inputs,
             bump,
             lobby_id,
             player,
