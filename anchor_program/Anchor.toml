@@ -1,13 +1,13 @@
 [toolchain]
-package_manager = "yarn"
 anchor_version = "1.0.2"
+package_manager = "yarn"
 
 [features]
 resolution = true
 skip-lint = false
 
 [programs.localnet]
-anchor_program = "9qwW8eBuxLP6Gw1dGDFtTgXGHLnYm8usU1BW6R7BRknK"
+anchor_program = "5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r"
 
 [provider]
 cluster = "localnet"

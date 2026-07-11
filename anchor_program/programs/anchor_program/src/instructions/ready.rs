@@ -1,12 +1,11 @@
-use crate::error::GameProgramError;
 use crate::state::UserLogic;
 use crate::util::create_pda_account;
+use crate::{error::GameProgramError, util::deser_and_check_lobby};
 use anchor_lang::prelude::*;
 use deform_core::{
     accounts::{
         inputs::InputsAccount,
-        lobby::{Lobby, LobbyStatus, Network, PLayerStatus},
-        AccountType,
+        lobby::{LobbyStatus, Network, PLayerStatus},
     },
     DeformUserLogic,
 };
@@ -29,22 +28,8 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     let user_key = *ctx.accounts.user.key;
 
     // deser
-    let mut lobby_account = {
-        let data = lobby_info.data.borrow();
-        Lobby::<UserLogic>::from_bytes(&data)
-            .map_err(|_| error!(GameProgramError::DeserializeLobby))?
-    };
-
-    // check account type
-    match lobby_account.account_type {
-        AccountType::Lobby => {}
-        _ => return Err(error!(GameProgramError::InvalidAccountType)),
-    }
-
-    // check pda
-    let pda = Lobby::<UserLogic>::create_program_address(id, &ctx.program_id, lobby_account.bump)
-        .map_err(|_| ProgramError::InvalidSeeds)?;
-    require_keys_eq!(lobby_info.key(), pda, GameProgramError::InvalidPda);
+    let mut lobby_account =
+        deser_and_check_lobby(ctx.accounts.lobby.to_account_info(), id, *ctx.program_id)?;
 
     // lobby not started
     require!(

@@ -33,4 +33,6 @@ pub enum GameProgramError {
     Unauthorized,
     #[msg("Creator mismatch")]
     CreatorMismatch,
+    #[msg("Address creation error")]
+    AddressError,
 }

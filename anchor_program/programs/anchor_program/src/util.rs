@@ -1,4 +1,6 @@
+use crate::{error::GameProgramError, state::UserLogic};
 use anchor_lang::{prelude::*, system_program};
+use deform_core::accounts::{lobby::Lobby, AccountType};
 
 /// Robustly create a program-owned PDA for one of our wincode-serialized accounts.
 ///
@@ -79,4 +81,38 @@ pub fn create_pda_account<'info>(
     }
 
     Ok(())
+}
+
+pub fn deser_and_check_lobby(
+    lobby_account: AccountInfo,
+    lobby_id: u64,
+    program: Pubkey,
+) -> Result<Lobby<UserLogic>> {
+    // account must have > 0 lamports
+    require_gt!(**lobby_account.lamports.borrow(), 0);
+
+    // owned by our program
+    require_keys_eq!(*lobby_account.owner, program);
+
+    // deserialize (will also check data len indirectly)
+    let data = lobby_account.data.borrow();
+    let lobby = Lobby::<UserLogic>::from_bytes(&data)
+        .map_err(|_| error!(GameProgramError::DeserializeLobby))?;
+
+    // pda matches
+    let lobby_pda = Lobby::<UserLogic>::create_program_address(lobby_id, &program, lobby.bump)
+        .map_err(|_| ProgramError::InvalidSeeds)?;
+    require_keys_eq!(lobby_pda, *lobby_account.key, GameProgramError::InvalidPda);
+
+    // id matches
+    require_eq!(lobby_id, lobby.id);
+
+    // account type matches
+    require_eq!(
+        lobby.account_type,
+        AccountType::Lobby,
+        GameProgramError::InvalidAccountType
+    );
+
+    Ok(lobby)
 }

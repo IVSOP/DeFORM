@@ -19,6 +19,8 @@ thiserror = { workspace = true }
 solana-address = { workspace = true }
 solana-instruction = { workspace = true }
 tracy-client = { workspace = true, optional = true }
+strum = { workspace = true }
+strum_macros = { workspace = true }
 
 [features]
 default = ["client"]
