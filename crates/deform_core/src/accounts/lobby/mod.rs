@@ -158,6 +158,7 @@ pub enum Network {
     FullyOnChain(ValidatorNetwork) = 1,
 }
 
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct LobbyMetadata {
     pub id: u64,
@@ -166,6 +167,7 @@ pub struct LobbyMetadata {
     pub bump: u8,
 }
 
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct Lobby<T: DeformUserLogic> {
     pub metadata: LobbyMetadata,
@@ -186,6 +188,7 @@ impl<T: DeformUserLogic> Lobby<T> {
     }
 }
 
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum LobbyState<T: DeformUserLogic> {
     NotStarted(LobbyNotStarted),
@@ -195,4 +198,5 @@ pub enum LobbyState<T: DeformUserLogic> {
 
 #[repr(transparent)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 pub struct LobbyFinished<T: DeformUserLogic>(pub LobbyOngoing<T>);

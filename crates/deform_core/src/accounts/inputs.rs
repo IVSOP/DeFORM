@@ -5,7 +5,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{DeformUserLogic, Pubkey};
 
-#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct InputsAccount<T: DeformUserLogic> {
     pub bump: u8,

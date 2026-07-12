@@ -13,6 +13,7 @@ pub mod lobby;
 // FIX: as u64 here is very cursed, but I could not find another way as using From is not const
 #[repr(u64)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 pub enum DeformAccount<T: DeformUserLogic> {
     Lobby(Lobby<T>) = DeformAccountType::Lobby as u64,
     Inputs(InputsAccount<T>) = DeformAccountType::Inputs as u64,

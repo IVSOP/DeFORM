@@ -7,6 +7,7 @@ use crate::{DeformUserLogic, TickInfo};
 /// Serialized with wincode (not borsh), so it does not use `#[account]` in Anchor.
 // #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 pub struct LobbyOngoing<T: DeformUserLogic> {
     pub tick: u64,
     // contains both inputs and the game state

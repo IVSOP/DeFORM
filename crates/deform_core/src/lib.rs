@@ -145,6 +145,7 @@ pub trait DeformUserLogic:
 // #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 /// Information on a certain tick of a game
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 pub struct TickInfo<T: DeformUserLogic> {
     /// The current game state at this tick
     pub game_state: T::GameState,
@@ -158,13 +159,24 @@ pub struct TickInfo<T: DeformUserLogic> {
 }
 
 /// Trait that does nothing except require anchor ser and deser when the feature is active
-pub trait Anchor {}
+pub trait MaybeAnchor {}
 
 #[cfg(feature = "anchor")]
-impl<T> Anchor for T where T: anchor_lang::AnchorSerialize + anchor_lang::AnchorDeserialize {}
+impl<T> MaybeAnchor for T where T: anchor_lang::AnchorSerialize + anchor_lang::AnchorDeserialize {}
 
 #[cfg(not(feature = "anchor"))]
-impl<T> Anchor for T {}
+impl<T> MaybeAnchor for T {}
+
+/// Trait that does nothing except require serde ser and deser when not in bpf
+#[cfg(not(target_arch = "bpf"))]
+pub trait MaybeSerde: serde::Serialize + serde::de::DeserializeOwned {}
+#[cfg(not(target_arch = "bpf"))]
+impl<T> MaybeSerde for T where T: serde::Serialize + serde::de::DeserializeOwned {}
+
+#[cfg(target_arch = "bpf")]
+pub trait MaybeSerde {}
+#[cfg(target_arch = "bpf")]
+impl<T> MaybeSerde for T {}
 
 pub trait DeformInputs:
     Default
@@ -177,7 +189,8 @@ pub trait DeformInputs:
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
-    + Anchor
+    + MaybeAnchor
+    + MaybeSerde
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
     ///
@@ -195,6 +208,8 @@ pub trait DeformGameState:
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
+    + MaybeAnchor
+    + MaybeSerde
 {
     fn has_ended(&self) -> bool;
 }
