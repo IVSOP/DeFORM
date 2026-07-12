@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use solana_address::error::AddressError;
 use wincode::{SchemaRead, SchemaWrite};
 
-use crate::{DeformError, DeformResult, DeformUserLogic, Pubkey};
+use crate::{DeformUserLogic, Pubkey};
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
@@ -46,15 +46,5 @@ impl<T: DeformUserLogic> InputsAccount<T> {
             ],
             game,
         )
-    }
-
-    pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
-        wincode::deserialize(bytes)
-            .map_err(|e| DeformError::DeserializeInputsAccount(e.to_string()))
-    }
-
-    pub fn write_into(&self, dst: &mut [u8]) -> DeformResult<()> {
-        wincode::serialize_into(dst, self)
-            .map_err(|e| DeformError::SerializeInputsAccount(e.to_string()))
     }
 }

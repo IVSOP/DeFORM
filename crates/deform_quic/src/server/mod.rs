@@ -8,8 +8,12 @@ use std::{
 use anyhow::Context;
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, Pubkey,
-    accounts::lobby::{Lobby, LobbyStatus, PLayerStatus},
+    DeformError::{self, InvalidState},
+    Pubkey,
+    accounts::{
+        DeformAccount,
+        lobby::{Lobby, LobbyState, PlayerStatus, not_started::LobbyNotStarted},
+    },
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
 };
@@ -368,7 +372,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             // between these two points, any error must remove the match and call the cancellation token
             // TODO: this solution is messy but a function could be worse, what to do?
             let init_result: UserFacingResult<Q::UserLogic, _> = async {
-                let lobby_state = Self::check_lobby(
+                let (lobby, not_started) = Self::check_lobby(
                     &server.rpc_client,
                     identification.lobby_id,
                     &server.game_program_client.game_program(),
@@ -384,7 +388,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     mpsc::channel::<MatchMessage<Q::UserLogic>>(256);
 
                 let mut expected_players = HashSet::new();
-                for player in lobby_state.player_infos.keys() {
+                for player in not_started.player_status.keys() {
                     expected_players.insert(*player);
                 }
 
@@ -396,7 +400,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 });
 
                 Ok((
-                    lobby_state,
+                    lobby,
+                    not_started,
                     match_info,
                     state_sender,
                     state_receiver,
@@ -407,7 +412,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             .await;
 
             let (
-                lobby_state,
+                lobby,
+                not_started,
                 match_info,
                 state_sender,
                 state_receiver,
@@ -432,7 +438,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             let error_sender = state_sender.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    matches::match_loop(server, lobby_state, state_sender, match_receiver).await
+                    matches::match_loop(server, lobby, not_started, state_sender, match_receiver)
+                        .await
                 {
                     error!(lobby_id, "Match ended with error: {e}");
                     let _ = error_sender.send(InternalServerResponse::SendReliableMessage(
@@ -461,7 +468,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         lobby_id: u64,
         game_program: &Pubkey,
         max_attempts: usize,
-    ) -> UserFacingResult<Q::UserLogic, Lobby<Q::UserLogic>> {
+    ) -> UserFacingResult<Q::UserLogic, (Lobby<Q::UserLogic>, LobbyNotStarted)> {
         let (lobby_pda, _) = Lobby::<Q::UserLogic>::find_program_address(lobby_id, game_program);
 
         for attempt in 1..=max_attempts {
@@ -472,25 +479,41 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
             match rpc_client.get_account_data(&lobby_pda).await {
                 Ok(lobby_bytes) => {
-                    let info = Lobby::<Q::UserLogic>::from_bytes(&lobby_bytes)?;
+                    let account = DeformAccount::<Q::UserLogic>::from_bytes(&lobby_bytes)?;
 
-                    let all_ready = info
-                        .player_infos
-                        .values()
-                        .all(|player_info| player_info.status == PLayerStatus::Ready);
+                    let DeformAccount::Lobby(lobby) = account else {
+                        return Err(UserFacingError::Deform(InvalidState(
+                            "Account is not a Lobby".into(),
+                        )));
+                    };
 
-                    if !(info.status == LobbyStatus::NotStarted && all_ready) {
+                    let LobbyState::NotStarted(not_started) = lobby.state.clone() else {
                         warn!(
                             "Preconditions not met for lobby {}, retrying... (attempt {}/{})",
                             lobby_id, attempt, max_attempts
                         );
                         sleep(Duration::from_millis(400)).await;
                         continue;
-                    }
+                    };
+
+                    let all_ready = not_started
+                        .player_status
+                        .values()
+                        .copied()
+                        .all(|player_info| player_info == PlayerStatus::Ready);
+
+                    if !all_ready {
+                        warn!(
+                            "Preconditions not met for lobby {}, retrying... (attempt {}/{})",
+                            lobby_id, attempt, max_attempts
+                        );
+                        sleep(Duration::from_millis(400)).await;
+                        continue;
+                    };
 
                     // TODO: allow custom checks from the user
 
-                    return Ok(info);
+                    return Ok((lobby, not_started));
                 }
                 Err(e) => {
                     warn!(

@@ -2,7 +2,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     accounts::{inputs::InputsAccount, lobby::Lobby},
-    DeformUserLogic,
+    DeformError, DeformResult, DeformUserLogic,
 };
 
 pub mod inputs;
@@ -15,4 +15,16 @@ pub mod lobby;
 pub enum DeformAccount<T: DeformUserLogic> {
     Lobby(Lobby<T>) = 0,
     Inputs(InputsAccount<T>) = 1,
+}
+
+impl<T: DeformUserLogic> DeformAccount<T> {
+    pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
+        wincode::deserialize(bytes)
+            .map_err(|e| DeformError::DeserializeInputsAccount(e.to_string()))
+    }
+
+    pub fn write_into(&self, dst: &mut [u8]) -> DeformResult<()> {
+        wincode::serialize_into(dst, self)
+            .map_err(|e| DeformError::SerializeInputsAccount(e.to_string()))
+    }
 }

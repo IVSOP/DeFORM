@@ -795,11 +795,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         }
 
         let UnreliableServerResponse {
-            lobby: new_remote_lobby,
+            lobby_state: new_remote_state,
         }: UnreliableServerResponse<Q::UserLogic> =
             wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
-        match new_remote_lobby.state {
+        match new_remote_state {
             // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
             LobbyState::Finished(LobbyFinished(ref finished_state)) => {
                 let new_remote_tick = finished_state.tick;
@@ -809,7 +809,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 self.info_per_tick.clear();
                 self.info_per_tick.insert(new_remote_tick, new_tick_info);
                 self.local_tick = new_remote_tick;
-                self.remote_lobby = new_remote_lobby;
+                self.remote_lobby.state = new_remote_state;
                 self.inputs.clear();
 
                 // self.events_queue.push(GameEvent::StateTransition {
@@ -819,7 +819,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 Ok(())
             }
-            LobbyState::Ongoing(_) => self.handle_new_ongoing(new_remote_lobby, tick_sleep),
+            LobbyState::Ongoing(ongoing) => self.handle_new_ongoing(ongoing, tick_sleep),
             LobbyState::NotStarted(_) => Ok(()),
         }
     }
@@ -897,26 +897,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
     pub fn handle_new_ongoing(
         &mut self,
-        remote_lobby: Lobby<Q::UserLogic>,
+        remote_ongoing: LobbyOngoing<Q::UserLogic>,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
-        // TODO: how to optimize this? we now it is an Ongoing, but I can't pass LobbyOngoing inside here due to borrowing issues
-        // skill issue probably
-        let ongoing = match remote_lobby.state {
-            LobbyState::Ongoing(ref ongoing) => ongoing,
-            _ => Err(DeformError::InvalidState(
-                "Remote lobby is not Ongoing".into(),
-            ))?,
-        };
-
-        let new_remote_tick = ongoing.tick;
+        let new_remote_tick = remote_ongoing.tick;
         let old_remote_tick = match self.remote_lobby.state {
             LobbyState::Ongoing(ref old_ongoing) => old_ongoing.tick,
             _ => Err(DeformError::InvalidState(
                 "Previous lobby was not Ongoing".into(),
             ))?,
         };
-        let new_tick_info = ongoing.tick_info.clone();
+        let new_tick_info = remote_ongoing.tick_info.clone();
 
         #[cfg(feature = "tracy")]
         if let Some(client) = tracy_client::Client::running() {
@@ -1031,7 +1022,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 self.local_tick = new_remote_tick;
                 self.info_per_tick.clear();
                 self.info_per_tick.insert(new_remote_tick, new_tick_info);
-                self.remote_lobby = remote_lobby;
+                self.remote_lobby.state = LobbyState::Ongoing(remote_ongoing);
                 self.inputs.clear();
 
                 // trigger immediate catch-up on the next select iteration, re-anchoring the deadline
@@ -1045,7 +1036,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         // --- shared setup for Gap / Rollback / Default ---
 
-        self.remote_lobby = remote_lobby;
+        self.remote_lobby.state = LobbyState::Ongoing(remote_ongoing);
 
         // if new_lobby_state.tick <= self.remote_tick {
         //     self.stale_datagrams += 1;

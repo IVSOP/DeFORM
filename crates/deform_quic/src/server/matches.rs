@@ -9,8 +9,8 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, DeformGameState, DeformUserLogic, Pubkey,
-    accounts::lobby::{Lobby, LobbyStatus},
+    DeformError, DeformGameState, DeformUserLogic, Pubkey, TickInfo,
+    accounts::lobby::{Lobby, LobbyState, not_started::LobbyNotStarted, started::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
@@ -82,13 +82,14 @@ pub enum MatchConfig {
 
 pub async fn match_loop<Q: DeformQuicLogic>(
     server: Arc<DeformQuicServer<Q>>,
-    mut lobby_state: Lobby<Q::UserLogic>,
+    mut lobby: Lobby<Q::UserLogic>,
+    not_started: LobbyNotStarted,
 
     state_sender: broadcast::Sender<InternalServerResponse<Q>>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
 ) -> UserFacingResult<Q::UserLogic> {
-    let lobby_id = lobby_state.id;
+    let lobby_id = lobby.id;
 
     // inputs per-tick of each player
     // NOTE: a player existing in this map means the player is currently joined
@@ -106,7 +107,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                 Some(MatchMessage::PlayerJoined { pubkey }) => {
                     players_data.insert(pubkey, HashMap::new());
 
-                    if players_data.len() == lobby_state.player_infos.len() {
+                    if players_data.len() == not_started.player_status.len() {
                         info!(lobby_id, "Starting lobby (all players joined)");
                         break;
                     }
@@ -127,7 +128,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                             Some(MatchMessage::PlayerJoined { pubkey }) => {
                                 players_data.insert(pubkey, HashMap::new());
 
-                                if players_data.len() == lobby_state.player_infos.len() {
+                                if players_data.len() == not_started.player_status.len() {
                                     info!(lobby_id, "Starting lobby (all players joined)");
                                     break;
                                 }
@@ -152,11 +153,24 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         players_hashset.insert(*player);
     }
 
-    // mark game as started
-    lobby_state.status = LobbyStatus::Started;
-    // init the game state
-    lobby_state.game_state =
-        Some(<Q::UserLogic as DeformUserLogic>::GameState::new_from_lobby(&lobby_state));
+    let user_logic =
+        Q::UserLogic::new_from_lobby(&not_started).map_err(|e| UserFacingError::User(e))?;
+    let game_state =
+        Q::UserLogic::new_game_from_lobby(&not_started).map_err(|e| UserFacingError::User(e))?;
+
+    let mut inputs = HashMap::new();
+    for player in not_started.player_status.keys() {
+        inputs.insert(
+            *player,
+            <Q::UserLogic as DeformUserLogic>::Inputs::default(),
+        );
+    }
+
+    lobby.state = LobbyState::Ongoing(LobbyOngoing {
+        tick: 0,
+        user_logic,
+        tick_info: TickInfo { game_state, inputs },
+    });
 
     let mut tick_timer = interval(Duration::from_micros(16667));
 
@@ -172,13 +186,15 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         );
     }
 
-    let mut user_logic = <Q::UserLogic as DeformUserLogic>::new_from_lobby(&lobby_state)
-        .map_err(UserFacingError::User)?;
+    let ongoing = match lobby.state {
+        LobbyState::Ongoing(ref mut ongoing) => ongoing,
+        _ => unreachable!(),
+    };
 
     loop {
         tokio_select!(match .. {
             .. if let _ = tick_timer.tick() => {
-                let current_tick = lobby_state.tick;
+                let current_tick = ongoing.tick;
                 let new_tick = current_tick + 1;
 
                 // not cleared, to not mess with the len
@@ -197,29 +213,30 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     player_inputs.retain(|k, _| *k > current_tick);
                 }
 
-                match user_logic.advance_frame(
-                    lobby_state.game_state.as_ref().unwrap(),
-                    &last_applied_inputs,
-                ) {
+                match ongoing
+                    .user_logic
+                    .advance_frame(&ongoing.tick_info.game_state, &last_applied_inputs)
+                {
                     Ok(new_state) => {
-                        lobby_state.game_state = Some(new_state);
+                        ongoing.tick_info.game_state = new_state;
                     }
                     Err(e) => {
-                        mark_match_as_finished(&server, lobby_state.id).await?;
+                        mark_match_as_finished(&server, lobby.id).await?;
                         return Err(UserFacingError::User(e));
                     }
                 }
 
-                lobby_state.tick = new_tick;
+                ongoing.tick = new_tick;
 
+                // TODO: wtf is this doing?
                 for (player, applied_input) in last_applied_inputs.iter() {
-                    if let Some(info) = lobby_state.player_infos.get_mut(player) {
-                        info.inputs = applied_input.clone();
+                    if let Some(inputs) = ongoing.tick_info.inputs.get_mut(player) {
+                        *inputs = applied_input.clone();
                     }
                 }
 
                 let message = UnreliableServerResponse {
-                    lobby_info: lobby_state.clone(),
+                    lobby_state: LobbyState::Ongoing(ongoing.clone()),
                 };
                 // TODO: TREAT ERRORS
                 if let Ok(serialized_message) = wincode::serialize(&message) {
@@ -228,7 +245,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     ));
                 }
 
-                if lobby_state.game_state.as_ref().unwrap().has_ended() {
+                if ongoing.tick_info.game_state.has_ended() {
                     info!(
                         lobby_id,
                         tick = new_tick,
@@ -246,12 +263,12 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     // TODO: handle error here
                     if let Some(player_inputs) = players_data.get_mut(&pubkey) {
                         for (tick, new_input) in inputs.iter() {
-                            if tick < &lobby_state.tick {
+                            if tick < &ongoing.tick {
                                 warn!(
                                     lobby_id,
                                     player = %pubkey,
                                     input_tick = tick,
-                                    current_tick = lobby_state.tick,
+                                    current_tick = ongoing.tick,
                                     "Inputs ignored: tick is in the past"
                                 );
                             } else if player_inputs.len() > MAX_INPUTS {
@@ -273,12 +290,12 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
     info!(lobby_id, "Match loop ended");
 
-    mark_match_as_finished(&server, lobby_state.id).await?;
+    mark_match_as_finished(&server, lobby.id).await?;
 
     server
         .user_server_logic
         .on_match_end(
-            &lobby_state,
+            &lobby,
             &server.rpc_client,
             &server.admin_keypair,
             &server.game_program_client,
@@ -286,11 +303,11 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         .await?;
 
     let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
-        ReliableMessage::Finish,
+        ReliableMessage::Finish(lobby.clone()),
     ));
     info!(lobby_id, "Match finished successfully");
 
-    server.matches.write().await.remove(&lobby_state.id);
+    server.matches.write().await.remove(&lobby.id);
 
     Ok(())
 }

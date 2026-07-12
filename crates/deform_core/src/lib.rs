@@ -37,6 +37,7 @@ pub trait DeformUserLogic:
     Debug
     + Clone
     + Send
+    + Sync
     + 'static
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>

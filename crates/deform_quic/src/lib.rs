@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::future::Future;
 use std::time::Duration;
 
+use deform_core::accounts::lobby::LobbyState;
 use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
@@ -167,7 +168,7 @@ pub struct SerializedUnreliableServerResponse(pub Vec<u8>);
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct UnreliableServerResponse<T: DeformUserLogic> {
-    pub lobby: Lobby<T>,
+    pub lobby_state: LobbyState<T>,
 }
 
 const MAX_CONTROL_MSG_SIZE: usize = 4096;

@@ -93,7 +93,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 msg.write(control_send).await?;
 
                 match msg {
-                    ReliableMessage::Finish => {
+                    ReliableMessage::Finish(_) => {
                         // Give a grace period, then close the connection
                         sleep(Duration::from_secs(5)).await;
 
