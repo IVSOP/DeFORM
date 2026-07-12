@@ -81,17 +81,13 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
         program_client: &Self::ProgramClient,
     ) -> impl Future<Output = DeformResult> + Send {
         let admin_pubkey = admin.pubkey();
+
         let (lobby_pda, _) = Lobby::<Self::UserLogic>::find_program_address(
             lobby.id,
             &program_client.game_program(),
         );
 
-        let ix = program_client.write_and_close_ix(
-            admin_pubkey,
-            lobby_pda,
-            lobby.creator,
-            lobby.clone(),
-        );
+        let ix = program_client.write_and_close_ix(admin_pubkey, lobby_pda, lobby.creator, lobby);
 
         let sdk_ix = Instruction {
             program_id: Pubkey::new_from_array(ix.program_id.to_bytes()),
@@ -154,7 +150,7 @@ pub struct UserIdentification<Q: DeformQuicLogic> {
 pub enum ReliableMessage<Q: DeformQuicLogic> {
     Identification(UserIdentification<Q>),
     Authorized,
-    Finish,
+    Finish(Lobby<Q::UserLogic>),
     Custom(Q::CustomReliableMessage),
     Error(UserFacingError<Q::UserLogic>),
 }
@@ -171,7 +167,7 @@ pub struct SerializedUnreliableServerResponse(pub Vec<u8>);
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct UnreliableServerResponse<T: DeformUserLogic> {
-    pub lobby_info: Lobby<T>,
+    pub lobby: Lobby<T>,
 }
 
 const MAX_CONTROL_MSG_SIZE: usize = 4096;

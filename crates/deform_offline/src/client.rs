@@ -84,11 +84,9 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     game_state,
                 )
             }
-            LobbyState::Ongoing(ref ongoing) => (
-                // really ugly but only happens once so whatever
-                lobby.clone(),
-                ongoing.tick_info.game_state.clone(),
-            ),
+            LobbyState::Ongoing(ref ongoing) => {
+                (lobby.clone(), ongoing.tick_info.game_state.clone())
+            }
         };
 
         let terminate = Arc::new(Notify::new());

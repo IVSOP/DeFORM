@@ -17,9 +17,9 @@ use tokio::{
 };
 
 use deform_core::{
-    DeformClient, DeformError, DeformInputs, DeformReadState, DeformResult, DeformUserLogic,
-    Pubkey, Smooth, TickInfo,
-    accounts::lobby::{Lobby, LobbyStatus},
+    DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
+    DeformUserLogic, Pubkey, Smooth, TickInfo,
+    accounts::lobby::{Lobby, LobbyFinished, LobbyState, started::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
 
@@ -30,11 +30,13 @@ use crate::{
 
 pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub local_tick: u64,
-    pub remote_tick: u64,
+    // pub remote_tick: u64, // stored in the remote lobby
+    // we do not store the entire Lobby as we want to avoid cloning the UserLogic
+    // TODO: but would that be desireable so we can roll back to a previous UserLogic state?
     pub info_per_tick: HashMap<u64, TickInfo<Q::UserLogic>>,
-    pub last_remote_status: LobbyStatus,
+    pub remote_lobby: Lobby<Q::UserLogic>,
     // these are the inputs from our own player, appended only by set_inputs().
-    // TODO: this might not be necessary. We may be able to just store the latest inputs, then reuse the old ones from `info_per_tick`. I only did it this way because it was easier in my head
+    // FIX: this might not be necessary. We may be able to just store the latest inputs, then reuse the old ones from `info_per_tick`. I only did it this way because it was easier in my head
     pub inputs: HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs>,
 
     // pub rpc_client: Arc<RpcClient>,
@@ -47,7 +49,9 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     // pub lobby_id: u64,
     pub terminate: Arc<Notify>,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<<Q::UserLogic as DeformUserLogic>::Inputs>,
-    pub sdk_game_state: Arc<std::sync::Mutex<DeformReadState<Q::UserLogic>>>,
+    pub backend_state: Arc<std::sync::Mutex<DeformSharedBackendState<Q::UserLogic>>>,
+    // gets cloned into the backend_state, so we could tecnically use that
+    // but I use a local copy instead so I don't have to lock mutexes a lot
     pub user_logic: Q::UserLogic,
 
     pub smoother: <Q::UserLogic as DeformUserLogic>::Smoother,
@@ -96,19 +100,66 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
+        let (lobby, user_logic, starting_tick_info) = match lobby.state {
+            LobbyState::Finished(_) => {
+                Err(DeformError::InvalidState("Game already ended!".into()))?
+            }
+            LobbyState::NotStarted(ref not_started) => {
+                let mut inputs = HashMap::new();
+                for player in not_started.player_status.keys() {
+                    inputs.insert(
+                        *player,
+                        <Q::UserLogic as DeformUserLogic>::Inputs::default(),
+                    );
+                }
+
+                let user_logic = <Q::UserLogic as DeformUserLogic>::new_from_lobby(not_started)
+                    .map_err(|e| UserFacingError::User(e))?;
+                let game_state =
+                    <Q::UserLogic as DeformUserLogic>::new_game_from_lobby(not_started)
+                        .map_err(|e| UserFacingError::User(e))?;
+                let tick_info = TickInfo {
+                    game_state: game_state.clone(),
+                    inputs,
+                };
+
+                (
+                    Lobby {
+                        id: lobby.id,
+                        creator: lobby.creator,
+                        network: lobby.network.clone(),
+                        bump: lobby.bump,
+                        state: LobbyState::Ongoing(LobbyOngoing {
+                            tick: 0,
+                            tick_info: tick_info.clone(),
+                            user_logic: user_logic.clone(),
+                        }),
+                    },
+                    user_logic,
+                    tick_info,
+                )
+            }
+            LobbyState::Ongoing(ref state) => (
+                lobby.clone(),
+                state.user_logic.clone(),
+                state.tick_info.clone(),
+            ),
+        };
+
         let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) =
             mpsc::unbounded_channel::<<Q::UserLogic as DeformUserLogic>::Inputs>();
-        let sdk_game_state = Arc::new(std::sync::Mutex::new(
-            DeformReadState::<Q::UserLogic>::new_from_lobby(&lobby)?,
-        ));
-        let user_logic =
-            Q::UserLogic::new_from_lobby(&lobby).map_err(|e| UserFacingError::User(e))?;
+
+        let backend_state = Arc::new(std::sync::Mutex::new(DeformSharedBackendState::<
+            Q::UserLogic,
+        >::new_from_lobby(
+            lobby.clone()
+        )?));
         let backend_dead = Arc::new(AtomicBool::new(false));
 
         // cursed
-        let sdk_game_state_clone = sdk_game_state.clone();
-        let sdk_game_state_clone_2 = sdk_game_state.clone();
+        let backend_state_clone = backend_state.clone();
+        let backend_state_clone_2 = backend_state.clone();
 
         let terminate_clone = terminate.clone();
         let backend_dead_clone = backend_dead.clone();
@@ -295,8 +346,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                             let tick_info = QuicBackend::<Q> {
                                 info_per_tick: HashMap::new(),
                                 local_tick: 0,
-                                remote_tick: 0,
-                                last_remote_status: LobbyStatus::NotStarted,
+                                remote_lobby: lobby,
                                 inputs: HashMap::new(),
 
                                 connection,
@@ -305,7 +355,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 player,
                                 terminate: terminate_clone,
                                 set_inputs_receiver,
-                                sdk_game_state: sdk_game_state_clone.clone(),
+                                backend_state: backend_state_clone.clone(),
+                                user_logic,
                                 min_ticks_ahead: 4,
                                 max_ticks_ahead: 3 * 4,
 
@@ -316,11 +367,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 next_tick_deadline: tokio::time::Instant::now(),
 
                                 avg_rtt: Duration::from_millis(50),
-                                user_logic,
                             };
 
-                            if let Err(e) = tick_info.tick_loop().await
-                                && let Ok(mut shared) = sdk_game_state_clone.lock()
+                            if let Err(e) = tick_info.tick_loop(starting_tick_info).await
+                                && let Ok(mut shared) = backend_state_clone.lock()
                             {
                                 shared.internal_error = Err(e.into());
                             }
@@ -328,7 +378,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                         if let Err(e) = tick_thread.await {
                             // if error aquiring lock, there is really no way to report it
-                            if let Ok(mut shared) = sdk_game_state_clone_2.lock() {
+                            if let Ok(mut shared) = backend_state_clone_2.lock() {
                                 shared.internal_error =
                                     Err(DeformError::BackendPanicked(format!("{e:?}")).into());
                             }
@@ -351,23 +401,16 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         Ok(DeformClient {
             terminate,
             set_inputs_sender,
-            sdk_game_state,
+            backend_state,
             backend_dead,
         })
     }
 
-    pub async fn tick_loop(mut self) -> UserFacingResult<Q::UserLogic> {
-        // read the first tick from the sdk_game_state
-        // TODO: do this above, at setup??
-        let current_tick_info: TickInfo<Q::UserLogic> = {
-            let shared = self
-                .sdk_game_state
-                .lock()
-                .map_err(|_| DeformError::LockPoisoned)?;
-
-            shared.tick_info.clone()
-        };
-        self.info_per_tick.insert(0, current_tick_info);
+    pub async fn tick_loop(
+        mut self,
+        starting_tick_info: TickInfo<Q::UserLogic>,
+    ) -> UserFacingResult<Q::UserLogic> {
+        self.info_per_tick.insert(0, starting_tick_info);
 
         self.next_tick_deadline = tokio::time::Instant::now()
             + Duration::from_micros(<Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
@@ -384,15 +427,16 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             tokio_select!(match .. {
                 // Tick every ~16ms (or more, depending on time dilation)
                 .. if let _ = &mut tick_sleep => {
-                    match self.last_remote_status {
-                        LobbyStatus::Finished => break,
+                    let remote_tick = match self.remote_lobby.state {
+                        LobbyState::Finished(_) => break,
                         // Grace period: the match has not started on the server, so there is no
                         // authoritative stream to reconcile against. Predicting here would just get
                         // rolled back the moment the match goes live, so we hold at the initial state.
                         // The first `Started` datagram bootstraps us via the FastForward path.
-                        LobbyStatus::NotStarted => {}
-                        LobbyStatus::Started => {
-                            let min_target_tick = self.remote_tick + self.min_ticks_ahead;
+                        LobbyState::NotStarted(_) => break,
+                        LobbyState::Ongoing(ref ongoing) => {
+                            let remote_tick = ongoing.tick;
+                            let min_target_tick = remote_tick + self.min_ticks_ahead;
                             let current_tick = self.local_tick;
 
                             if current_tick < min_target_tick {
@@ -406,20 +450,22 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                     // finish is handled when server tells us, not here
                                 }
                             } else {
-                                let max_target_tick = self.remote_tick + self.max_ticks_ahead;
+                                let max_target_tick = ongoing.tick + self.max_ticks_ahead;
                                 if current_tick < max_target_tick {
                                     self.advance_local_simulation()?
                                     // finish is handled when server tells us, not here
                                 }
                             }
                             self.last_sim_instant = Instant::now();
+
+                            remote_tick
                         }
-                    }
+                    };
 
                     // Advance the anchored deadline by the (variable) dilated interval rather than
                     // sleeping from `now`, so the work done in this arm does not accumulate as drift.
                     // Dilation is preserved: `compute_dilated_tick_interval` still decides the step.
-                    let dilated = self.compute_dilated_tick_interval();
+                    let dilated = self.compute_dilated_tick_interval(remote_tick);
                     self.next_tick_deadline += dilated;
                     // If a stall pushed us a full tick past the deadline, resync to `now` so we
                     // don't fire a burst of back-to-back catch-up ticks (manual MissedTickBehavior::Delay).
@@ -433,6 +479,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 // Visual: interpolate between previous and current sim state
                 .. if let _ = visual_ticker.tick() => {
                     let prev_tick = self.local_tick.saturating_sub(1);
+
                     if let (Some(prev), Some(current)) = (
                         self.info_per_tick.get(&prev_tick),
                         self.info_per_tick.get(&self.local_tick),
@@ -441,16 +488,21 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         let t = (elapsed
                             / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32)
                             .clamp(0.0, 1.0);
+
                         let mut visual_state = current.clone();
                         self.smoother
                             .apply(&prev.game_state, &mut visual_state.game_state, t);
+
                         {
                             let mut shared = self
-                                .sdk_game_state
+                                .backend_state
                                 .lock()
                                 .map_err(|_| DeformError::LockPoisoned)?;
-                            shared.tick_info = visual_state;
-                            shared.remote_status = self.last_remote_status;
+
+                            // TODO: cleaner way of doing this? I can only set the new state if the game is ongoing (or finished, but whatever)
+                            if let LobbyState::Ongoing(ref mut ongoing) = shared.lobby.state {
+                                ongoing.tick_info = visual_state;
+                            }
                         }
                     }
                 }
@@ -458,7 +510,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 // Commit inputs periodically
                 .. if let _ = inputs_ticker.tick() => {
                     // only while the match is live; no authoritative tick exists otherwise
-                    if self.last_remote_status == LobbyStatus::Started {
+                    if matches!(self.remote_lobby.state, LobbyState::Ongoing(_)) {
                         #[cfg(feature = "tracy")]
                         {
                             if let Some(max_input) = self.inputs.keys().max() {
@@ -477,7 +529,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 // Sample RTT from quinn (already an EWMA internally)
                 .. if let _ = rtt_ticker.tick() => {
-                    if self.last_remote_status != LobbyStatus::Finished {
+                    if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
                         self.avg_rtt = self.connection.rtt();
 
                         #[cfg(feature = "tracy")]
@@ -507,7 +559,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     if new_inputs.is_none() {
                         break;
                     }
-                    if self.last_remote_status != LobbyStatus::Finished
+                    if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
                         self.inputs.entry(self.local_tick).or_insert(new_inputs);
@@ -516,7 +568,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 // Receive game state updates via unreliable datagrams
                 .. if let datagram = self.connection.read_datagram() => {
-                    if self.last_remote_status != LobbyStatus::Finished {
+                    if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
                         let bytes = datagram.map_err(|e| DeformError::Connection(e.to_string()))?;
                         self.process_server_update(&bytes, &mut tick_sleep).await?;
                     }
@@ -525,8 +577,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 // Receive control messages on the reliable stream
                 .. if let control_msg = ReliableMessage::<Q>::read(&mut self.control_recv) => {
                     match control_msg? {
-                        ReliableMessage::Finish => {
-                            self.last_remote_status = LobbyStatus::Finished;
+                        ReliableMessage::Finish(lobby) => {
+                            self.remote_lobby = lobby;
                             break;
                         }
                         ReliableMessage::Error(e) => {
@@ -543,17 +595,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             });
         }
 
-        if !terminated && self.last_remote_status == LobbyStatus::Finished {
+        if !terminated && let LobbyState::Finished(mut finished) = self.remote_lobby.state {
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
                 let visual_state = tick_info.clone();
                 {
                     let mut shared = self
-                        .sdk_game_state
+                        .backend_state
                         .lock()
                         .map_err(|_| DeformError::LockPoisoned)?;
-                    shared.tick_info = visual_state;
-                    shared.remote_status = self.last_remote_status;
-                    shared.user_logic = self.user_logic.clone();
+
+                    finished.0.tick_info = visual_state;
+                    shared.lobby.state = LobbyState::Finished(finished);
                 }
             }
             // Wait for termination signal
@@ -601,7 +653,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         {
             let mut shared = self
-                .sdk_game_state
+                .backend_state
                 .lock()
                 .map_err(|_| DeformError::LockPoisoned)?;
             shared.stats.ping_ms = rtt_secs * 1_000.0;
@@ -615,7 +667,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     /// then we start to slow down to let it catch up.
     ///
     /// We have a `min_ticks_ahead` target that is computed based on the latency to the server. A % is taken using this value. For example, if the target is 10, and we are exactly 10 ticks ahead of the server, the % is 0. If we are 20 ticks ahead of the server, the % is 10. So, the percentage varies according to how much we expect to be ahead of the server.
-    fn compute_dilated_tick_interval(&mut self) -> Duration {
+    fn compute_dilated_tick_interval(&mut self, remote_tick: u64) -> Duration {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("compute_dilated_tick_interval");
         let base_sleep_ms: f32 =
@@ -623,7 +675,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
         let max_sleep_ms: f32 = base_sleep_ms * 4.0;
 
-        let ticks_ahead = self.local_tick.saturating_sub(self.remote_tick);
+        let ticks_ahead = self.local_tick.saturating_sub(remote_tick);
 
         let ahead_over_min = ticks_ahead.saturating_sub(self.min_ticks_ahead) as f32;
         let window = (self.max_ticks_ahead.saturating_sub(self.min_ticks_ahead)).max(1) as f32;
@@ -743,12 +795,128 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         }
 
         let UnreliableServerResponse {
-            lobby_info: new_lobby_state,
+            lobby: new_remote_lobby,
         }: UnreliableServerResponse<Q::UserLogic> =
             wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
-        let old_remote_tick = self.remote_tick;
-        let new_remote_tick = new_lobby_state.tick;
+        match new_remote_lobby.state {
+            // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
+            LobbyState::Finished(LobbyFinished(ref finished_state)) => {
+                let new_remote_tick = finished_state.tick;
+                let new_tick_info = finished_state.tick_info.clone();
+
+                self.inputs.clear();
+                self.info_per_tick.clear();
+                self.info_per_tick.insert(new_remote_tick, new_tick_info);
+                self.local_tick = new_remote_tick;
+                self.remote_lobby = new_remote_lobby;
+                self.inputs.clear();
+
+                // self.events_queue.push(GameEvent::StateTransition {
+                //     old: GameStateEnum::Playing,
+                //     new: GameStateEnum::Finished,
+                // });
+
+                Ok(())
+            }
+            LobbyState::Ongoing(_) => self.handle_new_ongoing(new_remote_lobby, tick_sleep),
+            LobbyState::NotStarted(_) => Ok(()),
+        }
+    }
+
+    /// Takes a new state as the source of truth, rolling back to it,
+    /// and applying the known inputs that have happened after this new state.
+    ///
+    /// NOTE: old inputs are not purged here (for now)
+    ///
+    /// Additionally, [`GameEvent::ManualPowerupActivation`] is emitted manually if necessary, see the NOTE: below
+    pub fn handle_rollback(
+        &mut self,
+        // the state that will be used as the new source of truth
+        new_tick_info: TickInfo<Q::UserLogic>,
+        conflicting_tick: u64,
+        tick_sleep: &mut Pin<Box<Sleep>>,
+    ) -> UserFacingResult<Q::UserLogic> {
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            client.message("rollback", 0);
+        }
+
+        let previous_local_tick = self.local_tick;
+        // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick
+        // by using remove here we avoid a clone
+        // in the (impossible?) case where previous_local_tick == conflicting_tick,
+        // right below a state gets inserted into conflicting_tick so everything should be fine
+        let pre_rollback_info = self
+            .info_per_tick
+            .remove(&previous_local_tick)
+            .ok_or(DeformError::InvalidState("State not found!".into()))?;
+
+        // insert the new state as-is, and update our tick to match it
+        self.info_per_tick.insert(conflicting_tick, new_tick_info);
+
+        self.local_tick = conflicting_tick;
+
+        // #[cfg(feature = "log")]
+        // tracing::debug!(
+        //     "Rollback triggered: rolling back to {} and recomputing to {}",
+        //     conflicting_tick,
+        //     previous_local_tick
+        // );
+        // run the simulation until we catch up to the current local tick
+        // this will automatically reuse any registered inputs, and re-predict as needed
+        for _tick in conflicting_tick..previous_local_tick {
+            self.advance_local_simulation()?;
+            // finish is handled when server tells us, not here
+        }
+
+        let post_rollback_info = self
+            .info_per_tick
+            .get(&self.local_tick)
+            .ok_or(DeformError::InvalidState("State not found!".into()))?;
+
+        self.smoother.on_rollback(
+            &pre_rollback_info.game_state,
+            &post_rollback_info.game_state,
+        );
+
+        self.user_logic
+            .on_rollback(pre_rollback_info, post_rollback_info)
+            .map_err(|e| UserFacingError::User(e))?;
+
+        let dilated = self.compute_dilated_tick_interval(conflicting_tick);
+        let new_deadline = tokio::time::Instant::now() + dilated;
+        // keep the anchored deadline, but never push the next tick further out than it already was
+        self.next_tick_deadline = new_deadline.min(self.next_tick_deadline);
+        tick_sleep.as_mut().reset(self.next_tick_deadline);
+        // #[cfg(feature = "log")]
+        // tracing::debug!("after rollback, local tick is {}", self.local_tick);
+
+        Ok(())
+    }
+
+    pub fn handle_new_ongoing(
+        &mut self,
+        remote_lobby: Lobby<Q::UserLogic>,
+        tick_sleep: &mut Pin<Box<Sleep>>,
+    ) -> UserFacingResult<Q::UserLogic> {
+        // TODO: how to optimize this? we now it is an Ongoing, but I can't pass LobbyOngoing inside here due to borrowing issues
+        // skill issue probably
+        let ongoing = match remote_lobby.state {
+            LobbyState::Ongoing(ref ongoing) => ongoing,
+            _ => Err(DeformError::InvalidState(
+                "Remote lobby is not Ongoing".into(),
+            ))?,
+        };
+
+        let new_remote_tick = ongoing.tick;
+        let old_remote_tick = match self.remote_lobby.state {
+            LobbyState::Ongoing(ref old_ongoing) => old_ongoing.tick,
+            _ => Err(DeformError::InvalidState(
+                "Previous lobby was not Ongoing".into(),
+            ))?,
+        };
+        let new_tick_info = ongoing.tick_info.clone();
 
         #[cfg(feature = "tracy")]
         if let Some(client) = tracy_client::Client::running() {
@@ -756,26 +924,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 tracy_client::plot_name!("last_tick_slot"),
                 new_remote_tick as f64,
             );
-        }
-        let new_remote_status = new_lobby_state.status;
-        let new_tick_info: TickInfo<Q::UserLogic> = new_lobby_state.try_into()?;
-
-        // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed
-        if matches!(new_remote_status, LobbyStatus::Finished) {
-            self.inputs.clear();
-            self.info_per_tick.clear();
-            self.info_per_tick.insert(new_remote_tick, new_tick_info);
-            self.remote_tick = new_remote_tick;
-            self.local_tick = new_remote_tick;
-            self.last_remote_status = new_remote_status;
-            self.inputs.clear();
-
-            // self.events_queue.push(GameEvent::StateTransition {
-            //     old: GameStateEnum::Playing,
-            //     new: GameStateEnum::Finished,
-            // });
-
-            return Ok(());
         }
 
         /// Trying to handle all cases was a mess to keep up with all invariants so this makes it cleaner. I assume the compiler will take care of this.
@@ -880,11 +1028,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     .map_err(|e| UserFacingError::User(e))?;
 
                 self.smoother.reset();
-                self.remote_tick = new_remote_tick;
                 self.local_tick = new_remote_tick;
                 self.info_per_tick.clear();
                 self.info_per_tick.insert(new_remote_tick, new_tick_info);
-                self.last_remote_status = new_remote_status;
+                self.remote_lobby = remote_lobby;
                 self.inputs.clear();
 
                 // trigger immediate catch-up on the next select iteration, re-anchoring the deadline
@@ -898,8 +1045,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         // --- shared setup for Gap / Rollback / Default ---
 
-        self.last_remote_status = new_remote_status;
-        self.remote_tick = new_remote_tick;
+        self.remote_lobby = remote_lobby;
 
         // if new_lobby_state.tick <= self.remote_tick {
         //     self.stale_datagrams += 1;
@@ -986,77 +1132,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         for slot in old_remote_tick..new_remote_tick {
             self.info_per_tick.remove(&slot);
         }
-
-        Ok(())
-    }
-
-    /// Takes a new state as the source of truth, rolling back to it,
-    /// and applying the known inputs that have happened after this new state.
-    ///
-    /// NOTE: old inputs are not purged here (for now)
-    ///
-    /// Additionally, [`GameEvent::ManualPowerupActivation`] is emitted manually if necessary, see the NOTE: below
-    pub fn handle_rollback(
-        &mut self,
-        // the state that will be used as the new source of truth
-        new_tick_info: TickInfo<Q::UserLogic>,
-        conflicting_tick: u64,
-        tick_sleep: &mut Pin<Box<Sleep>>,
-    ) -> UserFacingResult<Q::UserLogic> {
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.message("rollback", 0);
-        }
-
-        let previous_local_tick = self.local_tick;
-        // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick
-        // by using remove here we avoid a clone
-        // in the (impossible?) case where previous_local_tick == conflicting_tick,
-        // right below a state gets inserted into conflicting_tick so everything should be fine
-        let pre_rollback_info = self
-            .info_per_tick
-            .remove(&previous_local_tick)
-            .ok_or(DeformError::InvalidState("State not found!".into()))?;
-
-        // insert the new state as-is, and update our tick to match it
-        self.info_per_tick.insert(conflicting_tick, new_tick_info);
-
-        self.local_tick = conflicting_tick;
-
-        // #[cfg(feature = "log")]
-        // tracing::debug!(
-        //     "Rollback triggered: rolling back to {} and recomputing to {}",
-        //     conflicting_tick,
-        //     previous_local_tick
-        // );
-        // run the simulation until we catch up to the current local tick
-        // this will automatically reuse any registered inputs, and re-predict as needed
-        for _tick in conflicting_tick..previous_local_tick {
-            self.advance_local_simulation()?;
-            // finish is handled when server tells us, not here
-        }
-
-        let post_rollback_info = self
-            .info_per_tick
-            .get(&self.local_tick)
-            .ok_or(DeformError::InvalidState("State not found!".into()))?;
-
-        self.smoother.on_rollback(
-            &pre_rollback_info.game_state,
-            &post_rollback_info.game_state,
-        );
-
-        self.user_logic
-            .on_rollback(pre_rollback_info, post_rollback_info)
-            .map_err(|e| UserFacingError::User(e))?;
-
-        let dilated = self.compute_dilated_tick_interval();
-        let new_deadline = tokio::time::Instant::now() + dilated;
-        // keep the anchored deadline, but never push the next tick further out than it already was
-        self.next_tick_deadline = new_deadline.min(self.next_tick_deadline);
-        tick_sleep.as_mut().reset(self.next_tick_deadline);
-        // #[cfg(feature = "log")]
-        // tracing::debug!("after rollback, local tick is {}", self.local_tick);
 
         Ok(())
     }

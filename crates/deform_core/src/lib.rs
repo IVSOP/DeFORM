@@ -38,8 +38,8 @@ pub trait DeformUserLogic:
     + Clone
     + Send
     + 'static
-    + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self::Error>
-    + SchemaWrite<DefaultConfig, Src = Self::Error>
+    + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
+    + SchemaWrite<DefaultConfig, Src = Self>
 {
     // user must define inputs and game state
     type Inputs: DeformInputs;
@@ -136,6 +136,7 @@ pub trait DeformUserLogic:
 }
 
 // #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
+/// Information on a certain tick of a game
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
 pub struct TickInfo<T: DeformUserLogic> {
     /// The current game state at this tick
