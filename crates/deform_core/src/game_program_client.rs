@@ -44,5 +44,5 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         lobby_pubkey: Pubkey,
         creator: Pubkey,
         lobby: &Lobby<T>,
-    ) -> Instruction;
+    ) -> Result<Instruction, T::Error>;
 }

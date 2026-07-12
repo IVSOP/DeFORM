@@ -159,11 +159,16 @@ pub enum Network {
 }
 
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct Lobby<T: DeformUserLogic> {
+pub struct LobbyMetadata {
     pub id: u64,
     pub creator: Pubkey,
     pub network: Network,
     pub bump: u8,
+}
+
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+pub struct Lobby<T: DeformUserLogic> {
+    pub metadata: LobbyMetadata,
     pub state: LobbyState<T>,
 }
 

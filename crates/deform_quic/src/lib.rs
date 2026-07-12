@@ -80,31 +80,38 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
         rpc_client: &RpcClient,
         admin: &Keypair,
         program_client: &Self::ProgramClient,
-    ) -> impl Future<Output = DeformResult> + Send {
+    ) -> impl Future<Output = UserFacingResult<Self::UserLogic>> + Send {
         let admin_pubkey = admin.pubkey();
 
         let (lobby_pda, _) = Lobby::<Self::UserLogic>::find_program_address(
-            lobby.id,
+            lobby.metadata.id,
             &program_client.game_program(),
         );
 
-        let ix = program_client.write_and_close_ix(admin_pubkey, lobby_pda, lobby.creator, lobby);
-
-        let sdk_ix = Instruction {
-            program_id: Pubkey::new_from_array(ix.program_id.to_bytes()),
-            accounts: ix
-                .accounts
-                .iter()
-                .map(|a| AccountMeta {
-                    pubkey: Pubkey::new_from_array(a.pubkey.to_bytes()),
-                    is_signer: a.is_signer,
-                    is_writable: a.is_writable,
-                })
-                .collect(),
-            data: ix.data,
-        };
+        let ix = program_client.write_and_close_ix(
+            admin_pubkey,
+            lobby_pda,
+            lobby.metadata.creator,
+            lobby,
+        );
 
         async move {
+            let ix = ix.map_err(|e| UserFacingError::User(e))?;
+
+            let sdk_ix = Instruction {
+                program_id: Pubkey::new_from_array(ix.program_id.to_bytes()),
+                accounts: ix
+                    .accounts
+                    .iter()
+                    .map(|a| AccountMeta {
+                        pubkey: Pubkey::new_from_array(a.pubkey.to_bytes()),
+                        is_signer: a.is_signer,
+                        is_writable: a.is_writable,
+                    })
+                    .collect(),
+                data: ix.data,
+            };
+
             let mut last_err = None;
 
             for attempt in 1..=10u32 {
@@ -129,10 +136,13 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
                 }
             }
 
-            Err(DeformError::Rpc(format!(
-                "write_and_close failed after 10 attempts: {}",
-                last_err.unwrap()
-            )))
+            Err(UserFacingError::Deform(
+                DeformError::Rpc(format!(
+                    "write_and_close failed after 10 attempts: {}",
+                    last_err.unwrap()
+                ))
+                .into(),
+            ))
         }
     }
 }

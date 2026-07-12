@@ -12,7 +12,7 @@ use deform_core::{
     Pubkey,
     accounts::{
         DeformAccount,
-        lobby::{Lobby, LobbyState, PlayerStatus, not_started::LobbyNotStarted},
+        lobby::{Lobby, LobbyMetadata, LobbyState, PlayerStatus, not_started::LobbyNotStarted},
     },
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
@@ -372,7 +372,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             // between these two points, any error must remove the match and call the cancellation token
             // TODO: this solution is messy but a function could be worse, what to do?
             let init_result: UserFacingResult<Q::UserLogic, _> = async {
-                let (lobby, not_started) = Self::check_lobby(
+                let (lobby_metadata, not_started) = Self::check_lobby(
                     &server.rpc_client,
                     identification.lobby_id,
                     &server.game_program_client.game_program(),
@@ -400,7 +400,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 });
 
                 Ok((
-                    lobby,
+                    lobby_metadata,
                     not_started,
                     match_info,
                     state_sender,
@@ -412,7 +412,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             .await;
 
             let (
-                lobby,
+                lobby_metadata,
                 not_started,
                 match_info,
                 state_sender,
@@ -437,9 +437,14 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
             let error_sender = state_sender.clone();
             tokio::spawn(async move {
-                if let Err(e) =
-                    matches::match_loop(server, lobby, not_started, state_sender, match_receiver)
-                        .await
+                if let Err(e) = matches::match_loop(
+                    server,
+                    lobby_metadata,
+                    not_started,
+                    state_sender,
+                    match_receiver,
+                )
+                .await
                 {
                     error!(lobby_id, "Match ended with error: {e}");
                     let _ = error_sender.send(InternalServerResponse::SendReliableMessage(
@@ -468,7 +473,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         lobby_id: u64,
         game_program: &Pubkey,
         max_attempts: usize,
-    ) -> UserFacingResult<Q::UserLogic, (Lobby<Q::UserLogic>, LobbyNotStarted)> {
+    ) -> UserFacingResult<Q::UserLogic, (LobbyMetadata, LobbyNotStarted)> {
         let (lobby_pda, _) = Lobby::<Q::UserLogic>::find_program_address(lobby_id, game_program);
 
         for attempt in 1..=max_attempts {
@@ -487,7 +492,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                         )));
                     };
 
-                    let LobbyState::NotStarted(not_started) = lobby.state.clone() else {
+                    let LobbyState::NotStarted(not_started) = lobby.state else {
                         warn!(
                             "Preconditions not met for lobby {}, retrying... (attempt {}/{})",
                             lobby_id, attempt, max_attempts
@@ -513,7 +518,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
                     // TODO: allow custom checks from the user
 
-                    return Ok((lobby, not_started));
+                    return Ok((lobby.metadata, not_started));
                 }
                 Err(e) => {
                     warn!(

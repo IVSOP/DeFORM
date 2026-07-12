@@ -10,11 +10,21 @@ pub mod lobby;
 
 // FIX: somehow check that it is impossible for these to conflict with the discriminants from anchor
 // NOTE: #[repr(u64)] since that is anchor's discriminator size
+// FIX: as u64 here is very cursed, but I could not find another way as using From is not const
 #[repr(u64)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub enum DeformAccount<T: DeformUserLogic> {
-    Lobby(Lobby<T>) = 0,
-    Inputs(InputsAccount<T>) = 1,
+    Lobby(Lobby<T>) = DeformAccountType::Lobby as u64,
+    Inputs(InputsAccount<T>) = DeformAccountType::Inputs as u64,
+}
+
+// see the NOTE: in [`DeformAccount`]
+/// This struct exists so I have a way of serializing the discriminants of each account by themselves, but is mostly a hack
+#[repr(u64)]
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+pub enum DeformAccountType {
+    Lobby = 0,
+    Inputs = 1,
 }
 
 impl<T: DeformUserLogic> DeformAccount<T> {

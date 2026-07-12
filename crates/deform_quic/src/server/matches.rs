@@ -10,7 +10,9 @@ use std::{
 use better_tokio_select::tokio_select;
 use deform_core::{
     DeformError, DeformGameState, DeformUserLogic, Pubkey, TickInfo,
-    accounts::lobby::{Lobby, LobbyState, not_started::LobbyNotStarted, started::LobbyOngoing},
+    accounts::lobby::{
+        Lobby, LobbyMetadata, LobbyState, not_started::LobbyNotStarted, started::LobbyOngoing,
+    },
     error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
@@ -82,14 +84,14 @@ pub enum MatchConfig {
 
 pub async fn match_loop<Q: DeformQuicLogic>(
     server: Arc<DeformQuicServer<Q>>,
-    mut lobby: Lobby<Q::UserLogic>,
+    lobby_metadata: LobbyMetadata,
     not_started: LobbyNotStarted,
 
     state_sender: broadcast::Sender<InternalServerResponse<Q>>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
 ) -> UserFacingResult<Q::UserLogic> {
-    let lobby_id = lobby.id;
+    let lobby_id = lobby_metadata.id;
 
     // inputs per-tick of each player
     // NOTE: a player existing in this map means the player is currently joined
@@ -153,10 +155,10 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         players_hashset.insert(*player);
     }
 
-    let user_logic =
-        Q::UserLogic::new_from_lobby(&not_started).map_err(|e| UserFacingError::User(e))?;
-    let game_state =
-        Q::UserLogic::new_game_from_lobby(&not_started).map_err(|e| UserFacingError::User(e))?;
+    let user_logic = Q::UserLogic::new_from_lobby(&lobby_metadata, &not_started)
+        .map_err(|e| UserFacingError::User(e))?;
+    let game_state = Q::UserLogic::new_game_from_lobby(&lobby_metadata, &not_started)
+        .map_err(|e| UserFacingError::User(e))?;
 
     let mut inputs = HashMap::new();
     for player in not_started.player_status.keys() {
@@ -166,11 +168,14 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         );
     }
 
-    lobby.state = LobbyState::Ongoing(LobbyOngoing {
-        tick: 0,
-        user_logic,
-        tick_info: TickInfo { game_state, inputs },
-    });
+    let mut lobby = Lobby {
+        metadata: lobby_metadata,
+        state: LobbyState::Ongoing(LobbyOngoing {
+            tick: 0,
+            user_logic,
+            tick_info: TickInfo { game_state, inputs },
+        }),
+    };
 
     let mut tick_timer = interval(Duration::from_micros(16667));
 
@@ -186,8 +191,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         );
     }
 
-    let ongoing = match lobby.state {
-        LobbyState::Ongoing(ref mut ongoing) => ongoing,
+    let ongoing = match &mut lobby.state {
+        LobbyState::Ongoing(ongoing) => ongoing,
         _ => unreachable!(),
     };
 
@@ -221,7 +226,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                         ongoing.tick_info.game_state = new_state;
                     }
                     Err(e) => {
-                        mark_match_as_finished(&server, lobby.id).await?;
+                        mark_match_as_finished(&server, lobby.metadata.id).await?;
                         return Err(UserFacingError::User(e));
                     }
                 }
@@ -290,7 +295,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
     info!(lobby_id, "Match loop ended");
 
-    mark_match_as_finished(&server, lobby.id).await?;
+    mark_match_as_finished(&server, lobby.metadata.id).await?;
 
     server
         .user_server_logic
@@ -307,7 +312,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     ));
     info!(lobby_id, "Match finished successfully");
 
-    server.matches.write().await.remove(&lobby.id);
+    server.matches.write().await.remove(&lobby.metadata.id);
 
     Ok(())
 }

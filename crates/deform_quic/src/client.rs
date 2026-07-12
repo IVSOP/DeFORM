@@ -100,11 +100,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
-        let (lobby, user_logic, starting_tick_info) = match lobby.state {
+        let (lobby, user_logic, starting_tick_info) = match &lobby.state {
             LobbyState::Finished(_) => {
                 Err(DeformError::InvalidState("Game already ended!".into()))?
             }
-            LobbyState::NotStarted(ref not_started) => {
+            LobbyState::NotStarted(not_started) => {
                 let mut inputs = HashMap::new();
                 for player in not_started.player_status.keys() {
                     inputs.insert(
@@ -113,11 +113,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     );
                 }
 
-                let user_logic = <Q::UserLogic as DeformUserLogic>::new_from_lobby(not_started)
-                    .map_err(|e| UserFacingError::User(e))?;
-                let game_state =
-                    <Q::UserLogic as DeformUserLogic>::new_game_from_lobby(not_started)
+                let user_logic =
+                    <Q::UserLogic as DeformUserLogic>::new_from_lobby(&lobby.metadata, not_started)
                         .map_err(|e| UserFacingError::User(e))?;
+                let game_state = <Q::UserLogic as DeformUserLogic>::new_game_from_lobby(
+                    &lobby.metadata,
+                    not_started,
+                )
+                .map_err(|e| UserFacingError::User(e))?;
                 let tick_info = TickInfo {
                     game_state: game_state.clone(),
                     inputs,
@@ -125,10 +128,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 (
                     Lobby {
-                        id: lobby.id,
-                        creator: lobby.creator,
-                        network: lobby.network.clone(),
-                        bump: lobby.bump,
+                        metadata: lobby.metadata.clone(),
                         state: LobbyState::Ongoing(LobbyOngoing {
                             tick: 0,
                             tick_info: tick_info.clone(),
@@ -139,7 +139,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     tick_info,
                 )
             }
-            LobbyState::Ongoing(ref state) => (
+            LobbyState::Ongoing(state) => (
                 lobby.clone(),
                 state.user_logic.clone(),
                 state.tick_info.clone(),
@@ -287,7 +287,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         let handshake_message =
                             ReliableMessage::<Q>::Identification(UserIdentification {
                                 user: player.clone(),
-                                lobby_id: lobby.id,
+                                lobby_id: lobby.metadata.id,
                                 auth,
                             });
 
@@ -427,14 +427,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             tokio_select!(match .. {
                 // Tick every ~16ms (or more, depending on time dilation)
                 .. if let _ = &mut tick_sleep => {
-                    let remote_tick = match self.remote_lobby.state {
+                    let remote_tick = match &self.remote_lobby.state {
                         LobbyState::Finished(_) => break,
                         // Grace period: the match has not started on the server, so there is no
                         // authoritative stream to reconcile against. Predicting here would just get
                         // rolled back the moment the match goes live, so we hold at the initial state.
                         // The first `Started` datagram bootstraps us via the FastForward path.
                         LobbyState::NotStarted(_) => break,
-                        LobbyState::Ongoing(ref ongoing) => {
+                        LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
                             let min_target_tick = remote_tick + self.min_ticks_ahead;
                             let current_tick = self.local_tick;
@@ -500,7 +500,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 .map_err(|_| DeformError::LockPoisoned)?;
 
                             // TODO: cleaner way of doing this? I can only set the new state if the game is ongoing (or finished, but whatever)
-                            if let LobbyState::Ongoing(ref mut ongoing) = shared.lobby.state {
+                            if let LobbyState::Ongoing(ongoing) = &mut shared.lobby.state {
                                 ongoing.tick_info = visual_state;
                             }
                         }
@@ -901,8 +901,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
         let new_remote_tick = remote_ongoing.tick;
-        let old_remote_tick = match self.remote_lobby.state {
-            LobbyState::Ongoing(ref old_ongoing) => old_ongoing.tick,
+        let old_remote_tick = match &self.remote_lobby.state {
+            LobbyState::Ongoing(old_ongoing) => old_ongoing.tick,
             _ => Err(DeformError::InvalidState(
                 "Previous lobby was not Ongoing".into(),
             ))?,
