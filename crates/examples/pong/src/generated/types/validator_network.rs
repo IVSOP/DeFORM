@@ -5,11 +5,9 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use crate::generated::types::DevnetRegion;
-use crate::generated::types::LocalRegion;
-use crate::generated::types::MainnetRegion;
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
+use borsh::{BorshDeserialize, BorshSerialize};
+
+use crate::generated::types::{DevnetRegion, LocalRegion, MainnetRegion};
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 pub enum ValidatorNetwork {

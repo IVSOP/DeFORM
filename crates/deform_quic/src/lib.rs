@@ -1,25 +1,22 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
+use std::{collections::HashMap, fmt::Debug, future::Future, time::Duration};
 
-use std::future::Future;
-use std::time::Duration;
-
-use deform_core::accounts::lobby::LobbyState;
-use deform_core::error::{UserFacingError, UserFacingResult};
 use deform_core::{
-    DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, accounts::lobby::Lobby,
+    DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, Pubkey,
+    accounts::lobby::{Lobby, LobbyState},
+    error::{UserFacingError, UserFacingResult},
+    game_program_client::GameProgramClient,
 };
-use deform_core::{Pubkey, game_program_client::GameProgramClient};
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
-use solana_sdk::message::{AccountMeta, Instruction, Message};
-use solana_sdk::signature::Keypair;
-use solana_sdk::signer::Signer;
-use solana_sdk::transaction::Transaction;
+use solana_sdk::{
+    message::{AccountMeta, Instruction, Message},
+    signature::Keypair,
+    signer::Signer,
+    transaction::Transaction,
+};
 use solana_signature::Signature;
 use tokio::time::sleep;
 use tracing::{info, warn};
-use wincode::config::DefaultConfig;
-use wincode::{SchemaRead, SchemaWrite};
+use wincode::{SchemaRead, SchemaWrite, config::DefaultConfig};
 
 mod client;
 pub mod server;

@@ -27,6 +27,8 @@ pub enum GameProgramError {
     InputsAccountAlreadyInitialized,
     #[msg("Failed to serialize inputs account")]
     SerializeInputsAccount,
+    #[msg("Failed to deserialize inputs account")]
+    DeserializeInputsAccount,
     #[msg("Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES")]
     InputsAccountTooLarge,
     #[msg("Unauthorized")]
@@ -39,4 +41,10 @@ pub enum GameProgramError {
     PlayerNotReady,
     #[msg("Lobby is not fully on-chain")]
     NotFullyOnChain,
+    #[msg("Lobby is not in a NotStarted state")]
+    LobbyAlreadyStarted,
+    #[msg("Could not init user logic")]
+    InitUserLogic,
+    #[msg("Could not init game state")]
+    InitGameState,
 }

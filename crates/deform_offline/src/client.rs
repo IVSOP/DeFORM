@@ -1,4 +1,3 @@
-use better_tokio_select::tokio_select;
 use std::{
     collections::HashMap,
     sync::{
@@ -8,16 +7,17 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::{
-    sync::{Notify, mpsc, oneshot},
-    time::interval,
-};
 
+use better_tokio_select::tokio_select;
 use deform_core::{
     DeformClient, DeformError, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
     Smooth, TickInfo,
     accounts::lobby::{Lobby, LobbyState, started::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
+};
+use tokio::{
+    sync::{Notify, mpsc, oneshot},
+    time::interval,
 };
 
 pub(crate) struct OfflineBackend<T: DeformUserLogic> {

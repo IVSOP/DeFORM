@@ -119,17 +119,17 @@ impl DeformUserLogic for PongGame {
 
     fn new_from_lobby(
         _lobby_metadata: &LobbyMetadata,
-        _lobby: &LobbyNotStarted,
+        _not_started: &LobbyNotStarted,
     ) -> Result<PongGame, PongError> {
         Ok(PongGame)
     }
 
     fn new_game_from_lobby(
         lobby_metadata: &LobbyMetadata,
-        lobby: &LobbyNotStarted,
+        not_started: &LobbyNotStarted,
     ) -> Result<PongGameState, PongError> {
         let mut players = HashMap::new();
-        for player in lobby.player_status.keys() {
+        for player in not_started.player_status.keys() {
             players.insert(
                 *player,
                 PlayerState {
@@ -246,11 +246,11 @@ impl DeformUserLogic for PongGame {
 
 #[cfg(feature = "bin")]
 mod quic_logic {
-    use crate::solana::anchor_client::PongAnchorClient;
-
-    use super::*;
     use deform_quic::{DeformQuicLogic, UserIdentification};
     use wincode::{SchemaRead, SchemaWrite};
+
+    use super::*;
+    use crate::solana::anchor_client::PongAnchorClient;
 
     #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
     pub enum NoCustomMessage {

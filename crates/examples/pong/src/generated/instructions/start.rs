@@ -5,8 +5,7 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 
 pub const START_DISCRIMINATOR: [u8; 8] = [62, 15, 117, 236, 47, 1, 89, 139];
 

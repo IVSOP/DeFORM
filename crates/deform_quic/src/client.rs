@@ -1,6 +1,3 @@
-use better_tokio_select::tokio_select;
-use glam::FloatExt;
-use quinn::crypto::rustls::QuicClientConfig;
 use std::{
     collections::HashMap,
     pin::Pin,
@@ -11,16 +8,19 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
-use tokio::{
-    sync::{Notify, mpsc, oneshot},
-    time::{Sleep, interval, sleep_until},
-};
 
+use better_tokio_select::tokio_select;
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
     DeformUserLogic, Pubkey, Smooth, TickInfo,
     accounts::lobby::{Lobby, LobbyFinished, LobbyState, started::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
+};
+use glam::FloatExt;
+use quinn::crypto::rustls::QuicClientConfig;
+use tokio::{
+    sync::{Notify, mpsc, oneshot},
+    time::{Sleep, interval, sleep_until},
 };
 
 use crate::{

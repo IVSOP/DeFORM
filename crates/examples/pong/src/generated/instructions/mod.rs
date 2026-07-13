@@ -11,8 +11,4 @@ pub(crate) mod r#ready;
 pub(crate) mod r#start;
 pub(crate) mod r#write_and_close;
 
-pub use self::r#create_lobby::*;
-pub use self::r#join_lobby::*;
-pub use self::r#ready::*;
-pub use self::r#start::*;
-pub use self::r#write_and_close::*;
+pub use self::{r#create_lobby::*, r#join_lobby::*, r#ready::*, r#start::*, r#write_and_close::*};

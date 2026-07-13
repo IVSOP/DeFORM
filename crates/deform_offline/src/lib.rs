@@ -1,7 +1,6 @@
-use deform_core::Pubkey;
-use deform_core::accounts::lobby::Lobby;
-use deform_core::error::UserFacingResult;
-use deform_core::{DeformClient, DeformUserLogic};
+use deform_core::{
+    DeformClient, DeformUserLogic, Pubkey, accounts::lobby::Lobby, error::UserFacingResult,
+};
 
 mod client;
 

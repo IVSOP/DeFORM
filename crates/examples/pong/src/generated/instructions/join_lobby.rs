@@ -5,8 +5,7 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
+use borsh::{BorshDeserialize, BorshSerialize};
 
 pub const JOIN_LOBBY_DISCRIMINATOR: [u8; 8] = [127, 102, 119, 190, 215, 223, 212, 159];
 

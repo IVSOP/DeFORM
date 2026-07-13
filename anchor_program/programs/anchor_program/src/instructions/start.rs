@@ -1,13 +1,18 @@
-use crate::state::UserLogic;
-use crate::util::create_pda_account;
-use crate::{error::GameProgramError, util::deser_and_check_lobby};
+use std::collections::HashMap;
+
 use anchor_lang::prelude::*;
 use deform_core::{
     accounts::{
-        inputs::InputsAccount,
-        lobby::{Lobby, Network},
+        lobby::{started::LobbyOngoing, LobbyState, Network, PlayerStatus},
+        DeformAccount,
     },
-    DeformUserLogic,
+    DeformUserLogic, TickInfo,
+};
+
+use crate::{
+    error::GameProgramError,
+    state::{Inputs, UserLogic},
+    util::{deser_and_check_inputs, deser_and_check_lobby},
 };
 
 #[derive(Accounts)]
@@ -21,42 +26,75 @@ pub struct StartGameAccounts<'info> {
 }
 
 pub fn handler(ctx: Context<StartGameAccounts>, id: u64) -> Result<()> {
-    // let lobby_info = ctx.accounts.lobby.to_account_info();
-    // let user_key = *ctx.accounts.user.key;
+    let lobby_info = ctx.accounts.lobby.to_account_info();
+    let user_key = *ctx.accounts.user.key;
 
-    // // deser
-    // let mut lobby_account =
-    //     deser_and_check_lobby(ctx.accounts.lobby.to_account_info(), id, *ctx.program_id)?;
+    // deser
+    let mut lobby = deser_and_check_lobby(&lobby_info, id, *ctx.program_id)?;
 
-    // // lobby not started
-    // require!(
-    //     lobby_account.status == LobbyStatus::NotStarted,
-    //     GameProgramError::LobbyNotJoinable
-    // );
+    // lobby not started
+    let not_started = match lobby.state {
+        LobbyState::NotStarted(not_started) => not_started,
+        _ => Err(GameProgramError::LobbyAlreadyStarted)?,
+    };
 
-    // // lobby must be in web3 mode, and extract the iner network
-    // let web3_network = match lobby_account.network {
-    //     Network::FullyOnChain(network) => network,
-    //     Network::Web2 => Err(GameProgramError::NotFullyOnChain)?
-    // };
+    // lobby must be in web3 mode, and extract the iner network
+    let web3_network = match lobby.metadata.network.clone() {
+        Network::FullyOnChain(network) => network,
+        Network::Web2 => Err(GameProgramError::NotFullyOnChain)?,
+    };
 
-    // // TODO: user must be creator?
-    // // user in lobby
-    // let _player_info = lobby_account
-    //     .player_infos
-    //     .get_mut(&user_key)
-    //     .ok_or_else(|| error!(GameProgramError::PlayerNotInLobby))?;
+    // TODO: user must be creator?
+    // user in lobby
+    if !not_started.player_status.contains_key(&user_key) {
+        Err(GameProgramError::PlayerNotInLobby)?
+    };
 
-    // for (_user, user_info) in lobby_account.player_infos.iter() {
-    //     // check that all users are ready
-    //     require_eq!(user_info.status, PLayerStatus::Ready, GameProgramError::PlayerNotReady);
-    // }
+    let mut inputs = HashMap::new();
 
-    // // FIX: write lobby state, with lobby started set to true, and the initial game state initialized
-    // // FIX: delegate lobby and inputs accounts
+    for ((user, user_status), inputs_account) in not_started
+        .player_status
+        .iter()
+        .zip(ctx.remaining_accounts.iter())
+    {
+        // check that all users are ready
+        require_eq!(
+            *user_status,
+            PlayerStatus::Ready,
+            GameProgramError::PlayerNotReady
+        );
 
-    // let game_state = UserLogic
-    // // lobby_info.data.borrow_mut()[..data.len()].copy_from_slice(&data);
+        // check that all inputs accounts are correct
+        let _inputs_account = deser_and_check_inputs(inputs_account, *user, id, *ctx.program_id)?;
+
+        inputs.insert(*user, Inputs::default());
+    }
+
+    let user_logic = UserLogic::new_from_lobby(&lobby.metadata, &not_started).map_err(|e| {
+        msg!("Error creating user logic: {}", e);
+        GameProgramError::InitUserLogic
+    })?;
+    let game_state =
+        UserLogic::new_game_from_lobby(&lobby.metadata, &not_started).map_err(|e| {
+            msg!("Error creating game state: {}", e);
+            GameProgramError::InitGameState
+        })?;
+
+    lobby.state = LobbyState::Ongoing(LobbyOngoing {
+        tick: 0,
+        tick_info: TickInfo { inputs, game_state },
+        user_logic,
+    });
+
+    // serialize. account rent should be the same
+    {
+        let mut data = lobby_info.data.borrow_mut();
+        DeformAccount::Lobby(lobby)
+            .write_into(&mut data)
+            .map_err(|_| error!(GameProgramError::SerializeLobby))?;
+    }
+
+    // FIX: delegate lobby and inputs accounts
 
     Ok(())
 }

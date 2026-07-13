@@ -12,9 +12,7 @@ pub(crate) mod r#network;
 pub(crate) mod r#player_score;
 pub(crate) mod r#validator_network;
 
-pub use self::r#devnet_region::*;
-pub use self::r#local_region::*;
-pub use self::r#mainnet_region::*;
-pub use self::r#network::*;
-pub use self::r#player_score::*;
-pub use self::r#validator_network::*;
+pub use self::{
+    r#devnet_region::*, r#local_region::*, r#mainnet_region::*, r#network::*, r#player_score::*,
+    r#validator_network::*,
+};

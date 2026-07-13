@@ -3,9 +3,9 @@ use std::{
     collections::HashMap,
     fmt::{Debug, Display},
 };
-use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
 
 pub use deform_derive::Smooth;
+use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
 
 pub mod accounts;
 #[cfg(feature = "client")]
@@ -16,7 +16,6 @@ pub mod smooth;
 
 #[cfg(feature = "client")]
 pub use client::{DeformClient, DeformSharedBackendState, Stats};
-
 pub use error::{DeformError, DeformResult};
 pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
@@ -83,11 +82,11 @@ pub trait DeformUserLogic:
 
     fn new_from_lobby(
         lobby_metadata: &LobbyMetadata,
-        lobby: &LobbyNotStarted,
+        not_started: &LobbyNotStarted,
     ) -> Result<Self, Self::Error>;
     fn new_game_from_lobby(
         lobby_metadata: &LobbyMetadata,
-        lobby: &LobbyNotStarted,
+        not_started: &LobbyNotStarted,
     ) -> Result<Self::GameState, Self::Error>;
 
     /// User-provided callback to advance the game state. From a certain state and inputs, it must compute the next state.

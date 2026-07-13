@@ -1,0 +1,4 @@
+# Nightly-only options: run with `cargo +nightly fmt`
+imports_granularity = "Crate"
+group_imports = "StdExternalCrate"
+reorder_imports = true

@@ -1,6 +1,7 @@
-use crate::{error::GameProgramError, state::UserLogic};
 use anchor_lang::{prelude::*, system_program};
-use deform_core::accounts::{lobby::Lobby, DeformAccount};
+use deform_core::accounts::{inputs::InputsAccount, lobby::Lobby, DeformAccount};
+
+use crate::{error::GameProgramError, state::UserLogic};
 
 /// Robustly create a program-owned PDA for one of our wincode-serialized accounts.
 ///
@@ -84,7 +85,7 @@ pub fn create_pda_account<'info>(
 }
 
 pub fn deser_and_check_lobby(
-    lobby_account: AccountInfo,
+    lobby_account: &AccountInfo,
     lobby_id: u64,
     program: Pubkey,
 ) -> Result<Lobby<UserLogic>> {
@@ -114,4 +115,46 @@ pub fn deser_and_check_lobby(
     require_eq!(lobby_id, lobby.metadata.id);
 
     Ok(lobby)
+}
+
+pub fn deser_and_check_inputs(
+    inputs_account: &AccountInfo,
+    player: Pubkey,
+    lobby_id: u64,
+    program: Pubkey,
+) -> Result<InputsAccount<UserLogic>> {
+    // account must have > 0 lamports
+    require_gt!(**inputs_account.lamports.borrow(), 0);
+
+    // owned by our program
+    require_keys_eq!(*inputs_account.owner, program);
+
+    // deserialize (will also check data len indirectly)
+    let data = inputs_account.data.borrow();
+    let inputs = DeformAccount::from_bytes(&data)
+        .map_err(|_| error!(GameProgramError::DeserializeInputsAccount))?;
+
+    // account type matches
+    let DeformAccount::Inputs(inputs) = inputs else {
+        return Err(GameProgramError::InvalidAccountType)?;
+    };
+
+    // pda matches
+    let inputs_pda = InputsAccount::<UserLogic>::create_program_address(
+        lobby_id,
+        &player,
+        &program,
+        inputs.bump,
+    )
+    .map_err(|_| ProgramError::InvalidSeeds)?;
+    require_keys_eq!(
+        inputs_pda,
+        *inputs_account.key,
+        GameProgramError::InvalidPda
+    );
+
+    // player matches
+    require_keys_eq!(player, inputs.player);
+
+    Ok(inputs)
 }

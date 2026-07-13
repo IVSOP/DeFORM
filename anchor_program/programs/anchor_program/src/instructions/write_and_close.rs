@@ -1,8 +1,6 @@
 use anchor_lang::prelude::*;
 
-use crate::constants::ADMIN;
-use crate::error::GameProgramError;
-use crate::util::deser_and_check_lobby;
+use crate::{constants::ADMIN, error::GameProgramError, util::deser_and_check_lobby};
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
 pub struct PlayerScore {
@@ -29,8 +27,7 @@ pub fn handler(
 ) -> Result<()> {
     let lobby_info = ctx.accounts.lobby.to_account_info();
 
-    let lobby_account =
-        deser_and_check_lobby(ctx.accounts.lobby.to_account_info(), id, *ctx.program_id)?;
+    let lobby_account = deser_and_check_lobby(&lobby_info, id, *ctx.program_id)?;
 
     require_keys_eq!(
         ctx.accounts.creator.key(),

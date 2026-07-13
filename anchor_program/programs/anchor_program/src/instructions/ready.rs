@@ -1,12 +1,17 @@
-use crate::state::UserLogic;
-use crate::util::create_pda_account;
-use crate::{error::GameProgramError, util::deser_and_check_lobby};
 use anchor_lang::prelude::*;
-use deform_core::accounts::lobby::{LobbyState, PlayerStatus};
-use deform_core::accounts::DeformAccount;
 use deform_core::{
-    accounts::{inputs::InputsAccount, lobby::Network},
+    accounts::{
+        inputs::InputsAccount,
+        lobby::{LobbyState, Network, PlayerStatus},
+        DeformAccount,
+    },
     DeformUserLogic,
+};
+
+use crate::{
+    error::GameProgramError,
+    state::UserLogic,
+    util::{create_pda_account, deser_and_check_lobby},
 };
 
 #[derive(Accounts)]
@@ -27,7 +32,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     let user_key = *ctx.accounts.user.key;
 
     // deser
-    let mut lobby = deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
+    let mut lobby = deser_and_check_lobby(&lobby_info, id, *ctx.program_id)?;
 
     // lobby not started
     let LobbyState::NotStarted(not_started) = &mut lobby.state else {

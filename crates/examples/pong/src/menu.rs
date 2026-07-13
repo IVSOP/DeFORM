@@ -12,6 +12,10 @@ use deform_core::{
     game_program_client::{GameProgramClient, ReadyArgs},
 };
 use egui_probe::Probe;
+use pong::{
+    pong_logic::*,
+    solana::anchor_client::{GAME_PROGRAM, PongAnchorClient},
+};
 use solana_address::Address;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
@@ -25,10 +29,6 @@ use crate::{
         scan_json_files, start_offline, start_online,
     },
     send_and_confirm_tx,
-};
-use pong::{
-    pong_logic::*,
-    solana::anchor_client::{GAME_PROGRAM, PongAnchorClient},
 };
 
 #[derive(Resource)]

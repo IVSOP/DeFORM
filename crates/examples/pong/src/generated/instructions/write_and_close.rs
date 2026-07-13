@@ -5,9 +5,9 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
+use borsh::{BorshDeserialize, BorshSerialize};
+
 use crate::generated::types::PlayerScore;
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
 
 pub const WRITE_AND_CLOSE_DISCRIMINATOR: [u8; 8] = [193, 231, 239, 222, 142, 11, 112, 140];
 

@@ -11,7 +11,6 @@ use deform_core::{
     },
 };
 use deform_offline::new_offline_client;
-
 use pong::pong_logic::*;
 
 pub fn run_game() {

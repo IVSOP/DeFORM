@@ -5,9 +5,9 @@
 //! <https://github.com/codama-idl/codama>
 //!
 
+use borsh::{BorshDeserialize, BorshSerialize};
+
 use crate::generated::types::Network;
-use borsh::BorshDeserialize;
-use borsh::BorshSerialize;
 
 pub const CREATE_LOBBY_DISCRIMINATOR: [u8; 8] = [116, 55, 74, 48, 40, 51, 135, 155];
 

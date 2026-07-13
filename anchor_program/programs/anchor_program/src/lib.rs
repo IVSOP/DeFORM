@@ -5,9 +5,8 @@ pub mod state;
 pub mod util;
 
 use anchor_lang::prelude::*;
-use deform_core::accounts::lobby::Network;
-
 pub use constants::*;
+use deform_core::accounts::lobby::Network;
 pub use instructions::*;
 
 declare_id!("5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r");
