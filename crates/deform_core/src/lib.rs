@@ -1,8 +1,6 @@
+use std::collections::BTreeMap;
 #[cfg(feature = "client")]
-use std::{
-    collections::HashMap,
-    fmt::{Debug, Display},
-};
+use std::fmt::{Debug, Display};
 
 pub use deform_derive::Smooth;
 use wincode::{config::DefaultConfig, SchemaRead, SchemaWrite};
@@ -97,7 +95,7 @@ pub trait DeformUserLogic:
     fn advance_frame(
         &mut self,
         state: &Self::GameState,
-        inputs: &HashMap<Pubkey, Self::Inputs>,
+        inputs: &BTreeMap<Pubkey, Self::Inputs>,
     ) -> Result<Self::GameState, Self::Error>;
 
     /// User-provided callback called when a callback is triggered. This happens when a previously computed state (in this case, prediction of inputs) does not match the state received from the server.
@@ -160,7 +158,7 @@ pub struct TickInfo<T: DeformUserLogic> {
     // FIX: need to serialize these pubkeys as B64
     /// The inputs that, combined with the previous state, have led to this new state.
     // TODO: in sbf, this should use pinocchio pubkey
-    pub inputs: HashMap<Pubkey, T::Inputs>,
+    pub inputs: BTreeMap<Pubkey, T::Inputs>,
 }
 
 /// Trait that does nothing except require anchor ser and deser when the feature is active

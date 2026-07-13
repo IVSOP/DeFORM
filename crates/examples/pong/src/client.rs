@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use anyhow::anyhow;
 use bevy::prelude::*;
@@ -207,7 +207,7 @@ pub fn start_offline(
 ) -> Result<()> {
     let bot_player = Pubkey::new_from_array([255; 32]);
 
-    let mut player_status = HashMap::new();
+    let mut player_status = BTreeMap::new();
     for pk in [main_player, bot_player] {
         player_status.insert(pk, PlayerStatus::Ready);
     }

@@ -131,6 +131,16 @@ pub enum ValidatorNetwork {
     Localhost(LocalRegion) = 2,
 }
 
+impl ValidatorNetwork {
+    pub fn address(&self) -> Pubkey {
+        match self {
+            Self::Mainnet(m) => m.address(),
+            Self::Devnet(d) => d.address(),
+            Self::Localhost(l) => l.address(),
+        }
+    }
+}
+
 // All variants carry data, so `#[derive(Default)]` (which needs a unit default
 // variant) doesn't apply. egui-probe needs this to construct the payload when the
 // user switches `Network` to `FullyOnChain` in the picker.

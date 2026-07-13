@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use wincode::{SchemaRead, SchemaWrite};
 
@@ -10,5 +10,5 @@ use crate::{accounts::lobby::PlayerStatus, Pubkey};
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct LobbyNotStarted {
-    pub player_status: HashMap<Pubkey, PlayerStatus>, // ready vs not ready
+    pub player_status: BTreeMap<Pubkey, PlayerStatus>, // ready vs not ready
 }

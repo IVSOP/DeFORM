@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     pin::Pin,
     sync::{
         Arc,
@@ -105,7 +105,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 Err(DeformError::InvalidState("Game already ended!".into()))?
             }
             LobbyState::NotStarted(not_started) => {
-                let mut inputs = HashMap::new();
+                let mut inputs = BTreeMap::new();
                 for player in not_started.player_status.keys() {
                     inputs.insert(
                         *player,
@@ -723,7 +723,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         // clone the old array so that we have the correct pubkeys
         // the inputs will be overwritten
-        let mut new_players_inputs: HashMap<Pubkey, <Q::UserLogic as DeformUserLogic>::Inputs> =
+        let mut new_players_inputs: BTreeMap<Pubkey, <Q::UserLogic as DeformUserLogic>::Inputs> =
             current_info.inputs.clone();
 
         for (player, inputs) in new_players_inputs.iter_mut() {

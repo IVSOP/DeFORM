@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -160,7 +160,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     let game_state = Q::UserLogic::new_game_from_lobby(&lobby_metadata, &not_started)
         .map_err(|e| UserFacingError::User(e))?;
 
-    let mut inputs = HashMap::new();
+    let mut inputs = BTreeMap::new();
     for player in not_started.player_status.keys() {
         inputs.insert(
             *player,
@@ -182,8 +182,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     // inputs that were last applied to the game state
     // if the user does not send any inputs, these are used, as server-side input prediction
     // NOTE: doubles as a cache to pass to advance_frame() the inputs that are supposed to be applied in this tick
-    let mut last_applied_inputs: HashMap<Pubkey, <Q::UserLogic as DeformUserLogic>::Inputs> =
-        HashMap::new();
+    let mut last_applied_inputs: BTreeMap<Pubkey, <Q::UserLogic as DeformUserLogic>::Inputs> =
+        BTreeMap::new();
     for player in players_data.keys() {
         last_applied_inputs.insert(
             *player,

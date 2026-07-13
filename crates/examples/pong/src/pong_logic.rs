@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use deform_core::{
     DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth,
@@ -150,7 +150,7 @@ impl DeformUserLogic for PongGame {
     fn advance_frame(
         &mut self,
         state: &Self::GameState,
-        inputs: &HashMap<Pubkey, Self::Inputs>,
+        inputs: &BTreeMap<Pubkey, Self::Inputs>,
     ) -> Result<Self::GameState, Self::Error> {
         let mut new = state.clone();
 
