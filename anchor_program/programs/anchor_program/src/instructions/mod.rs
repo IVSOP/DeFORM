@@ -8,4 +8,5 @@ pub mod write_and_close;
 pub use create_lobby::*;
 pub use join_lobby::*;
 pub use ready::*;
+pub use start::*;
 pub use write_and_close::*;

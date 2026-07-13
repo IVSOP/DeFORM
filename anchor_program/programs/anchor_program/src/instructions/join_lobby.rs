@@ -1,8 +1,8 @@
 use anchor_lang::{prelude::*, system_program};
-use deform_core::accounts::lobby::{LobbyStatus, PLayerStatus, PlayerInfo};
+use deform_core::accounts::lobby::{LobbyState, PlayerStatus};
+use deform_core::accounts::DeformAccount;
 
 use crate::error::GameProgramError;
-use crate::state::*;
 use crate::util::deser_and_check_lobby;
 
 #[derive(Accounts)]
@@ -20,32 +20,23 @@ pub fn handler(ctx: Context<JoinLobbyAccounts>, id: u64) -> Result<()> {
     let user_key = *ctx.accounts.user.key;
 
     // deser
-    let mut lobby_account =
-        deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
+    let mut lobby = deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
 
     // lobby must not be started
-    require!(
-        lobby_account.status == LobbyStatus::NotStarted,
-        GameProgramError::LobbyNotJoinable
-    );
-    // player must not already be in lobby
-    require!(
-        !lobby_account.player_infos.contains_key(&user_key),
-        GameProgramError::PlayerAlreadyInLobby
-    );
+    let LobbyState::NotStarted(not_started) = &mut lobby.state else {
+        return Err(GameProgramError::PlayerAlreadyInLobby)?;
+    };
 
     // add the player
-    lobby_account.player_infos.insert(
-        user_key,
-        PlayerInfo {
-            status: PLayerStatus::NotReady,
-            inputs: Inputs::default(),
-        },
-    );
+    not_started
+        .player_status
+        .insert(user_key, PlayerStatus::NotReady);
+
+    let new_account = DeformAccount::Lobby(lobby);
 
     // reserialize
     let new_data =
-        wincode::serialize(&lobby_account).map_err(|_| error!(GameProgramError::SerializeLobby))?;
+        wincode::serialize(&new_account).map_err(|_| error!(GameProgramError::SerializeLobby))?;
 
     let new_len = new_data.len();
     let old_len = lobby_info.data_len();

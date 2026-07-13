@@ -55,6 +55,15 @@ pub enum AnchorProgramError {
     /// 6014 - Creator mismatch
     #[error("Creator mismatch")]
     CreatorMismatch = 0x177E,
+    /// 6015 - Address creation error
+    #[error("Address creation error")]
+    AddressError = 0x177F,
+    /// 6016 - Player is not ready
+    #[error("Player is not ready")]
+    PlayerNotReady = 0x1780,
+    /// 6017 - Lobby is not fully on-chain
+    #[error("Lobby is not fully on-chain")]
+    NotFullyOnChain = 0x1781,
 }
 
 impl From<AnchorProgramError> for solana_program_error::ProgramError {

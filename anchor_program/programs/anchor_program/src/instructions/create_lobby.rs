@@ -1,9 +1,15 @@
 use std::collections::HashMap;
 
 use anchor_lang::prelude::*;
-use deform_core::{DeformUserLogic, accounts::{
-    AccountType, lobby::{Lobby, LobbyStatus, Network, PLayerStatus, PlayerInfo}
-}};
+use deform_core::{
+    accounts::{
+        lobby::{
+            not_started::LobbyNotStarted, Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus,
+        },
+        DeformAccount,
+    },
+    DeformUserLogic,
+};
 
 use crate::{error::GameProgramError, state::*, util::create_pda_account};
 
@@ -32,26 +38,18 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64, network: Network) -> 
 
     let creator = *ctx.accounts.user.key;
 
-    let mut player_infos = HashMap::new();
-    player_infos.insert(
-        creator,
-        PlayerInfo {
-            status: PLayerStatus::NotReady,
-            inputs: Inputs::default(),
-        },
-    );
+    let mut player_status = HashMap::new();
+    player_status.insert(creator, PlayerStatus::NotReady);
 
-    let lobby_account = Lobby::<UserLogic> {
-        account_type: AccountType::Lobby,
-        id,
-        tick: 0,
-        creator,
-        network,
-        status: LobbyStatus::NotStarted,
-        game_state: None,
-        player_infos,
-        bump,
-    };
+    let lobby_account = DeformAccount::Lobby(Lobby {
+        metadata: LobbyMetadata {
+            id,
+            creator,
+            network,
+            bump,
+        },
+        state: LobbyState::<UserLogic>::NotStarted(LobbyNotStarted { player_status }),
+    });
 
     // serialize into a Vec
     let data =

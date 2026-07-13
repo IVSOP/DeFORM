@@ -39,4 +39,8 @@ pub mod anchor_program {
     ) -> Result<()> {
         write_and_close::handler(ctx, id, scores)
     }
+
+    pub fn start(ctx: Context<StartGameAccounts>, id: u64) -> Result<()> {
+        start::handler(ctx, id)
+    }
 }

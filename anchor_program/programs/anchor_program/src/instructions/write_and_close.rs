@@ -34,7 +34,7 @@ pub fn handler(
 
     require_keys_eq!(
         ctx.accounts.creator.key(),
-        lobby_account.creator,
+        lobby_account.metadata.creator,
         GameProgramError::CreatorMismatch
     );
 

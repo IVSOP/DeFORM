@@ -1,6 +1,6 @@
 use crate::{error::GameProgramError, state::UserLogic};
 use anchor_lang::{prelude::*, system_program};
-use deform_core::accounts::{lobby::Lobby, AccountType};
+use deform_core::accounts::{lobby::Lobby, DeformAccount};
 
 /// Robustly create a program-owned PDA for one of our wincode-serialized accounts.
 ///
@@ -96,23 +96,22 @@ pub fn deser_and_check_lobby(
 
     // deserialize (will also check data len indirectly)
     let data = lobby_account.data.borrow();
-    let lobby = Lobby::<UserLogic>::from_bytes(&data)
-        .map_err(|_| error!(GameProgramError::DeserializeLobby))?;
+    let lobby =
+        DeformAccount::from_bytes(&data).map_err(|_| error!(GameProgramError::DeserializeLobby))?;
+
+    // account type matches
+    let DeformAccount::Lobby(lobby) = lobby else {
+        return Err(GameProgramError::InvalidAccountType)?;
+    };
 
     // pda matches
-    let lobby_pda = Lobby::<UserLogic>::create_program_address(lobby_id, &program, lobby.bump)
-        .map_err(|_| ProgramError::InvalidSeeds)?;
+    let lobby_pda =
+        Lobby::<UserLogic>::create_program_address(lobby_id, &program, lobby.metadata.bump)
+            .map_err(|_| ProgramError::InvalidSeeds)?;
     require_keys_eq!(lobby_pda, *lobby_account.key, GameProgramError::InvalidPda);
 
     // id matches
-    require_eq!(lobby_id, lobby.id);
-
-    // account type matches
-    require_eq!(
-        lobby.account_type,
-        AccountType::Lobby,
-        GameProgramError::InvalidAccountType
-    );
+    require_eq!(lobby_id, lobby.metadata.id);
 
     Ok(lobby)
 }

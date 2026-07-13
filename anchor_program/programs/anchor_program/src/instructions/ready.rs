@@ -2,11 +2,10 @@ use crate::state::UserLogic;
 use crate::util::create_pda_account;
 use crate::{error::GameProgramError, util::deser_and_check_lobby};
 use anchor_lang::prelude::*;
+use deform_core::accounts::lobby::{LobbyState, PlayerStatus};
+use deform_core::accounts::DeformAccount;
 use deform_core::{
-    accounts::{
-        inputs::InputsAccount,
-        lobby::{LobbyStatus, Network, PLayerStatus},
-    },
+    accounts::{inputs::InputsAccount, lobby::Network},
     DeformUserLogic,
 };
 
@@ -28,38 +27,29 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     let user_key = *ctx.accounts.user.key;
 
     // deser
-    let mut lobby_account =
-        deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
+    let mut lobby = deser_and_check_lobby(lobby_info.clone(), id, *ctx.program_id)?;
 
     // lobby not started
-    require!(
-        lobby_account.status == LobbyStatus::NotStarted,
-        GameProgramError::LobbyNotJoinable
-    );
+    let LobbyState::NotStarted(not_started) = &mut lobby.state else {
+        return Err(GameProgramError::LobbyNotJoinable)?;
+    };
 
     // user in lobby
-    let player_info = lobby_account
-        .player_infos
+    let player_status = not_started
+        .player_status
         .get_mut(&user_key)
         .ok_or_else(|| error!(GameProgramError::PlayerNotInLobby))?;
 
-    // user not ready
+    // user must not be ready
     require!(
-        player_info.status == PLayerStatus::NotReady,
+        *player_status == PlayerStatus::NotReady,
         GameProgramError::PlayerAlreadyReady
     );
 
-    player_info.status = PLayerStatus::Ready;
+    // set ready
+    *player_status = PlayerStatus::Ready;
 
-    // serialize. account rent should be the same
-    {
-        let mut data = lobby_info.data.borrow_mut();
-        lobby_account
-            .write_into(&mut data)
-            .map_err(|_| error!(GameProgramError::SerializeLobby))?;
-    }
-
-    if lobby_account.network != Network::Web2 {
+    if lobby.metadata.network != Network::Web2 {
         // player inputs account
         let inputs_info = ctx
             .accounts
@@ -80,7 +70,8 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
         require_keys_eq!(inputs_info.key(), pda, GameProgramError::InvalidPda);
 
         // 3) create the account, initialize and serialize it
-        let inputs_account = InputsAccount::<UserLogic>::new(id, user_key, inputs_bump);
+        let inputs_account =
+            DeformAccount::Inputs(InputsAccount::<UserLogic>::new(id, user_key, inputs_bump));
         let inputs_data = wincode::serialize(&inputs_account)
             .map_err(|_| error!(GameProgramError::SerializeInputsAccount))?;
 
@@ -102,6 +93,14 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
         )?;
 
         inputs_info.data.borrow_mut()[..inputs_data.len()].copy_from_slice(&inputs_data);
+    }
+
+    // serialize. account rent should be the same
+    {
+        let mut data = lobby_info.data.borrow_mut();
+        DeformAccount::Lobby(lobby)
+            .write_into(&mut data)
+            .map_err(|_| error!(GameProgramError::SerializeLobby))?;
     }
 
     Ok(())
