@@ -701,6 +701,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         Duration::from_micros(micros)
     }
 
+    /// The server-authoritative tick, read back out of `remote_lobby` now that it is
+    /// no longer stored as a standalone field. Only used for tracy diagnostics.
+    #[cfg(feature = "tracy")]
+    fn remote_tick(&self) -> u64 {
+        match &self.remote_lobby.state {
+            LobbyState::Ongoing(ongoing) => ongoing.tick,
+            LobbyState::Finished(LobbyFinished(finished)) => finished.tick,
+            LobbyState::NotStarted(_) => 0,
+        }
+    }
+
     pub fn advance_local_simulation(&mut self) -> UserFacingResult<Q::UserLogic> {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("advance_local_simulation");
@@ -709,7 +720,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         if let Some(client) = tracy_client::Client::running() {
             client.plot(
                 tracy_client::plot_name!("current_vs_remote_adv"),
-                self.local_tick as f64 - self.remote_tick as f64,
+                self.local_tick as f64 - self.remote_tick() as f64,
             );
         }
 
@@ -790,7 +801,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         if let Some(client) = tracy_client::Client::running() {
             client.plot(
                 tracy_client::plot_name!("current_vs_remote_reception"),
-                self.local_tick as f64 - self.remote_tick as f64,
+                self.local_tick as f64 - self.remote_tick() as f64,
             );
         }
 

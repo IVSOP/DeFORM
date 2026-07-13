@@ -49,4 +49,6 @@ pub enum GameProgramError {
     InitGameState,
     #[msg("Failed to delegate lobby to the ephemeral rollup")]
     DelegateLobby,
+    #[msg("Failed to delegate inputs account to the ephemeral rollup")]
+    DelegateInputs,
 }

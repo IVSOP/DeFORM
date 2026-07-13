@@ -15,6 +15,18 @@ pub struct Start {
     pub user: solana_address::Address,
 
     pub lobby: solana_address::Address,
+
+    pub owner_program: solana_address::Address,
+
+    pub lobby_buffer: solana_address::Address,
+
+    pub lobby_delegation_record: solana_address::Address,
+
+    pub lobby_delegation_metadata: solana_address::Address,
+
+    pub delegation_program: solana_address::Address,
+
+    pub system_program: solana_address::Address,
 }
 
 impl Start {
@@ -28,9 +40,33 @@ impl Start {
         args: StartInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(8 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.user, true));
         accounts.push(solana_instruction::AccountMeta::new(self.lobby, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.owner_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.lobby_buffer,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.lobby_delegation_record,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            self.lobby_delegation_metadata,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.delegation_program,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.system_program,
+            false,
+        ));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = StartInstructionData::new().try_to_vec().unwrap();
         let mut args = args.try_to_vec().unwrap();
@@ -84,10 +120,22 @@ impl StartInstructionArgs {
 ///
 ///   0. `[writable, signer]` user
 ///   1. `[writable]` lobby
+///   2. `[optional]` owner_program (default to `5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r`)
+///   3. `[writable]` lobby_buffer
+///   4. `[writable]` lobby_delegation_record
+///   5. `[writable]` lobby_delegation_metadata
+///   6. `[optional]` delegation_program (default to `DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh`)
+///   7. `[optional]` system_program (default to `11111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
 pub struct StartBuilder {
     user: Option<solana_address::Address>,
     lobby: Option<solana_address::Address>,
+    owner_program: Option<solana_address::Address>,
+    lobby_buffer: Option<solana_address::Address>,
+    lobby_delegation_record: Option<solana_address::Address>,
+    lobby_delegation_metadata: Option<solana_address::Address>,
+    delegation_program: Option<solana_address::Address>,
+    system_program: Option<solana_address::Address>,
     id: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
@@ -104,6 +152,45 @@ impl StartBuilder {
     #[inline(always)]
     pub fn lobby(&mut self, lobby: solana_address::Address) -> &mut Self {
         self.lobby = Some(lobby);
+        self
+    }
+    /// `[optional account, default to '5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r']`
+    #[inline(always)]
+    pub fn owner_program(&mut self, owner_program: solana_address::Address) -> &mut Self {
+        self.owner_program = Some(owner_program);
+        self
+    }
+    #[inline(always)]
+    pub fn lobby_buffer(&mut self, lobby_buffer: solana_address::Address) -> &mut Self {
+        self.lobby_buffer = Some(lobby_buffer);
+        self
+    }
+    #[inline(always)]
+    pub fn lobby_delegation_record(
+        &mut self,
+        lobby_delegation_record: solana_address::Address,
+    ) -> &mut Self {
+        self.lobby_delegation_record = Some(lobby_delegation_record);
+        self
+    }
+    #[inline(always)]
+    pub fn lobby_delegation_metadata(
+        &mut self,
+        lobby_delegation_metadata: solana_address::Address,
+    ) -> &mut Self {
+        self.lobby_delegation_metadata = Some(lobby_delegation_metadata);
+        self
+    }
+    /// `[optional account, default to 'DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh']`
+    #[inline(always)]
+    pub fn delegation_program(&mut self, delegation_program: solana_address::Address) -> &mut Self {
+        self.delegation_program = Some(delegation_program);
+        self
+    }
+    /// `[optional account, default to '11111111111111111111111111111111']`
+    #[inline(always)]
+    pub fn system_program(&mut self, system_program: solana_address::Address) -> &mut Self {
+        self.system_program = Some(system_program);
         self
     }
     #[inline(always)]
@@ -131,6 +218,22 @@ impl StartBuilder {
         let accounts = Start {
             user: self.user.expect("user is not set"),
             lobby: self.lobby.expect("lobby is not set"),
+            owner_program: self.owner_program.unwrap_or(solana_address::address!(
+                "5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r"
+            )),
+            lobby_buffer: self.lobby_buffer.expect("lobby_buffer is not set"),
+            lobby_delegation_record: self
+                .lobby_delegation_record
+                .expect("lobby_delegation_record is not set"),
+            lobby_delegation_metadata: self
+                .lobby_delegation_metadata
+                .expect("lobby_delegation_metadata is not set"),
+            delegation_program: self.delegation_program.unwrap_or(solana_address::address!(
+                "DELeGGvXpWV2fqJUhqcF5ZSYMS4JTLjteaAMARRSaeSh"
+            )),
+            system_program: self
+                .system_program
+                .unwrap_or(solana_address::address!("11111111111111111111111111111111")),
         };
         let args = StartInstructionArgs {
             id: self.id.clone().expect("id is not set"),
@@ -145,6 +248,18 @@ pub struct StartCpiAccounts<'a, 'b> {
     pub user: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
+
+    pub owner_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub lobby_buffer: &'b solana_account_info::AccountInfo<'a>,
+
+    pub lobby_delegation_record: &'b solana_account_info::AccountInfo<'a>,
+
+    pub lobby_delegation_metadata: &'b solana_account_info::AccountInfo<'a>,
+
+    pub delegation_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
 }
 
 /// `start` CPI instruction.
@@ -155,6 +270,18 @@ pub struct StartCpi<'a, 'b> {
     pub user: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
+
+    pub owner_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub lobby_buffer: &'b solana_account_info::AccountInfo<'a>,
+
+    pub lobby_delegation_record: &'b solana_account_info::AccountInfo<'a>,
+
+    pub lobby_delegation_metadata: &'b solana_account_info::AccountInfo<'a>,
+
+    pub delegation_program: &'b solana_account_info::AccountInfo<'a>,
+
+    pub system_program: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
     pub __args: StartInstructionArgs,
 }
@@ -169,6 +296,12 @@ impl<'a, 'b> StartCpi<'a, 'b> {
             __program: program,
             user: accounts.user,
             lobby: accounts.lobby,
+            owner_program: accounts.owner_program,
+            lobby_buffer: accounts.lobby_buffer,
+            lobby_delegation_record: accounts.lobby_delegation_record,
+            lobby_delegation_metadata: accounts.lobby_delegation_metadata,
+            delegation_program: accounts.delegation_program,
+            system_program: accounts.system_program,
             __args: args,
         }
     }
@@ -195,9 +328,33 @@ impl<'a, 'b> StartCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(8 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.user.key, true));
         accounts.push(solana_instruction::AccountMeta::new(*self.lobby.key, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.owner_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.lobby_buffer.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.lobby_delegation_record.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new(
+            *self.lobby_delegation_metadata.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.delegation_program.key,
+            false,
+        ));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.system_program.key,
+            false,
+        ));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
                 pubkey: *remaining_account.0.key,
@@ -214,10 +371,16 @@ impl<'a, 'b> StartCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(9 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.user.clone());
         account_infos.push(self.lobby.clone());
+        account_infos.push(self.owner_program.clone());
+        account_infos.push(self.lobby_buffer.clone());
+        account_infos.push(self.lobby_delegation_record.clone());
+        account_infos.push(self.lobby_delegation_metadata.clone());
+        account_infos.push(self.delegation_program.clone());
+        account_infos.push(self.system_program.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -236,6 +399,12 @@ impl<'a, 'b> StartCpi<'a, 'b> {
 ///
 ///   0. `[writable, signer]` user
 ///   1. `[writable]` lobby
+///   2. `[]` owner_program
+///   3. `[writable]` lobby_buffer
+///   4. `[writable]` lobby_delegation_record
+///   5. `[writable]` lobby_delegation_metadata
+///   6. `[]` delegation_program
+///   7. `[]` system_program
 #[derive(Clone, Debug)]
 pub struct StartCpiBuilder<'a, 'b> {
     instruction: Box<StartCpiBuilderInstruction<'a, 'b>>,
@@ -247,6 +416,12 @@ impl<'a, 'b> StartCpiBuilder<'a, 'b> {
             __program: program,
             user: None,
             lobby: None,
+            owner_program: None,
+            lobby_buffer: None,
+            lobby_delegation_record: None,
+            lobby_delegation_metadata: None,
+            delegation_program: None,
+            system_program: None,
             id: None,
             __remaining_accounts: Vec::new(),
         });
@@ -260,6 +435,54 @@ impl<'a, 'b> StartCpiBuilder<'a, 'b> {
     #[inline(always)]
     pub fn lobby(&mut self, lobby: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
         self.instruction.lobby = Some(lobby);
+        self
+    }
+    #[inline(always)]
+    pub fn owner_program(
+        &mut self,
+        owner_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.owner_program = Some(owner_program);
+        self
+    }
+    #[inline(always)]
+    pub fn lobby_buffer(
+        &mut self,
+        lobby_buffer: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.lobby_buffer = Some(lobby_buffer);
+        self
+    }
+    #[inline(always)]
+    pub fn lobby_delegation_record(
+        &mut self,
+        lobby_delegation_record: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.lobby_delegation_record = Some(lobby_delegation_record);
+        self
+    }
+    #[inline(always)]
+    pub fn lobby_delegation_metadata(
+        &mut self,
+        lobby_delegation_metadata: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.lobby_delegation_metadata = Some(lobby_delegation_metadata);
+        self
+    }
+    #[inline(always)]
+    pub fn delegation_program(
+        &mut self,
+        delegation_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.delegation_program = Some(delegation_program);
+        self
+    }
+    #[inline(always)]
+    pub fn system_program(
+        &mut self,
+        system_program: &'b solana_account_info::AccountInfo<'a>,
+    ) -> &mut Self {
+        self.instruction.system_program = Some(system_program);
         self
     }
     #[inline(always)]
@@ -310,6 +533,36 @@ impl<'a, 'b> StartCpiBuilder<'a, 'b> {
             user: self.instruction.user.expect("user is not set"),
 
             lobby: self.instruction.lobby.expect("lobby is not set"),
+
+            owner_program: self
+                .instruction
+                .owner_program
+                .expect("owner_program is not set"),
+
+            lobby_buffer: self
+                .instruction
+                .lobby_buffer
+                .expect("lobby_buffer is not set"),
+
+            lobby_delegation_record: self
+                .instruction
+                .lobby_delegation_record
+                .expect("lobby_delegation_record is not set"),
+
+            lobby_delegation_metadata: self
+                .instruction
+                .lobby_delegation_metadata
+                .expect("lobby_delegation_metadata is not set"),
+
+            delegation_program: self
+                .instruction
+                .delegation_program
+                .expect("delegation_program is not set"),
+
+            system_program: self
+                .instruction
+                .system_program
+                .expect("system_program is not set"),
             __args: args,
         };
         instruction.invoke_signed_with_remaining_accounts(
@@ -324,6 +577,12 @@ struct StartCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     user: Option<&'b solana_account_info::AccountInfo<'a>>,
     lobby: Option<&'b solana_account_info::AccountInfo<'a>>,
+    owner_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    lobby_buffer: Option<&'b solana_account_info::AccountInfo<'a>>,
+    lobby_delegation_record: Option<&'b solana_account_info::AccountInfo<'a>>,
+    lobby_delegation_metadata: Option<&'b solana_account_info::AccountInfo<'a>>,
+    delegation_program: Option<&'b solana_account_info::AccountInfo<'a>>,
+    system_program: Option<&'b solana_account_info::AccountInfo<'a>>,
     id: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,

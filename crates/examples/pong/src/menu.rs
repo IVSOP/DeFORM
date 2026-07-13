@@ -291,6 +291,49 @@ pub fn egui_in_menu(
                             }
                         }
                     }
+
+                    // Start delegates the lobby + inputs to the ephemeral rollup, so it
+                    // only exists on FullyOnChain. `matches!` sidesteps naming the payload.
+                    if matches!(menu.network, Network::FullyOnChain(_))
+                        && ui.button("Start").clicked()
+                    {
+                        match menu.lobby_data.as_ref() {
+                            Some(lobby) => match &lobby.state {
+                                LobbyState::NotStarted(not_started) => {
+                                    match program_client.start_ix(
+                                        user,
+                                        lobby_pda,
+                                        &lobby.metadata,
+                                        not_started,
+                                        GAME_PROGRAM,
+                                    ) {
+                                        Ok(ix) => match send_and_confirm_tx(
+                                            rpc,
+                                            ix,
+                                            keypair,
+                                            menu.selected_preset_idx == 0,
+                                        ) {
+                                            Ok(()) => {
+                                                toasts.0.info("Game started!");
+                                            }
+                                            Err(e) => {
+                                                toasts.0.error(format!("Start failed: {e}"));
+                                            }
+                                        },
+                                        Err(e) => {
+                                            toasts.0.error(format!("Start failed: {e}"));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    toasts.0.error("Lobby already started.");
+                                }
+                            },
+                            None => {
+                                toasts.0.error("Read a lobby first to start.");
+                            }
+                        }
+                    }
                 });
 
                 if ui.button("Read Lobby").clicked() {

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use anchor_lang::prelude::*;
 use deform_core::{
@@ -38,7 +38,7 @@ pub fn handler(ctx: Context<CreateLobbyAccounts>, id: u64, network: Network) -> 
 
     let creator = *ctx.accounts.user.key;
 
-    let mut player_status = HashMap::new();
+    let mut player_status = BTreeMap::new();
     player_status.insert(creator, PlayerStatus::NotReady);
 
     let lobby_account = DeformAccount::Lobby(Lobby {

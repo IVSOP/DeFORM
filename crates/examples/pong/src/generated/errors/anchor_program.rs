@@ -46,24 +46,42 @@ pub enum AnchorProgramError {
     /// 6011 - Failed to serialize inputs account
     #[error("Failed to serialize inputs account")]
     SerializeInputsAccount = 0x177B,
-    /// 6012 - Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES
+    /// 6012 - Failed to deserialize inputs account
+    #[error("Failed to deserialize inputs account")]
+    DeserializeInputsAccount = 0x177C,
+    /// 6013 - Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES
     #[error("Serialized inputs exceed MAX_INPUTS_ACCOUNT_BYTES")]
-    InputsAccountTooLarge = 0x177C,
-    /// 6013 - Unauthorized
+    InputsAccountTooLarge = 0x177D,
+    /// 6014 - Unauthorized
     #[error("Unauthorized")]
-    Unauthorized = 0x177D,
-    /// 6014 - Creator mismatch
+    Unauthorized = 0x177E,
+    /// 6015 - Creator mismatch
     #[error("Creator mismatch")]
-    CreatorMismatch = 0x177E,
-    /// 6015 - Address creation error
+    CreatorMismatch = 0x177F,
+    /// 6016 - Address creation error
     #[error("Address creation error")]
-    AddressError = 0x177F,
-    /// 6016 - Player is not ready
+    AddressError = 0x1780,
+    /// 6017 - Player is not ready
     #[error("Player is not ready")]
-    PlayerNotReady = 0x1780,
-    /// 6017 - Lobby is not fully on-chain
+    PlayerNotReady = 0x1781,
+    /// 6018 - Lobby is not fully on-chain
     #[error("Lobby is not fully on-chain")]
-    NotFullyOnChain = 0x1781,
+    NotFullyOnChain = 0x1782,
+    /// 6019 - Lobby is not in a NotStarted state
+    #[error("Lobby is not in a NotStarted state")]
+    LobbyAlreadyStarted = 0x1783,
+    /// 6020 - Could not init user logic
+    #[error("Could not init user logic")]
+    InitUserLogic = 0x1784,
+    /// 6021 - Could not init game state
+    #[error("Could not init game state")]
+    InitGameState = 0x1785,
+    /// 6022 - Failed to delegate lobby to the ephemeral rollup
+    #[error("Failed to delegate lobby to the ephemeral rollup")]
+    DelegateLobby = 0x1786,
+    /// 6023 - Failed to delegate inputs account to the ephemeral rollup
+    #[error("Failed to delegate inputs account to the ephemeral rollup")]
+    DelegateInputs = 0x1787,
 }
 
 impl From<AnchorProgramError> for solana_program_error::ProgramError {

@@ -3,7 +3,10 @@ use solana_instruction::Instruction;
 
 use crate::accounts::lobby::Network;
 #[cfg(feature = "client")]
-use crate::{accounts::lobby::Lobby, DeformUserLogic, Pubkey};
+use crate::{
+    accounts::lobby::{not_started::LobbyNotStarted, Lobby, LobbyMetadata},
+    DeformUserLogic, Pubkey,
+};
 
 // TODO: cleanup to not repeat things?
 pub enum ReadyArgs {
@@ -44,5 +47,14 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         lobby_pubkey: Pubkey,
         creator: Pubkey,
         lobby: &Lobby<T>,
+    ) -> Result<Instruction, T::Error>;
+
+    fn start_ix(
+        &self,
+        user: Pubkey,
+        lobby_pubkey: Pubkey,
+        lobby_metadata: &LobbyMetadata,
+        not_started: &LobbyNotStarted,
+        game: Pubkey,
     ) -> Result<Instruction, T::Error>;
 }
