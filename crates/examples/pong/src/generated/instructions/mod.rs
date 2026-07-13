@@ -7,8 +7,13 @@
 
 pub(crate) mod r#create_lobby;
 pub(crate) mod r#join_lobby;
+pub(crate) mod r#process_undelegation;
 pub(crate) mod r#ready;
 pub(crate) mod r#start;
+pub(crate) mod r#undelegate;
 pub(crate) mod r#write_and_close;
 
-pub use self::{r#create_lobby::*, r#join_lobby::*, r#ready::*, r#start::*, r#write_and_close::*};
+pub use self::{
+    r#create_lobby::*, r#join_lobby::*, r#process_undelegation::*, r#ready::*, r#start::*,
+    r#undelegate::*, r#write_and_close::*,
+};

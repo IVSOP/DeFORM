@@ -51,4 +51,6 @@ pub enum GameProgramError {
     DelegateLobby,
     #[msg("Failed to delegate inputs account to the ephemeral rollup")]
     DelegateInputs,
+    #[msg("Failed to commit/undelegate accounts")]
+    Undelegate,
 }

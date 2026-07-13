@@ -42,4 +42,20 @@ pub mod anchor_program {
     pub fn start<'info>(ctx: Context<'info, StartGameAccounts<'info>>, id: u64) -> Result<()> {
         start::handler(ctx, id)
     }
+
+    pub fn undelegate<'info>(
+        ctx: Context<'info, UndelegateAccounts<'info>>,
+        id: u64,
+    ) -> Result<()> {
+        undelegate::handler(ctx, id)
+    }
+
+    /// Delegation-program callback. Do not call directly and do not rename — the
+    /// name determines the discriminator the delegation program CPIs into.
+    pub fn process_undelegation(
+        ctx: Context<InitializeAfterUndelegation>,
+        account_seeds: Vec<Vec<u8>>,
+    ) -> Result<()> {
+        undelegate::process_undelegation_handler(ctx, account_seeds)
+    }
 }

@@ -82,6 +82,9 @@ pub enum AnchorProgramError {
     /// 6023 - Failed to delegate inputs account to the ephemeral rollup
     #[error("Failed to delegate inputs account to the ephemeral rollup")]
     DelegateInputs = 0x1787,
+    /// 6024 - Failed to commit/undelegate accounts
+    #[error("Failed to commit/undelegate accounts")]
+    Undelegate = 0x1788,
 }
 
 impl From<AnchorProgramError> for solana_program_error::ProgramError {
