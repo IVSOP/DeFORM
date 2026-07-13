@@ -1,6 +1,9 @@
 use deform_core::{
     Pubkey,
-    accounts::lobby::{DevnetRegion, Lobby, LocalRegion, MainnetRegion, Network, ValidatorNetwork},
+    accounts::lobby::{
+        DevnetRegion, Lobby, LobbyFinished, LobbyState, LocalRegion, MainnetRegion, Network,
+        ValidatorNetwork,
+    },
     game_program_client::{GameProgramClient, ReadyArgs},
 };
 use solana_instruction::Instruction;
@@ -13,7 +16,7 @@ use crate::{
         },
         types::PlayerScore,
     },
-    pong_logic::PongGame,
+    pong_logic::{PongError, PongGame},
 };
 
 pub const GAME_PROGRAM: Pubkey = crate::generated::ANCHOR_PROGRAM_ID;
@@ -83,11 +86,15 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
         admin: Pubkey,
         lobby_pubkey: Pubkey,
         creator: Pubkey,
-        lobby: Lobby<PongGame>,
-    ) -> Instruction {
-        let scores = lobby
-            .game_state
-            .unwrap()
+        lobby: &Lobby<PongGame>,
+    ) -> Result<Instruction, PongError> {
+        let game_state = match &lobby.state {
+            LobbyState::NotStarted(_) => Err(PongError::LobbyNotStarted)?,
+            LobbyState::Ongoing(ongoing) => &ongoing.tick_info.game_state,
+            LobbyState::Finished(LobbyFinished(finished)) => &finished.tick_info.game_state,
+        };
+
+        let scores = game_state
             .players
             .iter()
             .map(|s| PlayerScore {
@@ -95,15 +102,16 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
                 score: s.1.score,
             })
             .collect();
-        WriteAndClose {
+
+        Ok(WriteAndClose {
             admin,
             lobby: lobby_pubkey,
             creator,
         }
         .instruction(WriteAndCloseInstructionArgs {
-            id: lobby.id,
+            id: lobby.metadata.id,
             scores,
-        })
+        }))
     }
 }
 

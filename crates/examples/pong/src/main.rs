@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use deform_core::accounts::lobby::Lobby;
+use deform_core::accounts::{DeformAccount, DeformAccountType};
 use pong::{pong_logic::PongGame, solana::anchor_client::GAME_PROGRAM};
 use solana_address::Address;
 use solana_client::{
@@ -71,7 +71,7 @@ fn fetch_lobbies(rpc_url: &str) -> anyhow::Result<()> {
 
     let program_id = GAME_PROGRAM;
 
-    let discriminator_bytes = wincode::serialize(&deform_core::accounts::AccountType::Lobby)?;
+    let discriminator_bytes = wincode::serialize(&DeformAccountType::Lobby)?;
 
     let config = RpcProgramAccountsConfig {
         filters: Some(vec![RpcFilterType::Memcmp(Memcmp::new_raw_bytes(
@@ -94,8 +94,8 @@ fn fetch_lobbies(rpc_url: &str) -> anyhow::Result<()> {
 
     for (pubkey, account_info) in accounts.iter() {
         if let Some(data) = account_info.data.decode() {
-            match Lobby::<PongGame>::from_bytes(&data) {
-                Ok(lobby) => {
+            match DeformAccount::<PongGame>::from_bytes(&data) {
+                Ok(DeformAccount::Lobby(lobby)) => {
                     let mut obj = serde_json::to_value(&lobby)?;
                     obj.as_object_mut().unwrap().insert(
                         "pubkey".to_string(),
@@ -103,12 +103,15 @@ fn fetch_lobbies(rpc_url: &str) -> anyhow::Result<()> {
                     );
                     results.push(obj);
                 }
+                Ok(_) => {
+                    anyhow::bail!("Failed to deserialize lobby {}: wrong account type", pubkey);
+                }
                 Err(e) => {
-                    eprintln!("Failed to deserialize lobby {}: {}", pubkey, e);
+                    anyhow::bail!("Failed to deserialize lobby {}: {}", pubkey, e);
                 }
             }
         } else {
-            eprintln!("Failed to decode account data for {}", pubkey);
+            anyhow::bail!("Failed to decode account data for {}", pubkey);
         }
     }
 

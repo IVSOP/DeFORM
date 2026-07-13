@@ -41,6 +41,13 @@ pub trait DeformUserLogic:
     + 'static
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
+    // NOTE: intentionally only `Serialize`, not `Deserialize`. These types are only ever
+    // serde-*serialized* (e.g. `serde_json::to_value` for display); deserialization goes
+    // through wincode (`SchemaRead`). Requiring `DeserializeOwned` here would duplicate the
+    // `T: Deserialize<'de>` bound that `#[derive(Deserialize)]` already generates on every
+    // generic type, causing an E0283 ambiguity (HRTB supertrait bound vs. serde's own bound).
+    // NOTE: TLDR: everything blows up if you make this be Deserialize. It doesn't make a lot of sense for this
+    + MaybeSerdeSerialize
 {
     // user must define inputs and game state
     type Inputs: DeformInputs;
@@ -142,10 +149,9 @@ pub trait DeformUserLogic:
     }
 }
 
-// #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
 /// Information on a certain tick of a game
 #[derive(Debug, Clone, SchemaRead, SchemaWrite)]
-#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 pub struct TickInfo<T: DeformUserLogic> {
     /// The current game state at this tick
     pub game_state: T::GameState,
@@ -167,16 +173,27 @@ impl<T> MaybeAnchor for T where T: anchor_lang::AnchorSerialize + anchor_lang::A
 #[cfg(not(feature = "anchor"))]
 impl<T> MaybeAnchor for T {}
 
-/// Trait that does nothing except require serde ser and deser when not in bpf
+/// Trait that does nothing except require serde `Serialize` when not building for bpf.
 #[cfg(not(target_arch = "bpf"))]
-pub trait MaybeSerde: serde::Serialize + serde::de::DeserializeOwned {}
+pub trait MaybeSerdeSerialize: serde::Serialize {}
 #[cfg(not(target_arch = "bpf"))]
-impl<T> MaybeSerde for T where T: serde::Serialize + serde::de::DeserializeOwned {}
+impl<T> MaybeSerdeSerialize for T where T: serde::Serialize {}
 
 #[cfg(target_arch = "bpf")]
-pub trait MaybeSerde {}
+pub trait MaybeSerdeSerialize {}
 #[cfg(target_arch = "bpf")]
-impl<T> MaybeSerde for T {}
+impl<T> MaybeSerdeSerialize for T {}
+
+/// Trait that does nothing except require serde `DeserializeOwned` when not building for bpf.
+#[cfg(not(target_arch = "bpf"))]
+pub trait MaybeSerdeDeserialize: serde::de::DeserializeOwned {}
+#[cfg(not(target_arch = "bpf"))]
+impl<T> MaybeSerdeDeserialize for T where T: serde::de::DeserializeOwned {}
+
+#[cfg(target_arch = "bpf")]
+pub trait MaybeSerdeDeserialize {}
+#[cfg(target_arch = "bpf")]
+impl<T> MaybeSerdeDeserialize for T {}
 
 pub trait DeformInputs:
     Default
@@ -190,7 +207,8 @@ pub trait DeformInputs:
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
     + MaybeAnchor
-    + MaybeSerde
+    + MaybeSerdeSerialize
+    + MaybeSerdeDeserialize
 {
     /// When inputs are predicted, some actions may not make sense to be repeated, such as one-off toggles. Using this, you can decide for yourself to just implement a simple .clone() or, instead, reset some attributes before returning the inputs.
     ///
@@ -208,8 +226,7 @@ pub trait DeformGameState:
     + serde::Serialize
     + for<'de> SchemaRead<'de, DefaultConfig, Dst = Self>
     + SchemaWrite<DefaultConfig, Src = Self>
-    + MaybeAnchor
-    + MaybeSerde
+    + MaybeSerdeSerialize
 {
     fn has_ended(&self) -> bool;
 }

@@ -6,7 +6,9 @@ use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui_notify::EguiToastsPlugin;
 use deform_core::{
     DeformClient, Pubkey,
-    accounts::lobby::{Lobby, Network},
+    accounts::lobby::{
+        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, not_started::LobbyNotStarted,
+    },
 };
 use deform_offline::new_offline_client;
 
@@ -204,31 +206,22 @@ pub fn start_offline(
     players_q: &mut Query<(&mut Player, &mut Visibility)>,
     visual_tick_micros: u64,
 ) -> Result<()> {
-    use deform_core::accounts::lobby::{LobbyStatus, PLayerStatus, PlayerInfo};
-
     let bot_player = Pubkey::new_from_array([255; 32]);
 
-    let mut player_infos = HashMap::new();
+    let mut player_status = HashMap::new();
     for pk in [main_player, bot_player] {
-        player_infos.insert(
-            pk,
-            PlayerInfo {
-                status: PLayerStatus::Ready,
-                inputs: PongInputs::default(),
-            },
-        );
+        player_status.insert(pk, PlayerStatus::Ready);
     }
 
-    let lobby = Lobby::<PongGame>::new(
-        0,
-        0,
-        main_player,
-        LobbyStatus::NotStarted,
-        Network::Web2,
-        None,
-        player_infos,
-        0,
-    );
+    let lobby = Lobby {
+        metadata: LobbyMetadata {
+            id: 0,
+            creator: Pubkey::default(),
+            network: Network::Web2,
+            bump: 0,
+        },
+        state: LobbyState::NotStarted(LobbyNotStarted { player_status }),
+    };
 
     let client = new_offline_client::<PongGame>(main_player, lobby, pong_bot, visual_tick_micros)?;
     commands.insert_resource(MultiplayerClient(client));
@@ -257,12 +250,23 @@ pub fn start_online(
     players_q: &mut Query<(&mut Player, &mut Visibility)>,
     visual_tick_micros: u64,
 ) -> Result<()> {
-    let creator = lobby.creator;
-    let right_player = lobby
-        .player_infos
-        .keys()
-        .find(|pk| **pk != creator)
-        .copied();
+    let creator = lobby.metadata.creator;
+
+    // lobby might be not started or already started I think
+    let right_player = match &lobby.state {
+        LobbyState::Finished(_) => Err(anyhow!("Lobby has already finished!"))?,
+        LobbyState::NotStarted(not_started) => not_started
+            .player_status
+            .keys()
+            .find(|pk| **pk != creator)
+            .copied(),
+        LobbyState::Ongoing(ongoing) => ongoing
+            .tick_info
+            .inputs
+            .keys()
+            .find(|pk| **pk != creator)
+            .copied(),
+    };
 
     let client = deform_quic::new_quic_client::<PongQuicLogic>(
         server_addr.to_string(),
@@ -321,12 +325,16 @@ pub fn update_state(
     ball: Single<&mut Transform, (Without<Player>, With<Ball>)>,
     player_entities: Res<PlayerEntities>,
 ) -> Result<()> {
-    let state = {
-        let shared = client.0.read_state()?;
-        shared.tick_info.game_state.clone()
+    let lobby = client.0.read_state()?.lobby.clone();
+
+    // FIX: do something if game has ended!
+    let ongoing = match lobby.state {
+        LobbyState::NotStarted(_) => Err(anyhow!("Lobby has not started yet"))?, // FIX: just return Ok instead??
+        LobbyState::Finished(_) => Err(anyhow!("Lobby has finished!!"))?,
+        LobbyState::Ongoing(ongoing) => ongoing,
     };
 
-    for (player, new_player_state) in state.players.iter() {
+    for (player, new_player_state) in ongoing.tick_info.game_state.players.iter() {
         let entity = player_entities
             .0
             .get(player)
@@ -335,6 +343,6 @@ pub fn update_state(
         player_transform.translation.y = new_player_state.paddle_y;
     }
 
-    ball.into_inner().translation = state.ball_pos.extend(0.0);
+    ball.into_inner().translation = ongoing.tick_info.game_state.ball_pos.extend(0.0);
     Ok(())
 }

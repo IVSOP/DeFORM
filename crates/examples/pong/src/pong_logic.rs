@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 
 use deform_core::{
-    DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth, accounts::lobby::Lobby,
+    DeformGameState, DeformInputs, DeformUserLogic, Pubkey, Smooth,
+    accounts::lobby::{LobbyMetadata, not_started::LobbyNotStarted},
 };
 use glam::Vec2;
 use wincode::{SchemaRead, SchemaWrite};
@@ -23,7 +24,9 @@ pub const BALL_HALF: f32 = BALL_SIZE / 2.0;
 pub const BALL_SPEED: f32 = 17.5;
 pub const BALL_SPAWN_X: f32 = PADDLE_X - 50.0;
 
-#[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
+#[derive(
+    Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
+)]
 #[cfg_attr(
     feature = "anchor",
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
@@ -34,7 +37,9 @@ pub struct PlayerState {
     pub score: u32,
 }
 
-#[derive(Default, Clone, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
+#[derive(
+    Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
+)]
 #[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
 pub struct PongGameState {
     #[smooth]
@@ -65,32 +70,22 @@ impl PongGameState {
 }
 
 impl DeformGameState for PongGameState {
-    fn new_from_lobby<T: DeformUserLogic>(lobby: &Lobby<T>) -> Self {
-        let mut players = HashMap::new();
-        for player in lobby.player_infos.keys() {
-            players.insert(
-                *player,
-                PlayerState {
-                    paddle_y: 0.0,
-                    score: 0,
-                },
-            );
-        }
-
-        Self {
-            ball_pos: Vec2::ZERO,
-            ball_vel: Vec2::ZERO,
-            creator: lobby.creator,
-            players,
-        }
-    }
-
     fn has_ended(&self) -> bool {
         self.players.values().any(|ps| ps.score >= 10)
     }
 }
 
-#[derive(Default, Clone, Eq, PartialEq, serde::Serialize, SchemaRead, SchemaWrite)]
+#[derive(
+    Default,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    serde::Serialize,
+    serde::Deserialize,
+    SchemaRead,
+    SchemaWrite,
+)]
 #[cfg_attr(
     feature = "anchor",
     derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize)
@@ -102,8 +97,7 @@ pub struct PongInputs {
 
 impl DeformInputs for PongInputs {}
 
-// workaround since Infallible does not have Serialize
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, SchemaRead, SchemaWrite, serde::Serialize, serde::Deserialize)]
 pub struct PongGame;
 
 #[derive(Debug, Clone, serde::Serialize, SchemaRead, SchemaWrite, thiserror::Error)]
@@ -111,6 +105,8 @@ pub enum PongError {
     // needed otherwise SchemaRead will warn about unreachable code
     #[error("unreachable")]
     Never,
+    #[error("Lobby should be started")]
+    LobbyNotStarted,
 }
 
 impl DeformUserLogic for PongGame {
@@ -121,8 +117,34 @@ impl DeformUserLogic for PongGame {
 
     const TICK_RATE_MICROS: u64 = 16667;
 
-    fn new_from_lobby(_lobby: &Lobby<Self>) -> Result<Self, Self::Error> {
+    fn new_from_lobby(
+        _lobby_metadata: &LobbyMetadata,
+        _lobby: &LobbyNotStarted,
+    ) -> Result<PongGame, PongError> {
         Ok(PongGame)
+    }
+
+    fn new_game_from_lobby(
+        lobby_metadata: &LobbyMetadata,
+        lobby: &LobbyNotStarted,
+    ) -> Result<PongGameState, PongError> {
+        let mut players = HashMap::new();
+        for player in lobby.player_status.keys() {
+            players.insert(
+                *player,
+                PlayerState {
+                    paddle_y: 0.0,
+                    score: 0,
+                },
+            );
+        }
+
+        Ok(PongGameState {
+            ball_pos: Vec2::ZERO,
+            ball_vel: Vec2::ZERO,
+            creator: lobby_metadata.creator,
+            players,
+        })
     }
 
     fn advance_frame(

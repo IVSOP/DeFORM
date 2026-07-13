@@ -1,11 +1,13 @@
+use anyhow::anyhow;
 use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, egui};
 use bevy_egui_notify::EguiToasts;
 use deform_core::{
     DeformUserLogic, Pubkey,
     accounts::{
+        DeformAccount,
         inputs::InputsAccount,
-        lobby::{Lobby, Network},
+        lobby::{Lobby, LobbyFinished, LobbyState, Network},
     },
     game_program_client::{GameProgramClient, ReadyArgs},
 };
@@ -226,8 +228,6 @@ pub fn egui_in_menu(
 
                 ui.label(format!("Lobby PDA: {lobby_pda}"));
 
-                let mut new_lobby_data = None;
-
                 ui.horizontal(|ui| {
                     if ui.button("Create Lobby").clicked() {
                         let ix = program_client.create_lobby_ix(
@@ -296,13 +296,45 @@ pub fn egui_in_menu(
                 if ui.button("Read Lobby").clicked() {
                     match rpc.get_account_data(&Address::new_from_array(lobby_pda.to_bytes())) {
                         // FIX: how tf is the server deserializing the lobby???
-                        Ok(data) => match Lobby::<PongGame>::from_bytes(&data) {
-                            Ok(lobby) => {
-                                toasts.0.info(format!(
-                                    "Lobby loaded, players: {}",
-                                    lobby.player_infos.len()
+                        Ok(data) => match DeformAccount::<PongGame>::from_bytes(&data) {
+                            Ok(DeformAccount::Lobby(lobby)) => {
+                                let player_keys: Vec<Pubkey> = match &lobby.state {
+                                    LobbyState::NotStarted(not_started) => {
+                                        not_started.player_status.keys().copied().collect()
+                                    }
+                                    LobbyState::Ongoing(ongoing) => {
+                                        ongoing.tick_info.inputs.keys().copied().collect()
+                                    }
+                                    LobbyState::Finished(LobbyFinished(finished)) => {
+                                        finished.tick_info.inputs.keys().copied().collect()
+                                    }
+                                };
+
+                                toasts
+                                    .0
+                                    .info(format!("Lobby loaded, players: {}", player_keys.len()));
+
+                                ui.label(format!(
+                                    "Creator: {}",
+                                    &lobby.metadata.creator.to_string()[..8]
                                 ));
-                                new_lobby_data = Some(lobby);
+                                ui.label(format!("Players: {}", player_keys.len()));
+                                for pk in player_keys.iter() {
+                                    let role = if *pk == lobby.metadata.creator {
+                                        "L"
+                                    } else {
+                                        "R"
+                                    };
+                                    ui.label(format!("  [{}] {}", role, &pk.to_string()[..8]));
+                                }
+
+                                menu.network = lobby.metadata.network.clone();
+                                menu.lobby_data = Some(lobby);
+                            }
+                            Ok(_) => {
+                                toasts
+                                    .0
+                                    .error(format!("Deserialize failed: wrong account type"));
                             }
                             Err(e) => {
                                 toasts.0.error(format!("Deserialize failed: {e}"));
@@ -311,21 +343,6 @@ pub fn egui_in_menu(
                         Err(e) => {
                             toasts.0.error(format!("RPC error: {e}"));
                         }
-                    }
-                }
-
-                if let Some(lobby) = new_lobby_data {
-                    // Reading a lobby overwrites the picker with its on-chain network.
-                    menu.network = lobby.network.clone();
-                    menu.lobby_data = Some(lobby);
-                }
-
-                if let Some(lobby) = &menu.lobby_data {
-                    ui.label(format!("Creator: {}", &lobby.creator.to_string()[..8]));
-                    ui.label(format!("Players: {}", lobby.player_infos.len()));
-                    for pk in lobby.player_infos.keys() {
-                        let role = if *pk == lobby.creator { "L" } else { "R" };
-                        ui.label(format!("  [{}] {}", role, &pk.to_string()[..8]));
                     }
                 }
 
@@ -390,23 +407,46 @@ pub fn egui_in_menu(
 }
 
 pub fn egui_in_game(mut contexts: EguiContexts, client: Res<MultiplayerClient>) -> Result {
-    let state = {
-        let shared = client.0.read_state()?;
-        shared.tick_info.game_state.clone()
+    let lobby = client.0.read_state()?.lobby.clone();
+
+    let creator = lobby.metadata.creator;
+
+    let (creator_score, right_player_score) = match &lobby.state {
+        LobbyState::Finished(_) => Err(anyhow!("Lobby has already finished!"))?,
+        LobbyState::NotStarted(_) => (0, 0),
+        LobbyState::Ongoing(ongoing) => {
+            let creator_score = ongoing
+                .tick_info
+                .game_state
+                .players
+                .get(&creator)
+                .map_or(0, |info| info.score);
+
+            let right_player = ongoing
+                .tick_info
+                .inputs
+                .keys()
+                .find(|pk| **pk != creator)
+                .copied();
+
+            let right_player_score = if let Some(right_player) = &right_player {
+                ongoing
+                    .tick_info
+                    .game_state
+                    .players
+                    .get(right_player)
+                    .map_or(0, |info| info.score)
+            } else {
+                0
+            };
+
+            (creator_score, right_player_score)
+        }
     };
 
-    let creator = state.creator;
-    let right_pk = state.players.keys().find(|pk| **pk != creator).copied();
-
     egui::Window::new("Scoreboard").show(contexts.ctx_mut()?, |ui| {
-        if let Some(ps) = state.players.get(&creator) {
-            ui.label(format!("Player 1 (Left): {}", ps.score));
-        }
-        if let Some(right) = right_pk {
-            if let Some(ps) = state.players.get(&right) {
-                ui.label(format!("Player 2 (Right): {}", ps.score));
-            }
-        }
+        ui.label(format!("Player 1 (Left): {}", creator_score));
+        ui.label(format!("Player 2 (Right): {}", right_player_score));
     });
     Ok(())
 }
