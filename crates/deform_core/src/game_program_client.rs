@@ -38,11 +38,16 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         lobby: Pubkey,
         lobby_id: u64,
         network: Network,
-    ) -> Instruction;
+    ) -> Result<Instruction, T::Error>;
 
-    fn join_lobby_ix(&self, user: Pubkey, lobby: Pubkey, lobby_id: u64) -> Instruction;
+    fn join_lobby_ix(
+        &self,
+        user: Pubkey,
+        lobby: Pubkey,
+        lobby_id: u64,
+    ) -> Result<Instruction, T::Error>;
 
-    fn ready_ix(&self, args: ReadyArgs) -> Instruction;
+    fn ready_ix(&self, args: ReadyArgs) -> Result<Instruction, T::Error>;
 
     fn write_and_close_ix(
         &self,

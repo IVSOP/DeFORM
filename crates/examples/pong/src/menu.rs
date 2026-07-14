@@ -230,16 +230,25 @@ pub fn egui_in_menu(
 
                 ui.horizontal(|ui| {
                     if ui.button("Create Lobby").clicked() {
-                        let ix = program_client.create_lobby_ix(
+                        match program_client.create_lobby_ix(
                             user,
                             lobby_pda,
                             lobby_id,
                             menu.network.clone(),
-                        );
-                        match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
-                            Ok(()) => {
-                                toasts.0.info("Lobby created!");
-                            }
+                        ) {
+                            Ok(ix) => match send_and_confirm_tx(
+                                rpc,
+                                ix,
+                                keypair,
+                                menu.selected_preset_idx == 0,
+                            ) {
+                                Ok(()) => {
+                                    toasts.0.info("Lobby created!");
+                                }
+                                Err(e) => {
+                                    toasts.0.error(format!("Create failed: {e}"));
+                                }
+                            },
                             Err(e) => {
                                 toasts.0.error(format!("Create failed: {e}"));
                             }
@@ -247,11 +256,20 @@ pub fn egui_in_menu(
                     }
 
                     if ui.button("Join Lobby").clicked() {
-                        let ix = program_client.join_lobby_ix(user, lobby_pda, lobby_id);
-                        match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
-                            Ok(()) => {
-                                toasts.0.info("Joined lobby!");
-                            }
+                        match program_client.join_lobby_ix(user, lobby_pda, lobby_id) {
+                            Ok(ix) => match send_and_confirm_tx(
+                                rpc,
+                                ix,
+                                keypair,
+                                menu.selected_preset_idx == 0,
+                            ) {
+                                Ok(()) => {
+                                    toasts.0.info("Joined lobby!");
+                                }
+                                Err(e) => {
+                                    toasts.0.error(format!("Join failed: {e}"));
+                                }
+                            },
                             Err(e) => {
                                 toasts.0.error(format!("Join failed: {e}"));
                             }
@@ -281,11 +299,20 @@ pub fn egui_in_menu(
                                 }
                             }
                         };
-                        let ix = program_client.ready_ix(args);
-                        match send_and_confirm_tx(rpc, ix, keypair, menu.selected_preset_idx == 0) {
-                            Ok(()) => {
-                                toasts.0.info("Ready!");
-                            }
+                        match program_client.ready_ix(args) {
+                            Ok(ix) => match send_and_confirm_tx(
+                                rpc,
+                                ix,
+                                keypair,
+                                menu.selected_preset_idx == 0,
+                            ) {
+                                Ok(()) => {
+                                    toasts.0.info("Ready!");
+                                }
+                                Err(e) => {
+                                    toasts.0.error(format!("Ready failed: {e}"));
+                                }
+                            },
                             Err(e) => {
                                 toasts.0.error(format!("Ready failed: {e}"));
                             }

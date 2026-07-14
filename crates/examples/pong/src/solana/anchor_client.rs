@@ -43,8 +43,8 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
         lobby: Pubkey,
         id: u64,
         network: Network,
-    ) -> Instruction {
-        CreateLobby {
+    ) -> Result<Instruction, PongError> {
+        Ok(CreateLobby {
             user,
             lobby,
             system_program: solana_system_interface::program::ID,
@@ -52,39 +52,44 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
         .instruction(CreateLobbyInstructionArgs {
             id,
             network: network.into(),
-        })
+        }))
     }
 
-    fn join_lobby_ix(&self, user: Pubkey, lobby: Pubkey, id: u64) -> Instruction {
-        JoinLobby {
+    fn join_lobby_ix(
+        &self,
+        user: Pubkey,
+        lobby: Pubkey,
+        id: u64,
+    ) -> Result<Instruction, PongError> {
+        Ok(JoinLobby {
             user,
             lobby,
             system_program: solana_system_interface::program::ID,
         }
-        .instruction(JoinLobbyInstructionArgs { id })
+        .instruction(JoinLobbyInstructionArgs { id }))
     }
 
-    fn ready_ix(&self, args: ReadyArgs) -> Instruction {
+    fn ready_ix(&self, args: ReadyArgs) -> Result<Instruction, PongError> {
         match args {
-            ReadyArgs::Web2 { user, lobby, id } => Ready {
+            ReadyArgs::Web2 { user, lobby, id } => Ok(Ready {
                 user,
                 lobby,
                 inputs: None,
                 system_program: solana_system_interface::program::ID,
             }
-            .instruction(ReadyInstructionArgs { id }),
+            .instruction(ReadyInstructionArgs { id })),
             ReadyArgs::FullyOnchain {
                 user,
                 lobby,
                 id,
                 inputs,
-            } => Ready {
+            } => Ok(Ready {
                 user,
                 lobby,
                 inputs: Some(inputs),
                 system_program: solana_system_interface::program::ID,
             }
-            .instruction(ReadyInstructionArgs { id }),
+            .instruction(ReadyInstructionArgs { id })),
         }
     }
 
