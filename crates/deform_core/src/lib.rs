@@ -17,7 +17,9 @@ pub use client::{DeformClient, DeformSharedBackendState, Stats};
 pub use error::{DeformError, DeformResult};
 pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
-use crate::accounts::lobby::{not_started::LobbyNotStarted, LobbyMetadata};
+use crate::accounts::lobby::{
+    not_started::LobbyNotStarted, LobbyMetadata, ValidatorNetwork,
+};
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
@@ -61,7 +63,7 @@ pub trait DeformUserLogic:
         + Display;
 
     /// Microseconds per simulation tick. For 60 fps, use `16667`.
-    const TICK_RATE_MICROS: u64;
+    const TICK_RATE_MICROS: u64 = 16667;
 
     // TODO: this is really ugly
     /// Ephemeral rollups are very finicky when it comes to resizing accounts, and the docs are not clear.
@@ -144,6 +146,18 @@ pub trait DeformUserLogic:
         _new_info: &TickInfo<Self>,
     ) -> Result<(), Self::Error> {
         Ok(())
+    }
+
+    // There is no mechanism to know, on-chain, how long each slot lasts
+    // I also can't ask the player, as he could use that to do bad things
+    // At the same time I want the user to be able to override this at any time
+    // So, I provide a default here, but the user can do whatever he wants
+    fn get_micros_per_slot(&self, network: &ValidatorNetwork) -> u64 {
+        match network {
+            ValidatorNetwork::Localhost(_) => 16667, // 60hz
+            ValidatorNetwork::Devnet(_) => 50000,    // 20hz
+            ValidatorNetwork::Mainnet(_) => 50000,   // 20hz
+        }
     }
 }
 

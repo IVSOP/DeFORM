@@ -1,7 +1,10 @@
+use std::collections::BTreeMap;
+
 use anchor_lang::prelude::*;
 use deform_core::{
     accounts::{
-        lobby::{LobbyFinished, LobbyState, Network},
+        inputs::InputsAccount,
+        lobby::{ongoing::LobbyOngoing, LobbyFinished, LobbyState, Network},
         DeformAccount,
     },
     DeformGameState, DeformUserLogic,
@@ -9,6 +12,7 @@ use deform_core::{
 
 use crate::{
     error::GameProgramError,
+    state::UserLogic,
     util::{deser_and_check_inputs, deser_and_check_lobby},
 };
 
@@ -25,9 +29,9 @@ pub struct TickAccounts<'info> {
 pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Result<()> {
     let mut lobby = deser_and_check_lobby(&ctx.accounts.lobby, id, *ctx.program_id)?;
 
-    if !matches!(lobby.metadata.network, Network::FullyOnChain(_)) {
-        Err(GameProgramError::NotFullyOnChain)?;
-    }
+    let Network::FullyOnChain(network) = &lobby.metadata.network else {
+        return Err(GameProgramError::NotFullyOnChain)?;
+    };
 
     // WARN: this makes lobby.state get moved out, and it needs to be placed back to be updated
     // done on purpose to easily change it to LobbyState::Finished
@@ -43,30 +47,62 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
     };
     ongoing.slot = Some(current_slot);
 
-    // TODO: in the future, might want to run N times for all the slots we have missed
     if slot_delta > 0 {
         if ctx.remaining_accounts.len() != ongoing.tick_info.inputs.len() {
             Err(ProgramError::NotEnoughAccountKeys)?;
         }
 
-        let current_tick = ongoing.tick;
-        for ((player, current_inputs), inputs_account) in ongoing
+        let mut inputs_infos: BTreeMap<Pubkey, InputsAccount<UserLogic>> = BTreeMap::new();
+        for (player, inputs_account) in ongoing
             .tick_info
             .inputs
-            .iter_mut()
+            .keys()
             .zip(ctx.remaining_accounts.iter())
         {
             let mut inputs_info =
                 deser_and_check_inputs(inputs_account, *player, id, *ctx.program_id)?;
 
-            if let Some(new_inputs) = inputs_info.inputs.get(&current_tick) {
-                *current_inputs = new_inputs.clone();
-            }
+            // we can cleanup all old inputs now, we will only be using inputs that are more recent than this
+            inputs_info.inputs.retain(|tick, _| *tick >= ongoing.tick);
 
-            // cleanup all inputs
-            inputs_info.inputs.retain(|tick, _| *tick > current_tick);
+            inputs_infos.insert(*player, inputs_info);
+        }
 
-            // reserialize inputs account. account rent should be the same
+        // Elapsed real time is `slot_delta * micros_per_slot`; run one game tick per
+        // `TICK_RATE_MICROS` of it so the on-chain sim keeps pace with the slot clock
+        // (e.g. a 50ms devnet slot = 3 ticks at 60Hz). Always at least one tick.
+        let micros_per_slot = ongoing.user_logic.get_micros_per_slot(network);
+        let num_ticks = (slot_delta * micros_per_slot
+            / <UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
+            .max(1);
+
+        // Run the simulation, threading the owned `LobbyOngoing` through each tick.
+        // Once `advance_tick` returns `Finished`, the `let ... else` breaks so we never
+        // tick a finished lobby again.
+        let mut lobby_state = LobbyState::Ongoing(ongoing);
+        for _ in 0..num_ticks {
+            let LobbyState::Ongoing(ongoing) = lobby_state else {
+                break;
+            };
+            lobby_state = advance_tick(ongoing, &mut inputs_infos)?;
+        }
+        lobby.state = lobby_state;
+
+        // reserialize lobby
+        {
+            let mut data = ctx.accounts.lobby.data.borrow_mut();
+            DeformAccount::Lobby(lobby)
+                .write_into(&mut data)
+                .map_err(|_| error!(GameProgramError::SerializeLobby))?;
+        }
+
+        // Order matches how `inputs_infos` was built: both `inputs_infos` (a BTreeMap
+        // keyed by player) and `remaining_accounts` follow the sorted-pubkey order of
+        // `tick_info.inputs`, so consuming the values realigns them with their accounts.
+        for (inputs_info, inputs_account) in inputs_infos
+            .into_values()
+            .zip(ctx.remaining_accounts.iter())
+        {
             {
                 let mut data = inputs_account.data.borrow_mut();
                 DeformAccount::Inputs(inputs_info)
@@ -74,36 +110,48 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
                     .map_err(|_| error!(GameProgramError::SerializeInputsAccount))?;
             }
         }
-
-        let user_logic = &mut ongoing.user_logic;
-        // ongoing.tick_info.inputs has the latest inputs already, this is confusing but faster
-        let new_game_state = user_logic
-            .advance_frame(&ongoing.tick_info.game_state, &ongoing.tick_info.inputs)
-            .map_err(|e| {
-                msg!("Error advancing frame: {}", e.to_string());
-                GameProgramError::AdvanceFrame
-            })?;
-
-        ongoing.tick_info.game_state = new_game_state;
-
-        // Advance the tick only after the frame has been simulated. This mirrors the
-        // off-chain simulations (deform_offline / deform_quic server match loop),
-        // which read inputs at `current_tick`, advance the frame, then increment.
-        ongoing.tick += 1;
-
-        lobby.state = if ongoing.tick_info.game_state.has_ended() {
-            LobbyState::Finished(LobbyFinished(ongoing))
-        } else {
-            LobbyState::Ongoing(ongoing)
-        };
-
-        {
-            let mut data = ctx.accounts.lobby.data.borrow_mut();
-            DeformAccount::Lobby(lobby)
-                .write_into(&mut data)
-                .map_err(|_| error!(GameProgramError::SerializeLobby))?;
-        }
     }
 
     Ok(())
+}
+
+/// Advance the lobby by a single tick: apply this tick's inputs, run the frame, bump
+/// the tick counter, and return the resulting state (`Ongoing` or `Finished`).
+///
+/// Named `advance_tick` rather than `tick` so it doesn't collide with the `tick`
+/// instruction that `#[program]` re-exports at the crate root.
+pub fn advance_tick(
+    mut ongoing: LobbyOngoing<UserLogic>,
+    inputs_infos: &mut BTreeMap<Pubkey, InputsAccount<UserLogic>>,
+) -> Result<LobbyState<UserLogic>> {
+    let current_tick = ongoing.tick;
+    for (player, current_inputs) in ongoing.tick_info.inputs.iter_mut() {
+        let inputs_info = inputs_infos.get_mut(player).unwrap();
+
+        if let Some(new_inputs) = inputs_info.inputs.remove(&current_tick) {
+            *current_inputs = new_inputs.clone();
+        }
+    }
+
+    let user_logic = &mut ongoing.user_logic;
+    // ongoing.tick_info.inputs has the latest inputs already, this is confusing but faster
+    let new_game_state = user_logic
+        .advance_frame(&ongoing.tick_info.game_state, &ongoing.tick_info.inputs)
+        .map_err(|e| {
+            msg!("Error advancing frame: {}", e.to_string());
+            GameProgramError::AdvanceFrame
+        })?;
+
+    ongoing.tick_info.game_state = new_game_state;
+
+    // Advance the tick only after the frame has been simulated. This mirrors the
+    // off-chain simulations (deform_offline / deform_quic server match loop),
+    // which read inputs at `current_tick`, advance the frame, then increment.
+    ongoing.tick += 1;
+
+    if ongoing.tick_info.game_state.has_ended() {
+        Ok(LobbyState::Finished(LobbyFinished(ongoing)))
+    } else {
+        Ok(LobbyState::Ongoing(ongoing))
+    }
 }
