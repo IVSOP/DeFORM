@@ -67,24 +67,30 @@ pub enum AnchorProgramError {
     /// 6018 - Lobby is not fully on-chain
     #[error("Lobby is not fully on-chain")]
     NotFullyOnChain = 0x1782,
-    /// 6019 - Lobby is not in a NotStarted state
+    /// 6019 - Lobby is not web2
+    #[error("Lobby is not web2")]
+    NotWeb2 = 0x1783,
+    /// 6020 - Lobby is not in a NotStarted state
     #[error("Lobby is not in a NotStarted state")]
-    LobbyAlreadyStarted = 0x1783,
-    /// 6020 - Could not init user logic
+    LobbyAlreadyStarted = 0x1784,
+    /// 6021 - Could not init user logic
     #[error("Could not init user logic")]
-    InitUserLogic = 0x1784,
-    /// 6021 - Could not init game state
+    InitUserLogic = 0x1785,
+    /// 6022 - Could not init game state
     #[error("Could not init game state")]
-    InitGameState = 0x1785,
-    /// 6022 - Failed to delegate lobby to the ephemeral rollup
+    InitGameState = 0x1786,
+    /// 6023 - Failed to delegate lobby to the ephemeral rollup
     #[error("Failed to delegate lobby to the ephemeral rollup")]
-    DelegateLobby = 0x1786,
-    /// 6023 - Failed to delegate inputs account to the ephemeral rollup
+    DelegateLobby = 0x1787,
+    /// 6024 - Failed to delegate inputs account to the ephemeral rollup
     #[error("Failed to delegate inputs account to the ephemeral rollup")]
-    DelegateInputs = 0x1787,
-    /// 6024 - Failed to commit/undelegate accounts
+    DelegateInputs = 0x1788,
+    /// 6025 - Failed to commit/undelegate accounts
     #[error("Failed to commit/undelegate accounts")]
-    Undelegate = 0x1788,
+    Undelegate = 0x1789,
+    /// 6026 - Lobby is not Ongoing
+    #[error("Lobby is not Ongoing")]
+    LobbyNotOngoing = 0x178A,
 }
 
 impl From<AnchorProgramError> for solana_program_error::ProgramError {

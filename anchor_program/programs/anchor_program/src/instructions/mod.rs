@@ -1,6 +1,7 @@
 pub mod create_lobby;
 pub mod join_lobby;
 pub mod ready;
+pub mod set_inputs;
 pub mod start;
 pub mod undelegate;
 pub mod write_and_close;
@@ -9,6 +10,7 @@ pub mod write_and_close;
 pub use create_lobby::*;
 pub use join_lobby::*;
 pub use ready::*;
+pub use set_inputs::*;
 pub use start::*;
 pub use undelegate::*;
 pub use write_and_close::*;

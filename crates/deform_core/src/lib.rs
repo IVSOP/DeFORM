@@ -75,7 +75,8 @@ pub trait DeformUserLogic:
     ///
     /// As such, I have the user specify in number of serialized bytes. I also cannot have the user specify max bytes for game state/inputs only,
     /// as this would easily break for types that are dynamic, have enums, etc, and even if that were not the case I would have to guess how wincode is serializing things
-    const MAX_INPUTS_ACCOUNT_BYTES: u64 = 256;
+    const MAX_INPUTS_ACCOUNT_BYTES: u64 = 1024;
+    const MAX_INPUTS: u64 = 32;
     const MAX_LOBBY_ACCOUNT_BYTES: u64 = 1024;
 
     fn new_from_lobby(

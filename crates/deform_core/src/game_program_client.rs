@@ -1,4 +1,7 @@
 #[cfg(feature = "client")]
+use std::collections::HashMap;
+
+#[cfg(feature = "client")]
 use solana_instruction::Instruction;
 
 use crate::accounts::lobby::Network;
@@ -56,5 +59,15 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         lobby_metadata: &LobbyMetadata,
         not_started: &LobbyNotStarted,
         game: Pubkey,
+    ) -> Result<Instruction, T::Error>;
+
+    fn set_inputs_ix(
+        &self,
+        user: Pubkey,
+        // these two accounts are already passed in as this instruction will run multiple times per frame
+        inputs_account: Pubkey,
+        lobby_account: Pubkey,
+        lobby_id: u64,
+        inputs: &HashMap<u64, T::Inputs>,
     ) -> Result<Instruction, T::Error>;
 }

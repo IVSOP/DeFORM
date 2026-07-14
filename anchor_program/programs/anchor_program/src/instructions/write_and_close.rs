@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use deform_core::accounts::lobby::Network;
 
 use crate::{constants::ADMIN, error::GameProgramError, util::deser_and_check_lobby};
 
@@ -28,6 +29,10 @@ pub fn handler(
     let lobby_info = ctx.accounts.lobby.to_account_info();
 
     let lobby_account = deser_and_check_lobby(&lobby_info, id, *ctx.program_id)?;
+
+    if !matches!(lobby_account.metadata.network, Network::Web2) {
+        Err(GameProgramError::NotWeb2)?;
+    }
 
     require_keys_eq!(
         ctx.accounts.creator.key(),

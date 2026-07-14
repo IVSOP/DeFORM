@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use deform_core::{
     Pubkey,
     accounts::{
@@ -16,12 +18,12 @@ use crate::{
     generated::{
         instructions::{
             CreateLobby, CreateLobbyInstructionArgs, JoinLobby, JoinLobbyInstructionArgs, Ready,
-            ReadyInstructionArgs, Start, StartInstructionArgs, WriteAndClose,
-            WriteAndCloseInstructionArgs,
+            ReadyInstructionArgs, SetInputs, SetInputsInstructionArgs, Start, StartInstructionArgs,
+            WriteAndClose, WriteAndCloseInstructionArgs,
         },
         types::PlayerScore,
     },
-    pong_logic::{PongError, PongGame},
+    pong_logic::{PongError, PongGame, PongInputs},
 };
 
 pub const GAME_PROGRAM: Pubkey = crate::generated::ANCHOR_PROGRAM_ID;
@@ -158,6 +160,28 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
             },
             &[],
         ))
+    }
+
+    fn set_inputs_ix(
+        &self,
+        user: Pubkey,
+        inputs_account: Pubkey,
+        lobby_account: Pubkey,
+        lobby_id: u64,
+        inputs: &HashMap<u64, PongInputs>,
+    ) -> Result<Instruction, PongError> {
+        let batch_inputs_bytes =
+            wincode::serialize(inputs).map_err(|e| PongError::SerializeInputs(e.to_string()))?;
+
+        Ok(SetInputs {
+            user,
+            lobby: lobby_account,
+            inputs: inputs_account,
+        }
+        .instruction(SetInputsInstructionArgs {
+            id: lobby_id,
+            batch_inputs_bytes,
+        }))
     }
 }
 

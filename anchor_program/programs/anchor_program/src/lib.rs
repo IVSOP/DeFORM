@@ -8,6 +8,7 @@ use anchor_lang::prelude::*;
 pub use constants::*;
 use deform_core::accounts::lobby::Network;
 pub use instructions::*;
+use state::Inputs;
 
 declare_id!("5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r");
 
@@ -41,6 +42,18 @@ pub mod anchor_program {
 
     pub fn start<'info>(ctx: Context<'info, StartGameAccounts<'info>>, id: u64) -> Result<()> {
         start::handler(ctx, id)
+    }
+
+    // anchor devs believe you are stupid so they don't let you use BTreeMap here, so it has to be a Vec
+    // also, codama will generate a new Inputs type instead of just reusing the current one, if you try to use a workaround struct
+    // the easiest solution is really to just use wincode
+    pub fn set_inputs<'info>(
+        ctx: Context<'info, SetInputsAccounts<'info>>,
+        id: u64,
+        // bytes of a HashMap<u64, Inputs>
+        batch_inputs_bytes: Vec<u8>,
+    ) -> Result<()> {
+        set_inputs::handler(ctx, id, batch_inputs_bytes)
     }
 
     pub fn undelegate<'info>(

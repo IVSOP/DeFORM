@@ -41,6 +41,8 @@ pub enum GameProgramError {
     PlayerNotReady,
     #[msg("Lobby is not fully on-chain")]
     NotFullyOnChain,
+    #[msg("Lobby is not web2")]
+    NotWeb2,
     #[msg("Lobby is not in a NotStarted state")]
     LobbyAlreadyStarted,
     #[msg("Could not init user logic")]
@@ -53,4 +55,6 @@ pub enum GameProgramError {
     DelegateInputs,
     #[msg("Failed to commit/undelegate accounts")]
     Undelegate,
+    #[msg("Lobby is not Ongoing")]
+    LobbyNotOngoing,
 }
