@@ -46,7 +46,7 @@ pub mod anchor_program {
 
     // anchor devs believe you are stupid so they don't let you use BTreeMap here, so it has to be a Vec
     // also, codama will generate a new Inputs type instead of just reusing the current one, if you try to use a workaround struct
-    // the easiest solution is really to just use wincode
+    // the easiest solution is really to just use wincode and only pass in the bytes
     pub fn set_inputs<'info>(
         ctx: Context<'info, SetInputsAccounts<'info>>,
         id: u64,
@@ -54,6 +54,10 @@ pub mod anchor_program {
         batch_inputs_bytes: Vec<u8>,
     ) -> Result<()> {
         set_inputs::handler(ctx, id, batch_inputs_bytes)
+    }
+
+    pub fn tick<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Result<()> {
+        tick::handler(ctx, id)
     }
 
     pub fn undelegate<'info>(

@@ -57,4 +57,6 @@ pub enum GameProgramError {
     Undelegate,
     #[msg("Lobby is not Ongoing")]
     LobbyNotOngoing,
+    #[msg("Error advancing frame")]
+    AdvanceFrame,
 }

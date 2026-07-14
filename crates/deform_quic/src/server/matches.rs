@@ -11,7 +11,7 @@ use better_tokio_select::tokio_select;
 use deform_core::{
     DeformError, DeformGameState, DeformUserLogic, Pubkey, TickInfo,
     accounts::lobby::{
-        Lobby, LobbyMetadata, LobbyState, not_started::LobbyNotStarted, started::LobbyOngoing,
+        Lobby, LobbyMetadata, LobbyState, not_started::LobbyNotStarted, ongoing::LobbyOngoing,
     },
     error::{UserFacingError, UserFacingResult},
 };
@@ -171,6 +171,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     let mut lobby = Lobby {
         metadata: lobby_metadata,
         state: LobbyState::Ongoing(LobbyOngoing {
+            slot: None,
             tick: 0,
             user_logic,
             tick_info: TickInfo { game_state, inputs },

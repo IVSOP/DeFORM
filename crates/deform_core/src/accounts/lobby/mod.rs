@@ -3,12 +3,12 @@ use strum_macros::Display;
 use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    accounts::lobby::{not_started::LobbyNotStarted, started::LobbyOngoing},
+    accounts::lobby::{not_started::LobbyNotStarted, ongoing::LobbyOngoing},
     DeformUserLogic, Pubkey,
 };
 
 pub mod not_started;
-pub mod started;
+pub mod ongoing;
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(

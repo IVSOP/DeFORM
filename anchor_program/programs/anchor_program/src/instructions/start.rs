@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use anchor_lang::prelude::*;
 use deform_core::{
     accounts::{
-        lobby::{started::LobbyOngoing, LobbyState, Network, PlayerStatus},
+        lobby::{ongoing::LobbyOngoing, LobbyState, Network, PlayerStatus},
         DeformAccount,
     },
     DeformUserLogic, TickInfo,
@@ -150,6 +150,7 @@ pub fn handler<'info>(ctx: Context<'info, StartGameAccounts<'info>>, id: u64) ->
         })?;
 
     lobby.state = LobbyState::Ongoing(LobbyOngoing {
+        slot: None, // we can only set it once we are in the other validator
         tick: 0,
         tick_info: TickInfo { inputs, game_state },
         user_logic,

@@ -12,7 +12,7 @@ use better_tokio_select::tokio_select;
 use deform_core::{
     DeformClient, DeformError, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
     Smooth, TickInfo,
-    accounts::lobby::{Lobby, LobbyState, started::LobbyOngoing},
+    accounts::lobby::{Lobby, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
@@ -70,6 +70,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     Lobby {
                         metadata: lobby.metadata.clone(),
                         state: LobbyState::Ongoing(LobbyOngoing {
+                            slot: None,
                             tick: 0,
                             tick_info: TickInfo {
                                 game_state: game_state.clone(),

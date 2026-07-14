@@ -13,7 +13,7 @@ use better_tokio_select::tokio_select;
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
     DeformUserLogic, Pubkey, Smooth, TickInfo,
-    accounts::lobby::{Lobby, LobbyFinished, LobbyState, started::LobbyOngoing},
+    accounts::lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
 use glam::FloatExt;
@@ -130,6 +130,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     Lobby {
                         metadata: lobby.metadata.clone(),
                         state: LobbyState::Ongoing(LobbyOngoing {
+                            slot: None,
                             tick: 0,
                             tick_info: tick_info.clone(),
                             user_logic: user_logic.clone(),

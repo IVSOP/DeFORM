@@ -91,6 +91,9 @@ pub enum AnchorProgramError {
     /// 6026 - Lobby is not Ongoing
     #[error("Lobby is not Ongoing")]
     LobbyNotOngoing = 0x178A,
+    /// 6027 - Error advancing frame
+    #[error("Error advancing frame")]
+    AdvanceFrame = 0x178B,
 }
 
 impl From<AnchorProgramError> for solana_program_error::ProgramError {
