@@ -75,4 +75,32 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         lobby_id: u64,
         inputs: &HashMap<u64, T::Inputs>,
     ) -> Result<Instruction, T::Error>;
+
+    /// Builds the instruction the crank runs each interval to advance the game
+    /// on the ephemeral rollup. It is signerless — the magic-program crank
+    /// executor drives it unattended. `inputs_accounts` are the (already-delegated)
+    /// per-player inputs accounts the tick reads, in lobby order. Exposed as its
+    /// own method so [`Self::init_crank_ix`] can embed its `Instruction`, and so
+    /// an off-chain driver could also send it directly.
+    fn tick_ix(
+        &self,
+        lobby_account: Pubkey,
+        lobby_id: u64,
+        inputs_accounts: &[Pubkey],
+    ) -> Result<Instruction, T::Error>;
+
+    /// Builds an instruction that schedules a recurring crank/task on the
+    /// ephemeral rollup, which runs [`Self::tick_ix`] every
+    /// `execution_interval_millis` for `iterations` times. Assumes the lobby and
+    /// inputs accounts are already delegated to the rollup. Must be sent to the
+    /// ER (not the base layer).
+    fn init_crank_ix(
+        &self,
+        payer: Pubkey,
+        lobby_account: Pubkey,
+        lobby_id: u64,
+        inputs_accounts: &[Pubkey],
+        execution_interval_millis: i64,
+        iterations: i64,
+    ) -> Result<Instruction, T::Error>;
 }

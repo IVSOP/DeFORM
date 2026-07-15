@@ -12,8 +12,6 @@ pub const TICK_DISCRIMINATOR: [u8; 8] = [92, 79, 44, 8, 101, 80, 63, 15];
 /// Accounts.
 #[derive(Debug)]
 pub struct Tick {
-    pub user: solana_address::Address,
-
     pub lobby: solana_address::Address,
 }
 
@@ -28,8 +26,7 @@ impl Tick {
         args: TickInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(self.user, true));
+        let mut accounts = Vec::with_capacity(1 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.lobby, false));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = TickInstructionData::new().try_to_vec().unwrap();
@@ -82,11 +79,9 @@ impl TickInstructionArgs {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable, signer]` user
-///   1. `[writable]` lobby
+///   0. `[writable]` lobby
 #[derive(Clone, Debug, Default)]
 pub struct TickBuilder {
-    user: Option<solana_address::Address>,
     lobby: Option<solana_address::Address>,
     id: Option<u64>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
@@ -95,11 +90,6 @@ pub struct TickBuilder {
 impl TickBuilder {
     pub fn new() -> Self {
         Self::default()
-    }
-    #[inline(always)]
-    pub fn user(&mut self, user: solana_address::Address) -> &mut Self {
-        self.user = Some(user);
-        self
     }
     #[inline(always)]
     pub fn lobby(&mut self, lobby: solana_address::Address) -> &mut Self {
@@ -129,7 +119,6 @@ impl TickBuilder {
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
         let accounts = Tick {
-            user: self.user.expect("user is not set"),
             lobby: self.lobby.expect("lobby is not set"),
         };
         let args = TickInstructionArgs {
@@ -142,8 +131,6 @@ impl TickBuilder {
 
 /// `tick` CPI accounts.
 pub struct TickCpiAccounts<'a, 'b> {
-    pub user: &'b solana_account_info::AccountInfo<'a>,
-
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
 }
 
@@ -151,8 +138,6 @@ pub struct TickCpiAccounts<'a, 'b> {
 pub struct TickCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
-
-    pub user: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
     /// The arguments for the instruction.
@@ -167,7 +152,6 @@ impl<'a, 'b> TickCpi<'a, 'b> {
     ) -> Self {
         Self {
             __program: program,
-            user: accounts.user,
             lobby: accounts.lobby,
             __args: args,
         }
@@ -195,8 +179,7 @@ impl<'a, 'b> TickCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(*self.user.key, true));
+        let mut accounts = Vec::with_capacity(1 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.lobby.key, false));
         remaining_accounts.iter().for_each(|remaining_account| {
             accounts.push(solana_instruction::AccountMeta {
@@ -214,9 +197,8 @@ impl<'a, 'b> TickCpi<'a, 'b> {
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(3 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(2 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
-        account_infos.push(self.user.clone());
         account_infos.push(self.lobby.clone());
         remaining_accounts
             .iter()
@@ -234,8 +216,7 @@ impl<'a, 'b> TickCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable, signer]` user
-///   1. `[writable]` lobby
+///   0. `[writable]` lobby
 #[derive(Clone, Debug)]
 pub struct TickCpiBuilder<'a, 'b> {
     instruction: Box<TickCpiBuilderInstruction<'a, 'b>>,
@@ -245,17 +226,11 @@ impl<'a, 'b> TickCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
         let instruction = Box::new(TickCpiBuilderInstruction {
             __program: program,
-            user: None,
             lobby: None,
             id: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
-    }
-    #[inline(always)]
-    pub fn user(&mut self, user: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.user = Some(user);
-        self
     }
     #[inline(always)]
     pub fn lobby(&mut self, lobby: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
@@ -307,8 +282,6 @@ impl<'a, 'b> TickCpiBuilder<'a, 'b> {
         let instruction = TickCpi {
             __program: self.instruction.__program,
 
-            user: self.instruction.user.expect("user is not set"),
-
             lobby: self.instruction.lobby.expect("lobby is not set"),
             __args: args,
         };
@@ -322,7 +295,6 @@ impl<'a, 'b> TickCpiBuilder<'a, 'b> {
 #[derive(Clone, Debug)]
 struct TickCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
-    user: Option<&'b solana_account_info::AccountInfo<'a>>,
     lobby: Option<&'b solana_account_info::AccountInfo<'a>>,
     id: Option<u64>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.

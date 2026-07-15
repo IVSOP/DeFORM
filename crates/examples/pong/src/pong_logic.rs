@@ -109,6 +109,8 @@ pub enum PongError {
     LobbyNotStarted,
     #[error("Error serializing inputs: {0}")]
     SerializeInputs(String),
+    #[error("Error scheduling crank: {0}")]
+    ScheduleCrank(String),
 }
 
 impl DeformUserLogic for PongGame {

@@ -1,3 +1,6 @@
+#[cfg(feature = "client")]
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 use deform_core::accounts::{DeformAccount, DeformAccountType};
 use pong::{pong_logic::PongGame, solana::anchor_client::GAME_PROGRAM};
@@ -28,7 +31,10 @@ struct Cli {
 enum CliCommand {
     #[cfg(feature = "client")]
     #[command(about = "Run the pong game")]
-    Run,
+    Run {
+        #[arg(long, env = "WALLET")]
+        wallet: Option<PathBuf>,
+    },
     #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
     FetchLobbies {
         #[arg(long, default_value = "https://127.0.0.1:8899", env = "RPC_URL")]
@@ -54,7 +60,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         #[cfg(feature = "client")]
-        CliCommand::Run => crate::client::run_game(),
+        CliCommand::Run { wallet } => crate::client::run_game(wallet),
         CliCommand::FetchLobbies { rpc_url } => fetch_lobbies(&rpc_url)?,
         #[cfg(feature = "server")]
         CliCommand::Serve {

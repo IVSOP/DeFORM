@@ -12,7 +12,7 @@ required-features = ["bin"]
 [features]
 default = ["client", "server", "anchor"]
 # offline should not be in bin, server does not need it
-bin = ["dep:clap", "deform_core/client", "dep:deform_offline", "dep:anyhow", "dep:solana-sdk", "dep:solana-client", "dep:solana-rpc-client", "dep:serde_json", "dep:deform_quic", "dep:tokio", "dep:tracing", "dep:tracing-subscriber"]
+bin = ["dep:clap", "deform_core/client", "dep:deform_offline", "dep:anyhow", "dep:solana-sdk", "dep:solana-client", "dep:solana-rpc-client", "dep:serde_json", "dep:deform_quic", "dep:tokio", "dep:tracing", "dep:tracing-subscriber", "dep:magicblock-magic-program-api"]
 server = ["bin"]
 client = ["bin", "dep:bevy", "dep:bevy_egui", "dep:bevy-egui-notify", "bevy/dynamic_linking", "dep:egui-probe", "deform_core/egui-probe"]
 anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
@@ -51,3 +51,6 @@ solana-cpi = { workspace = true }
 solana-program-error = { workspace = true }
 solana-system-interface = { workspace = true }
 ephemeral-rollups-sdk = { workspace = true }
+# Matches the version ephemeral-rollups-sdk 0.15.5 pins, so the ScheduleTask/pubkey
+# types unify. default-features off keeps it on the modern (non backward-compat) API.
+magicblock-magic-program-api = { version = "0.10.1", default-features = false, optional = true }

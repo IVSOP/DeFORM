@@ -18,8 +18,10 @@ use crate::{
 
 #[derive(Accounts)]
 pub struct TickAccounts<'info> {
-    #[account(mut)]
-    pub user: Signer<'info>,
+    // No signer: `tick` runs unattended as a scheduled crank/task on the ephemeral
+    // rollup, where the magic-program crank executor — not a user — drives it. The
+    // handler never needed a signer identity anyway; it only touches `lobby` and the
+    // inputs accounts passed as remaining accounts, all already delegated to the ER.
     /// CHECK: PDA derived and verified manually because LobbyAccount uses wincode, not borsh.
     #[account(mut)]
     pub lobby: UncheckedAccount<'info>,

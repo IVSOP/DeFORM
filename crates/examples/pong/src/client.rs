@@ -1,4 +1,7 @@
-use std::collections::{BTreeMap, HashMap};
+use std::{
+    collections::{BTreeMap, HashMap},
+    path::PathBuf,
+};
 
 use anyhow::anyhow;
 use bevy::prelude::*;
@@ -12,10 +15,17 @@ use deform_core::{
 };
 use deform_offline::new_offline_client;
 use pong::pong_logic::*;
+use solana_sdk::{signature::read_keypair_file, signer::Signer};
 
-pub fn run_game() {
+/// Optional keypair path from `--wallet`, consumed by [`setup`] to pre-load the
+/// menu's keypair so the CLI can skip the in-app "Load" step.
+#[derive(Resource, Default)]
+pub struct WalletArg(pub Option<PathBuf>);
+
+pub fn run_game(wallet: Option<PathBuf>) {
     let mut app = App::new();
-    app.add_plugins((DefaultPlugins,))
+    app.insert_resource(WalletArg(wallet))
+        .add_plugins((DefaultPlugins,))
         .add_plugins(EguiPlugin::default())
         .add_plugins(EguiToastsPlugin::default())
         .init_state::<AppState>()
@@ -114,6 +124,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    wallet: Res<WalletArg>,
 ) -> Result<()> {
     commands.spawn((
         Camera2d,
@@ -154,10 +165,33 @@ pub fn setup(
         Transform::default(),
     ));
 
+    // Pre-load the keypair from `--wallet` if given, otherwise leave the menu on
+    // its manual "Load" flow. A bad path is non-fatal: we log and fall back.
+    let keypair_files = scan_json_files();
+    let mut selected_keypair_idx = 0;
+    let mut keypair = None;
+    if let Some(path) = &wallet.0 {
+        match read_keypair_file(path) {
+            Ok(kp) => {
+                info!("Loaded wallet {}: {}", path.display(), kp.pubkey());
+                // Point the dropdown at the matching file if it's in the cwd.
+                if let Some(idx) = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .and_then(|name| keypair_files.iter().position(|f| f == name))
+                {
+                    selected_keypair_idx = idx;
+                }
+                keypair = Some(kp);
+            }
+            Err(e) => error!("Failed to load wallet {}: {e}", path.display()),
+        }
+    }
+
     commands.insert_resource(MenuState {
-        keypair_files: scan_json_files(),
-        selected_keypair_idx: 0,
-        keypair: None,
+        keypair_files,
+        selected_keypair_idx,
+        keypair,
         selected_preset_idx: 0,
         rpc_client: None,
         program_client: PongAnchorClient,

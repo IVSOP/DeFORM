@@ -11,15 +11,19 @@ use deform_core::{
     },
     game_program_client::{GameProgramClient, ReadyArgs},
 };
-use ephemeral_rollups_sdk::{consts::DELEGATION_PROGRAM_ID, delegate_args::DelegateAccounts};
-use solana_instruction::Instruction;
+use ephemeral_rollups_sdk::{
+    consts::{DELEGATION_PROGRAM_ID, MAGIC_PROGRAM_ID},
+    delegate_args::DelegateAccounts,
+};
+use magicblock_magic_program_api::{args::ScheduleTaskArgs, instruction::MagicBlockInstruction};
+use solana_instruction::{AccountMeta, Instruction};
 
 use crate::{
     generated::{
         instructions::{
             CreateLobby, CreateLobbyInstructionArgs, JoinLobby, JoinLobbyInstructionArgs, Ready,
             ReadyInstructionArgs, SetInputs, SetInputsInstructionArgs, Start, StartInstructionArgs,
-            WriteAndClose, WriteAndCloseInstructionArgs,
+            Tick, TickInstructionArgs, WriteAndClose, WriteAndCloseInstructionArgs,
         },
         types::PlayerScore,
     },
@@ -143,10 +147,20 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
 
             let inputs_delegation_accounts = DelegateAccounts::new(lobby_pubkey, game);
 
-            inputs_accounts.push(inputs_account);
-            inputs_accounts.push(inputs_delegation_accounts.delegate_buffer);
-            inputs_accounts.push(inputs_delegation_accounts.delegation_record);
-            inputs_accounts.push(inputs_delegation_accounts.delegation_metadata);
+            // TODO: some of these should be readonly
+            inputs_accounts.push(AccountMeta::new(inputs_account, false));
+            inputs_accounts.push(AccountMeta::new(
+                inputs_delegation_accounts.delegate_buffer,
+                false,
+            ));
+            inputs_accounts.push(AccountMeta::new(
+                inputs_delegation_accounts.delegation_record,
+                false,
+            ));
+            inputs_accounts.push(AccountMeta::new(
+                inputs_delegation_accounts.delegation_metadata,
+                false,
+            ));
         }
 
         Ok(Start {
@@ -163,7 +177,7 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
             StartInstructionArgs {
                 id: lobby_metadata.id,
             },
-            &[],
+            &inputs_accounts,
         ))
     }
 
@@ -187,6 +201,65 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
             id: lobby_id,
             batch_inputs_bytes,
         }))
+    }
+
+    fn tick_ix(
+        &self,
+        lobby_account: Pubkey,
+        lobby_id: u64,
+        inputs_accounts: &[Pubkey],
+    ) -> Result<Instruction, PongError> {
+        // `tick` reads every player's inputs account (writable) as remaining
+        // accounts, in the same lobby order the on-chain handler expects. No signer:
+        // the crank executor drives it on the ephemeral rollup.
+        let remaining: Vec<AccountMeta> = inputs_accounts
+            .iter()
+            .map(|inputs| AccountMeta::new(*inputs, false))
+            .collect();
+
+        Ok(Tick {
+            lobby: lobby_account,
+        }
+        .instruction_with_remaining_accounts(TickInstructionArgs { id: lobby_id }, &remaining))
+    }
+
+    fn init_crank_ix(
+        &self,
+        payer: Pubkey,
+        lobby_account: Pubkey,
+        lobby_id: u64,
+        inputs_accounts: &[Pubkey],
+        execution_interval_millis: i64,
+        iterations: i64,
+    ) -> Result<Instruction, PongError> {
+        // The scheduled `tick` is signerless — when the crank fires, the magic-program
+        // executor runs it unattended, so nothing needs to sign the inner instruction.
+        let tick_ix = self.tick_ix(lobby_account, lobby_id, inputs_accounts)?;
+
+        // task_id is unique per lobby, so a lobby's crank can later be cancelled by id.
+        let data = MagicBlockInstruction::ScheduleTask(ScheduleTaskArgs {
+            task_id: lobby_id as i64,
+            execution_interval_millis,
+            iterations,
+            instructions: vec![tick_ix],
+        })
+        .try_to_vec()
+        .map_err(|e| PongError::ScheduleCrank(e.to_string()))?;
+
+        // ScheduleTask accounts: payer (signer) followed by every account the
+        // scheduled `tick` touches, so the validator can load them for the task.
+        let mut accounts = Vec::with_capacity(2 + inputs_accounts.len());
+        accounts.push(AccountMeta::new(payer, true));
+        accounts.push(AccountMeta::new(lobby_account, false));
+        for inputs in inputs_accounts {
+            accounts.push(AccountMeta::new(*inputs, false));
+        }
+
+        Ok(Instruction {
+            program_id: MAGIC_PROGRAM_ID,
+            accounts,
+            data,
+        })
     }
 }
 

@@ -6815,6 +6815,7 @@ dependencies = [
  "egui-probe",
  "ephemeral-rollups-sdk",
  "glam",
+ "magicblock-magic-program-api",
  "num-derive",
  "num-traits",
  "serde",

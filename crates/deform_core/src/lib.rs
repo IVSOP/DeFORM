@@ -17,9 +17,7 @@ pub use client::{DeformClient, DeformSharedBackendState, Stats};
 pub use error::{DeformError, DeformResult};
 pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 
-use crate::accounts::lobby::{
-    not_started::LobbyNotStarted, LobbyMetadata, ValidatorNetwork,
-};
+use crate::accounts::lobby::{not_started::LobbyNotStarted, LobbyMetadata, ValidatorNetwork};
 
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
