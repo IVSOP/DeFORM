@@ -358,11 +358,6 @@ pub fn start_online(
     Ok(())
 }
 
-/// Fully-on-chain counterpart of [`start_online`]: instead of a QUIC server, the
-/// ephemeral rollup is the authority. Endpoints come from the lobby's
-/// `ValidatorNetwork`; the keypair signs `set_inputs` txs. The rest — player entity
-/// wiring, the resulting `MultiplayerClient` — is identical, since the backend is
-/// swapped behind the same `DeformClient`.
 #[cfg(feature = "foc")]
 pub fn start_online_foc(
     commands: &mut Commands,

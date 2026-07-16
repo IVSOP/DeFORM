@@ -65,16 +65,6 @@ pub trait DeformFocLogic: Clone + Sized + Debug + Send + Sync + 'static {
 /// of the on-chain tick the local simulation should run.
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
-/// Spawn a fully-on-chain backend and hand back the backend-agnostic [`DeformClient`].
-///
-/// - `rpc_url` / `ws_url` — the ephemeral rollup's HTTP and WebSocket endpoints
-///   (see [`deform_core::accounts::lobby::ValidatorNetwork::er_endpoints`]).
-/// - `keypair` — signs `set_inputs` txs; its pubkey identifies which player we are.
-/// - `program_client` — builds the on-chain instructions for this game.
-/// - `lobby` — the (already delegated + started) lobby to join.
-/// - `slot_time_micros` — the ER's slot/block time (e.g. from the game's
-///   `DeformUserLogic::get_micros_per_slot(network)`, matching the on-chain `tick`).
-///   Sets the commit cadence and the inclusion-latency floor.
 pub fn new_foc_client<F: DeformFocLogic>(
     rpc_url: String,
     ws_url: String,

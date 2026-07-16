@@ -74,9 +74,8 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
         // `TICK_RATE_MICROS` of it so the on-chain sim keeps pace with the slot clock
         // (e.g. a 50ms devnet slot = 3 ticks at 60Hz). Always at least one tick.
         let micros_per_slot = ongoing.user_logic.get_micros_per_slot(network);
-        let num_ticks = (slot_delta * micros_per_slot
-            / <UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
-            .max(1);
+        let num_ticks = slot_delta * micros_per_slot
+            / <UserLogic as DeformUserLogic>::TICK_RATE_MICROS;
 
         // Run the simulation, threading the owned `LobbyOngoing` through each tick.
         // Once `advance_tick` returns `Finished`, the `let ... else` breaks so we never
