@@ -35,7 +35,7 @@ pub const GAME_PROGRAM: Pubkey = crate::generated::ANCHOR_PROGRAM_ID;
 #[derive(Clone)]
 pub struct PongAnchorClient;
 
-// impl specific to PongGame!!
+// the tick micros of the pong game don't really matter here so I'll just make this generic
 impl GameProgramClient<PongGame> for PongAnchorClient {
     fn game_program(&self) -> Pubkey {
         GAME_PROGRAM

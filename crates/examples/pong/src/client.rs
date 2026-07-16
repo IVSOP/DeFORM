@@ -376,7 +376,7 @@ pub fn start_online_foc(
     let endpoints = validator_network.er_endpoints();
     // Same slot time the on-chain `tick` uses, so the commit cadence and latency floor
     // match the chain's actual block rate for this network.
-    let slot_time_micros = PongGame.get_micros_per_slot(validator_network);
+    let slot_time_micros = <PongGame as DeformUserLogic>::get_micros_per_slot(validator_network);
 
     let right_player = match &lobby.state {
         LobbyState::Finished(_) => Err(anyhow!("Lobby has already finished!"))?,

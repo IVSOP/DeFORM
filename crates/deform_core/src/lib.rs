@@ -150,7 +150,7 @@ pub trait DeformUserLogic:
     // I also can't ask the player, as he could use that to do bad things
     // At the same time I want the user to be able to override this at any time
     // So, I provide a default here, but the user can do whatever he wants
-    fn get_micros_per_slot(&self, network: &ValidatorNetwork) -> u64 {
+    fn get_micros_per_slot(network: &ValidatorNetwork) -> u64 {
         match network {
             ValidatorNetwork::Localhost(_) => 50000, // 20hz // 16667, // 60hz
             ValidatorNetwork::Devnet(_) => 50000,    // 20hz

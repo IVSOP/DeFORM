@@ -18,10 +18,10 @@ pub const PADDLE_H: f32 = 120.0;
 pub const PADDLE_HALF_W: f32 = PADDLE_W / 2.0;
 pub const PADDLE_HALF_H: f32 = PADDLE_H / 2.0;
 pub const PADDLE_X: f32 = 400.0;
-pub const PADDLE_SPEED: f32 = 8.0;
+pub const PADDLE_SPEED: f32 = 480.0;
 pub const BALL_SIZE: f32 = 20.0;
 pub const BALL_HALF: f32 = BALL_SIZE / 2.0;
-pub const BALL_SPEED: f32 = 17.5;
+pub const BALL_SPEED: f32 = 1050.0;
 pub const BALL_SPAWN_X: f32 = PADDLE_X - 50.0;
 
 #[derive(
@@ -113,18 +113,21 @@ pub enum PongError {
     ScheduleCrank(String),
 }
 
+// the ephemeral validators run at 20Hz
+pub const TICK_RATE_MICROS: u64 = 50000;
+
 impl DeformUserLogic for PongGame {
     type Inputs = PongInputs;
     type GameState = PongGameState;
     type Smoother = PongGameStateSmoother;
     type Error = PongError;
 
-    const TICK_RATE_MICROS: u64 = 16667;
+    const TICK_RATE_MICROS: u64 = TICK_RATE_MICROS;
 
     fn new_from_lobby(
         _lobby_metadata: &LobbyMetadata,
         _not_started: &LobbyNotStarted,
-    ) -> Result<PongGame, PongError> {
+    ) -> Result<Self, PongError> {
         Ok(PongGame)
     }
 
@@ -156,6 +159,7 @@ impl DeformUserLogic for PongGame {
         state: &Self::GameState,
         inputs: &BTreeMap<Pubkey, Self::Inputs>,
     ) -> Result<Self::GameState, Self::Error> {
+        let dt = Self::TICK_RATE_MICROS as f32 / 1_000_000.0;
         let mut new = state.clone();
 
         if new.ball_vel == Vec2::ZERO {
@@ -171,7 +175,7 @@ impl DeformUserLogic for PongGame {
         for pk in [left_pk, right_pk].into_iter().flatten() {
             if let Some(input) = inputs.get(pk) {
                 if let Some(ps) = new.players.get_mut(pk) {
-                    ps.paddle_y += (input.direction as f32 / 100.0) * PADDLE_SPEED;
+                    ps.paddle_y += (input.direction as f32 / 100.0) * PADDLE_SPEED * dt;
                     ps.paddle_y = ps.paddle_y.clamp(
                         -FIELD_H / 2.0 + PADDLE_HALF_H,
                         FIELD_H / 2.0 - PADDLE_HALF_H,
@@ -181,7 +185,7 @@ impl DeformUserLogic for PongGame {
         }
 
         // Move ball
-        new.ball_pos += new.ball_vel;
+        new.ball_pos += new.ball_vel * dt;
 
         // Bounce off top/bottom walls
         if new.ball_pos.y - BALL_HALF <= -FIELD_H / 2.0 {
@@ -249,7 +253,7 @@ impl DeformUserLogic for PongGame {
 }
 
 #[cfg(feature = "bin")]
-mod quic_logic {
+mod server_logic {
     use deform_quic::{DeformQuicLogic, UserIdentification};
     use wincode::{SchemaRead, SchemaWrite};
 
@@ -295,9 +299,9 @@ mod quic_logic {
 }
 
 #[cfg(feature = "foc")]
-pub use quic_logic::PongFocLogic;
+pub use server_logic::PongFocLogic;
 #[cfg(feature = "bin")]
-pub use quic_logic::{NoAuth, PongQuicLogic};
+pub use server_logic::{NoAuth, PongQuicLogic};
 
 pub fn pong_bot(state: &PongGameState, bot: &Pubkey, prev_inputs: &PongInputs) -> PongInputs {
     if state.ball_vel.x <= 0.0 {
@@ -315,10 +319,11 @@ pub fn pong_bot(state: &PongGameState, bot: &Pubkey, prev_inputs: &PongInputs) -
     let diff = target_y - paddle_y;
     let prev = prev_inputs.direction;
 
+    let paddle_per_tick = PADDLE_SPEED / 60.0;
     let threshold = if (prev > 0 && diff > 0.0) || (prev < 0 && diff < 0.0) {
-        PADDLE_SPEED * 0.25
+        paddle_per_tick * 0.25
     } else {
-        PADDLE_SPEED * 1.5
+        paddle_per_tick * 1.5
     };
 
     let direction = if diff.abs() < threshold {

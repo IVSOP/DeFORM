@@ -487,6 +487,7 @@ pub fn egui_in_menu(
                     };
                     if ui.button(play_label).clicked() {
                         let lobby = menu.lobby_data.clone().unwrap();
+                        // TODO: no need to query this every frame
                         let visual_tick_micros = monitor_q
                             .iter()
                             .filter_map(|m| m.refresh_rate_millihertz)
