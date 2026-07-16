@@ -702,26 +702,22 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         Duration::from_micros(micros)
     }
 
-    /// The server-authoritative tick, read back out of `remote_lobby` now that it is
-    /// no longer stored as a standalone field. Only used for tracy diagnostics.
-    #[cfg(feature = "tracy")]
-    fn remote_tick(&self) -> u64 {
-        match &self.remote_lobby.state {
-            LobbyState::Ongoing(ongoing) => ongoing.tick,
-            LobbyState::Finished(LobbyFinished(finished)) => finished.tick,
-            LobbyState::NotStarted(_) => 0,
-        }
-    }
-
     pub fn advance_local_simulation(&mut self) -> UserFacingResult<Q::UserLogic> {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("advance_local_simulation");
 
+        // inneficient but only used in dev
         #[cfg(feature = "tracy")]
         if let Some(client) = tracy_client::Client::running() {
+            let remote_tick = match &self.remote_lobby.state {
+                LobbyState::Ongoing(ongoing) => ongoing.tick,
+                LobbyState::Finished(LobbyFinished(finished)) => finished.tick,
+                LobbyState::NotStarted(_) => 0,
+            };
+
             client.plot(
                 tracy_client::plot_name!("current_vs_remote_adv"),
-                self.local_tick as f64 - self.remote_tick() as f64,
+                self.local_tick as f64 - remote_tick as f64,
             );
         }
 
@@ -798,18 +794,25 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("process_server_update");
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(
-                tracy_client::plot_name!("current_vs_remote_reception"),
-                self.local_tick as f64 - self.remote_tick() as f64,
-            );
-        }
-
         let UnreliableServerResponse {
             lobby_state: new_remote_state,
         }: UnreliableServerResponse<Q::UserLogic> =
             wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
+
+        // inneficient since the variant is checked below, but this is only used in dev
+        #[cfg(feature = "tracy")]
+        if let Some(client) = tracy_client::Client::running() {
+            let new_remote = match &new_remote_state {
+                LobbyState::Finished(LobbyFinished(finished_state)) => finished_state.tick,
+                LobbyState::NotStarted(_) => 0,
+                LobbyState::Ongoing(ongoing) => ongoing.tick,
+            };
+
+            client.plot(
+                tracy_client::plot_name!("current_vs_remote_reception"),
+                self.local_tick as f64 - new_remote as f64,
+            );
+        }
 
         match new_remote_state {
             // no matter if the new state is old or not, if the new state is Finished, we end the match and no other checks or pruning are performed

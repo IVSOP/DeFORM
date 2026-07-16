@@ -1,3 +1,5 @@
+#[cfg(feature = "foc")]
+use std::sync::Arc;
 use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
@@ -7,20 +9,33 @@ use anyhow::anyhow;
 use bevy::prelude::*;
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui_notify::EguiToastsPlugin;
+#[cfg(feature = "foc")]
+use deform_core::DeformUserLogic;
 use deform_core::{
     DeformClient, Pubkey,
     accounts::lobby::{
-        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, not_started::LobbyNotStarted,
+        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, ValidatorNetwork,
+        not_started::LobbyNotStarted,
     },
 };
 use deform_offline::new_offline_client;
 use pong::pong_logic::*;
+#[cfg(feature = "foc")]
+use solana_sdk::signature::Keypair;
 use solana_sdk::{signature::read_keypair_file, signer::Signer};
 
 /// Optional keypair path from `--wallet`, consumed by [`setup`] to pre-load the
 /// menu's keypair so the CLI can skip the in-app "Load" step.
 #[derive(Resource, Default)]
 pub struct WalletArg(pub Option<PathBuf>);
+
+/// Our player's network latency (ms), copied each frame from the active backend's
+/// shared stats ([`update_state`]) so egui can display it without locking the backend.
+/// Backend-agnostic: both the QUIC and FoC backends populate `stats.ping_ms`.
+#[derive(Resource, Default)]
+pub struct NetStats {
+    pub ping_ms: f64,
+}
 
 pub fn run_game(wallet: Option<PathBuf>) {
     let mut app = App::new();
@@ -29,6 +44,7 @@ pub fn run_game(wallet: Option<PathBuf>) {
         .add_plugins(EguiPlugin::default())
         .add_plugins(EguiToastsPlugin::default())
         .init_state::<AppState>()
+        .init_resource::<NetStats>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -84,20 +100,27 @@ pub enum AppState {
 pub struct NetworkPreset {
     pub name: &'static str,
     pub rpc_url: &'static str,
+    /// Ephemeral-rollup RPC. Crank/tick txs (`ScheduleTask`) must be sent here, not
+    /// to `rpc_url` (the base layer). Locally this is the docker-compose ER port 7799;
+    /// on devnet/mainnet it's MagicBlock's public router.
+    pub er_rpc_url: &'static str,
 }
 
 pub const NETWORK_PRESETS: &[NetworkPreset] = &[
     NetworkPreset {
         name: "Localhost",
         rpc_url: "http://127.0.0.1:8899",
+        er_rpc_url: "http://127.0.0.1:7799",
     },
     NetworkPreset {
         name: "Devnet",
         rpc_url: "https://api.devnet.solana.com",
+        er_rpc_url: "https://devnet.magicblock.app",
     },
     NetworkPreset {
         name: "Mainnet",
         rpc_url: "https://api.mainnet-beta.solana.com",
+        er_rpc_url: "https://mainnet.magicblock.app",
     },
 ];
 
@@ -182,7 +205,7 @@ pub fn setup(
                 {
                     selected_keypair_idx = idx;
                 }
-                keypair = Some(kp);
+                keypair = Some(Arc::new(kp));
             }
             Err(e) => error!("Failed to load wallet {}: {e}", path.display()),
         }
@@ -195,7 +218,7 @@ pub fn setup(
         selected_preset_idx: 0,
         rpc_client: None,
         program_client: PongAnchorClient,
-        network: Network::Web2,
+        network: Network::FullyOnChain(ValidatorNetwork::default()),
         lobby_id: 0,
         lobby_id_text: "0".into(),
         lobby_data: None,
@@ -335,6 +358,76 @@ pub fn start_online(
     Ok(())
 }
 
+/// Fully-on-chain counterpart of [`start_online`]: instead of a QUIC server, the
+/// ephemeral rollup is the authority. Endpoints come from the lobby's
+/// `ValidatorNetwork`; the keypair signs `set_inputs` txs. The rest — player entity
+/// wiring, the resulting `MultiplayerClient` — is identical, since the backend is
+/// swapped behind the same `DeformClient`.
+#[cfg(feature = "foc")]
+pub fn start_online_foc(
+    commands: &mut Commands,
+    lobby: Lobby<PongGame>,
+    keypair: &Keypair,
+    player_entities: &mut ResMut<PlayerEntities>,
+    slots: &PaddleSlots,
+    players_q: &mut Query<(&mut Player, &mut Visibility)>,
+    visual_tick_micros: u64,
+) -> Result<()> {
+    let creator = lobby.metadata.creator;
+
+    let Network::FullyOnChain(validator_network) = &lobby.metadata.network else {
+        return Err(anyhow!("start_online_foc requires a FullyOnChain lobby").into());
+    };
+    let endpoints = validator_network.er_endpoints();
+    // Same slot time the on-chain `tick` uses, so the commit cadence and latency floor
+    // match the chain's actual block rate for this network.
+    let slot_time_micros = PongGame.get_micros_per_slot(validator_network);
+
+    let right_player = match &lobby.state {
+        LobbyState::Finished(_) => Err(anyhow!("Lobby has already finished!"))?,
+        LobbyState::NotStarted(not_started) => not_started
+            .player_status
+            .keys()
+            .find(|pk| **pk != creator)
+            .copied(),
+        LobbyState::Ongoing(ongoing) => ongoing
+            .tick_info
+            .inputs
+            .keys()
+            .find(|pk| **pk != creator)
+            .copied(),
+    };
+
+    let client = deform_foc::new_foc_client::<PongFocLogic>(
+        endpoints.rpc.to_string(),
+        endpoints.ws.to_string(),
+        Arc::new(keypair.insecure_clone()),
+        PongAnchorClient,
+        lobby,
+        visual_tick_micros,
+        slot_time_micros,
+    )?;
+    commands.insert_resource(MultiplayerClient(client));
+
+    player_entities.0.clear();
+
+    if let Ok((mut p, mut vis)) = players_q.get_mut(slots.left) {
+        p.0 = creator;
+        *vis = Visibility::Visible;
+    }
+    player_entities.0.insert(creator, slots.left);
+
+    if let Some(right) = right_player {
+        if let Ok((mut p, mut vis)) = players_q.get_mut(slots.right) {
+            p.0 = right;
+            *vis = Visibility::Visible;
+        }
+        player_entities.0.insert(right, slots.right);
+    }
+
+    Ok(())
+}
+
 pub fn update_inputs(inputs: Single<&mut PongInputs>, kb_input: Res<ButtonInput<KeyCode>>) {
     let mut new_direction: i8 = 0;
     if kb_input.pressed(KeyCode::KeyW) {
@@ -357,8 +450,15 @@ pub fn update_state(
     mut players: Query<&mut Transform, (Without<Ball>, With<Player>)>,
     ball: Single<&mut Transform, (Without<Player>, With<Ball>)>,
     player_entities: Res<PlayerEntities>,
+    mut net_stats: ResMut<NetStats>,
 ) -> Result<()> {
-    let lobby = client.0.read_state()?.lobby.clone();
+    // Snapshot both under one lock, and copy latency out before any early return so
+    // the HUD keeps updating even when the lobby isn't Ongoing.
+    let lobby = {
+        let state = client.0.read_state()?;
+        net_stats.ping_ms = state.stats.ping_ms;
+        state.lobby.clone()
+    };
 
     // FIX: do something if game has ended!
     let ongoing = match lobby.state {

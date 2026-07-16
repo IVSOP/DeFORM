@@ -3574,6 +3574,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "deform_foc"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "better_tokio_select",
+ "deform_core",
+ "futures-util",
+ "glam",
+ "serde",
+ "serde_json",
+ "solana-address 2.6.1",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-signature",
+ "tokio",
+ "tokio-tungstenite",
+ "tracing",
+ "tracy-client",
+ "wincode",
+]
+
+[[package]]
 name = "deform_offline"
 version = "0.1.0"
 dependencies = [
@@ -6810,6 +6833,7 @@ dependencies = [
  "borsh 1.7.0",
  "clap",
  "deform_core",
+ "deform_foc",
  "deform_offline",
  "deform_quic",
  "egui-probe",

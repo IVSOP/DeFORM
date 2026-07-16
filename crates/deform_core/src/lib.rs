@@ -152,7 +152,7 @@ pub trait DeformUserLogic:
     // So, I provide a default here, but the user can do whatever he wants
     fn get_micros_per_slot(&self, network: &ValidatorNetwork) -> u64 {
         match network {
-            ValidatorNetwork::Localhost(_) => 16667, // 60hz
+            ValidatorNetwork::Localhost(_) => 50000, // 20hz // 16667, // 60hz
             ValidatorNetwork::Devnet(_) => 50000,    // 20hz
             ValidatorNetwork::Mainnet(_) => 50000,   // 20hz
         }

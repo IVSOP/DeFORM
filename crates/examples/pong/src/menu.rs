@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::anyhow;
 use bevy::{prelude::*, window::Monitor};
 use bevy_egui::{EguiContexts, egui};
@@ -23,10 +25,12 @@ use solana_sdk::{
     signer::Signer,
 };
 
+#[cfg(feature = "foc")]
+use crate::client::start_online_foc;
 use crate::{
     client::{
-        AppState, MultiplayerClient, NETWORK_PRESETS, PaddleSlots, Player, PlayerEntities,
-        scan_json_files, start_offline, start_online,
+        AppState, MultiplayerClient, NETWORK_PRESETS, NetStats, PaddleSlots, Player,
+        PlayerEntities, scan_json_files, start_offline, start_online,
     },
     send_and_confirm_tx,
 };
@@ -35,11 +39,11 @@ use crate::{
 pub struct MenuState {
     pub keypair_files: Vec<String>,
     pub selected_keypair_idx: usize,
-    pub keypair: Option<Keypair>,
+    pub keypair: Option<Arc<Keypair>>,
 
     pub selected_preset_idx: usize,
 
-    pub rpc_client: Option<RpcClient>,
+    pub rpc_client: Option<Arc<RpcClient>>,
     pub program_client: PongAnchorClient,
 
     // is either set manually or when reading the lobby
@@ -134,7 +138,7 @@ pub fn egui_in_menu(
                         match read_keypair_file(path) {
                             Ok(kp) => {
                                 toasts.0.info(format!("Loaded: {}", kp.pubkey()));
-                                menu.keypair = Some(kp);
+                                menu.keypair = Some(Arc::new(kp));
                             }
                             Err(e) => {
                                 toasts.0.error(format!("Failed to load keypair: {e}"));
@@ -175,7 +179,7 @@ pub fn egui_in_menu(
                 if ui.button("Connect").clicked() {
                     let preset = &NETWORK_PRESETS[menu.selected_preset_idx];
                     let rpc = RpcClient::new(preset.rpc_url.to_string());
-                    menu.rpc_client = Some(rpc);
+                    menu.rpc_client = Some(Arc::new(rpc));
                     menu.program_client = PongAnchorClient;
                     toasts.0.info(format!("Connected to {}", preset.name));
                 }
@@ -218,9 +222,14 @@ pub fn egui_in_menu(
             let has_all = menu.rpc_client.is_some() && menu.keypair.is_some();
 
             if has_all {
-                let rpc = menu.rpc_client.as_ref().unwrap();
-                let program_client = &menu.program_client;
-                let keypair = menu.keypair.as_ref().unwrap();
+                // Take owned handles out of `menu` (rpc + keypair are `Arc`, the ZST
+                // program client clones for free) so nothing borrows `menu` while the
+                // button closure below mutates it.
+                let rpc_handle = menu.rpc_client.clone().unwrap();
+                let rpc = &*rpc_handle;
+                let program_client = menu.program_client.clone();
+                let keypair_handle = menu.keypair.clone().unwrap();
+                let keypair = &*keypair_handle;
                 let lobby_id = menu.lobby_id;
                 let (lobby_pda, _) =
                     Lobby::<PongGame>::find_program_address(lobby_id, &GAME_PROGRAM);
@@ -278,6 +287,12 @@ pub fn egui_in_menu(
 
                     // The network (Web2 vs FullyOnChain) picks the ready variant.
                     if ui.button("Ready").clicked() {
+                        // also read the lobby
+                        if let Some(lobby) = read_lobby(&lobby_pda, &rpc, ui, &mut toasts) {
+                            menu.network = lobby.metadata.network.clone();
+                            menu.lobby_data = Some(lobby);
+                        }
+
                         let args = match menu.network.clone() {
                             Network::Web2 => ReadyArgs::Web2 {
                                 user,
@@ -324,6 +339,12 @@ pub fn egui_in_menu(
                     if matches!(menu.network, Network::FullyOnChain(_))
                         && ui.button("Start").clicked()
                     {
+                        // also read the lobby
+                        if let Some(lobby) = read_lobby(&lobby_pda, &rpc, ui, &mut toasts) {
+                            menu.network = lobby.metadata.network.clone();
+                            menu.lobby_data = Some(lobby);
+                        }
+
                         match menu.lobby_data.as_ref() {
                             Some(lobby) => match &lobby.state {
                                 LobbyState::NotStarted(not_started) => {
@@ -361,14 +382,18 @@ pub fn egui_in_menu(
                             }
                         }
                     }
-                });
 
-                if ui.button("Read Lobby").clicked() {
-                    match rpc.get_account_data(&Address::new_from_array(lobby_pda.to_bytes())) {
-                        // FIX: how tf is the server deserializing the lobby???
-                        Ok(data) => match DeformAccount::<PongGame>::from_bytes(&data) {
-                            Ok(DeformAccount::Lobby(lobby)) => {
-                                let player_keys: Vec<Pubkey> = match &lobby.state {
+                    // Init Crank schedules the recurring `tick` task on the ephemeral
+                    // rollup, so — like Start — it only exists on FullyOnChain. Run it
+                    // after Start, once the lobby + inputs are delegated.
+                    if matches!(menu.network, Network::FullyOnChain(_))
+                        && ui.button("Init Crank").clicked()
+                    {
+                        match menu.lobby_data.as_ref() {
+                            Some(lobby) => {
+                                // The crank's `tick` reads every player's inputs account,
+                                // so derive one inputs PDA per player in the lobby.
+                                let players: Vec<Pubkey> = match &lobby.state {
                                     LobbyState::NotStarted(not_started) => {
                                         not_started.player_status.keys().copied().collect()
                                     }
@@ -379,40 +404,68 @@ pub fn egui_in_menu(
                                         finished.tick_info.inputs.keys().copied().collect()
                                     }
                                 };
+                                let inputs_accounts: Vec<Pubkey> = players
+                                    .iter()
+                                    .map(|player| {
+                                        InputsAccount::<PongGame>::find_program_address(
+                                            lobby_id,
+                                            player,
+                                            &GAME_PROGRAM,
+                                        )
+                                        .0
+                                    })
+                                    .collect();
 
-                                toasts
-                                    .0
-                                    .info(format!("Lobby loaded, players: {}", player_keys.len()));
+                                // Fire the tick at the game's tick rate, forever (until
+                                // the lobby is undelegated). The ER batches catch-up ticks.
+                                let execution_interval_millis =
+                                    (PongGame::TICK_RATE_MICROS / 1_000).max(1) as i64;
 
-                                ui.label(format!(
-                                    "Creator: {}",
-                                    &lobby.metadata.creator.to_string()[..8]
-                                ));
-                                ui.label(format!("Players: {}", player_keys.len()));
-                                for pk in player_keys.iter() {
-                                    let role = if *pk == lobby.metadata.creator {
-                                        "L"
-                                    } else {
-                                        "R"
-                                    };
-                                    ui.label(format!("  [{}] {}", role, &pk.to_string()[..8]));
+                                match program_client.init_crank_ix(
+                                    user,
+                                    lobby_pda,
+                                    lobby_id,
+                                    &inputs_accounts,
+                                    execution_interval_millis,
+                                    i64::MAX,
+                                ) {
+                                    // ScheduleTask must run on the ER, not the base layer.
+                                    Ok(ix) => {
+                                        let er_rpc = RpcClient::new(
+                                            NETWORK_PRESETS[menu.selected_preset_idx]
+                                                .er_rpc_url
+                                                .to_string(),
+                                        );
+                                        match send_and_confirm_tx(
+                                            &er_rpc,
+                                            ix,
+                                            keypair,
+                                            menu.selected_preset_idx == 0,
+                                        ) {
+                                            Ok(()) => {
+                                                toasts.0.info("Crank scheduled!");
+                                            }
+                                            Err(e) => {
+                                                toasts.0.error(format!("Init crank failed: {e}"));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        toasts.0.error(format!("Init crank failed: {e}"));
+                                    }
                                 }
-
-                                menu.network = lobby.metadata.network.clone();
-                                menu.lobby_data = Some(lobby);
                             }
-                            Ok(_) => {
-                                toasts
-                                    .0
-                                    .error(format!("Deserialize failed: wrong account type"));
+                            None => {
+                                toasts.0.error("Read a lobby first to init the crank.");
                             }
-                            Err(e) => {
-                                toasts.0.error(format!("Deserialize failed: {e}"));
-                            }
-                        },
-                        Err(e) => {
-                            toasts.0.error(format!("RPC error: {e}"));
                         }
+                    }
+                });
+
+                if ui.button("Read Lobby").clicked() {
+                    if let Some(lobby) = read_lobby(&lobby_pda, &rpc, ui, &mut toasts) {
+                        menu.network = lobby.metadata.network.clone();
+                        menu.lobby_data = Some(lobby);
                     }
                 }
 
@@ -427,38 +480,55 @@ pub fn egui_in_menu(
                 ui.checkbox(&mut menu.skip_cert_verify, "Skip TLS verification (dev)");
 
                 if menu.lobby_data.is_some() {
-                    if ui.button("Play Online").clicked() {
-                        // The lobby's network decides which backend serves the game.
-                        match menu.network.clone() {
-                            Network::Web2 => {
-                                let lobby = menu.lobby_data.clone().unwrap();
-                                let visual_tick_micros = monitor_q
-                                    .iter()
-                                    .filter_map(|m| m.refresh_rate_millihertz)
-                                    .max()
-                                    .map(|mhz| 1_000_000_000 / mhz as u64)
-                                    .unwrap_or(PongGame::TICK_RATE_MICROS);
-                                match start_online(
-                                    &mut commands,
-                                    lobby,
-                                    user,
-                                    &menu.server_addr,
-                                    menu.skip_cert_verify,
-                                    &mut player_entities,
-                                    &paddle_slots,
-                                    &mut players_q,
-                                    visual_tick_micros,
-                                ) {
-                                    Ok(()) => next_state.set(AppState::InGame),
-                                    Err(e) => {
-                                        toasts.0.error(format!("Online error: {e}"));
-                                    }
-                                }
-                            }
-                            // TODO: web3 backend — route the game through the selected
-                            // validator network instead of the QUIC server.
-                            Network::FullyOnChain(_) => {
-                                toasts.0.error("Fully on-chain backend not implemented yet");
+                    // The lobby's network decides which backend serves the game.
+                    let play_label = match menu.network {
+                        Network::Web2 => "Play Online (web2)",
+                        Network::FullyOnChain(_) => "Play Online (FoC)",
+                    };
+                    if ui.button(play_label).clicked() {
+                        let lobby = menu.lobby_data.clone().unwrap();
+                        let visual_tick_micros = monitor_q
+                            .iter()
+                            .filter_map(|m| m.refresh_rate_millihertz)
+                            .max()
+                            .map(|mhz| 1_000_000_000 / mhz as u64)
+                            .unwrap_or(PongGame::TICK_RATE_MICROS);
+                        let result = match menu.network.clone() {
+                            Network::Web2 => start_online(
+                                &mut commands,
+                                lobby,
+                                user,
+                                &menu.server_addr,
+                                menu.skip_cert_verify,
+                                &mut player_entities,
+                                &paddle_slots,
+                                &mut players_q,
+                                visual_tick_micros,
+                            ),
+                            // The ephemeral rollup is the authority; the loaded keypair
+                            // signs set_inputs, and endpoints come from the lobby's network.
+                            // Re-borrow the keypair here (not the outer binding) so it
+                            // doesn't hold an immutable borrow across the `&mut menu` uses above.
+                            #[cfg(feature = "foc")]
+                            Network::FullyOnChain(_) => start_online_foc(
+                                &mut commands,
+                                lobby,
+                                menu.keypair.as_ref().unwrap(),
+                                &mut player_entities,
+                                &paddle_slots,
+                                &mut players_q,
+                                visual_tick_micros,
+                            ),
+                            #[cfg(not(feature = "foc"))]
+                            Network::FullyOnChain(_) => Err(anyhow!(
+                                "FoC backend not compiled in; rebuild with a `foc-*` feature"
+                            )
+                            .into()),
+                        };
+                        match result {
+                            Ok(()) => next_state.set(AppState::InGame),
+                            Err(e) => {
+                                toasts.0.error(format!("Online error: {e}"));
                             }
                         }
                     }
@@ -476,7 +546,11 @@ pub fn egui_in_menu(
     Ok(())
 }
 
-pub fn egui_in_game(mut contexts: EguiContexts, client: Res<MultiplayerClient>) -> Result {
+pub fn egui_in_game(
+    mut contexts: EguiContexts,
+    client: Res<MultiplayerClient>,
+    net_stats: Res<NetStats>,
+) -> Result {
     let lobby = client.0.read_state()?.lobby.clone();
 
     let creator = lobby.metadata.creator;
@@ -517,6 +591,67 @@ pub fn egui_in_game(mut contexts: EguiContexts, client: Res<MultiplayerClient>) 
     egui::Window::new("Scoreboard").show(contexts.ctx_mut()?, |ui| {
         ui.label(format!("Player 1 (Left): {}", creator_score));
         ui.label(format!("Player 2 (Right): {}", right_player_score));
+        ui.separator();
+        ui.label(format!("Ping: {:.0} ms", net_stats.ping_ms));
     });
     Ok(())
+}
+
+pub fn read_lobby(
+    lobby_pda: &Pubkey,
+    rpc: &RpcClient,
+    ui: &mut egui::Ui,
+    toasts: &mut EguiToasts,
+) -> Option<Lobby<PongGame>> {
+    match rpc.get_account_data(&Address::new_from_array(lobby_pda.to_bytes())) {
+        // FIX: how tf is the server deserializing the lobby???
+        Ok(data) => match DeformAccount::<PongGame>::from_bytes(&data) {
+            Ok(DeformAccount::Lobby(lobby)) => {
+                let player_keys: Vec<Pubkey> = match &lobby.state {
+                    LobbyState::NotStarted(not_started) => {
+                        not_started.player_status.keys().copied().collect()
+                    }
+                    LobbyState::Ongoing(ongoing) => {
+                        ongoing.tick_info.inputs.keys().copied().collect()
+                    }
+                    LobbyState::Finished(LobbyFinished(finished)) => {
+                        finished.tick_info.inputs.keys().copied().collect()
+                    }
+                };
+
+                toasts
+                    .0
+                    .info(format!("Lobby loaded, players: {}", player_keys.len()));
+
+                ui.label(format!(
+                    "Creator: {}",
+                    &lobby.metadata.creator.to_string()[..8]
+                ));
+                ui.label(format!("Players: {}", player_keys.len()));
+                for pk in player_keys.iter() {
+                    let role = if *pk == lobby.metadata.creator {
+                        "L"
+                    } else {
+                        "R"
+                    };
+                    ui.label(format!("  [{}] {}", role, &pk.to_string()[..8]));
+                }
+
+                return Some(lobby);
+            }
+            Ok(_) => {
+                toasts
+                    .0
+                    .error(format!("Deserialize failed: wrong account type"));
+            }
+            Err(e) => {
+                toasts.0.error(format!("Deserialize failed: {e}"));
+            }
+        },
+        Err(e) => {
+            toasts.0.error(format!("RPC error: {e}"));
+        }
+    }
+
+    None
 }

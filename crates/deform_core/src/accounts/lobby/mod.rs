@@ -10,6 +10,19 @@ use crate::{
 pub mod not_started;
 pub mod ongoing;
 
+/// RPC (HTTP) and PubSub (WebSocket) endpoints of the MagicBlock ephemeral rollup
+/// that serves a given [`ValidatorNetwork`]. Send transactions to `rpc`; subscribe
+/// to accounts on `ws`.
+///
+/// For hosted clusters these are the per-region "common entry" FQDNs; the router's
+/// `getDelegationStatus` is the real source of truth for which validator currently
+/// holds a delegated account, so treat these as sane defaults, not gospel.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ErEndpoints {
+    pub rpc: &'static str,
+    pub ws: &'static str,
+}
+
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[cfg_attr(
     feature = "anchor",
@@ -56,6 +69,27 @@ impl MainnetRegion {
             }
         }
     }
+
+    pub fn er_endpoints(&self) -> ErEndpoints {
+        match self {
+            MainnetRegion::Asia => ErEndpoints {
+                rpc: "https://as.magicblock.app",
+                ws: "wss://as.magicblock.app",
+            },
+            MainnetRegion::EU => ErEndpoints {
+                rpc: "https://eu.magicblock.app",
+                ws: "wss://eu.magicblock.app",
+            },
+            MainnetRegion::US => ErEndpoints {
+                rpc: "https://us.magicblock.app",
+                ws: "wss://us.magicblock.app",
+            },
+            MainnetRegion::TEE => ErEndpoints {
+                rpc: "https://mainnet-tee-as.magicblock.app",
+                ws: "wss://mainnet-tee-as.magicblock.app",
+            },
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
@@ -91,6 +125,27 @@ impl DevnetRegion {
             }
         }
     }
+
+    pub fn er_endpoints(&self) -> ErEndpoints {
+        match self {
+            DevnetRegion::Asia => ErEndpoints {
+                rpc: "https://devnet-as.magicblock.app",
+                ws: "wss://devnet-as.magicblock.app",
+            },
+            DevnetRegion::EU => ErEndpoints {
+                rpc: "https://devnet-eu.magicblock.app",
+                ws: "wss://devnet-eu.magicblock.app",
+            },
+            DevnetRegion::US => ErEndpoints {
+                rpc: "https://devnet-us.magicblock.app",
+                ws: "wss://devnet-us.magicblock.app",
+            },
+            DevnetRegion::TEE => ErEndpoints {
+                rpc: "https://devnet-tee-as.magicblock.app",
+                ws: "wss://devnet-tee-as.magicblock.app",
+            },
+        }
+    }
 }
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
@@ -112,6 +167,17 @@ impl LocalRegion {
             LocalRegion::Local => {
                 Pubkey::from_str_const("mAGicPQYBMvcYveUZA5F5UNNwyHvfYh5xkLS2Fr1mev")
             }
+        }
+    }
+
+    pub fn er_endpoints(&self) -> ErEndpoints {
+        match self {
+            // Ports match the docker-compose ER: JSON-RPC 7799, WebSocket 7800
+            // (unlike hosted clusters, which serve both over the same wss host).
+            LocalRegion::Local => ErEndpoints {
+                rpc: "http://127.0.0.1:7799",
+                ws: "ws://127.0.0.1:7800",
+            },
         }
     }
 }
@@ -137,6 +203,16 @@ impl ValidatorNetwork {
             Self::Mainnet(m) => m.address(),
             Self::Devnet(d) => d.address(),
             Self::Localhost(l) => l.address(),
+        }
+    }
+
+    /// The ephemeral-rollup RPC (HTTP) and PubSub (WebSocket) endpoints for this
+    /// network+region. Send instructions to `.rpc`; subscribe to accounts on `.ws`.
+    pub fn er_endpoints(&self) -> ErEndpoints {
+        match self {
+            Self::Mainnet(m) => m.er_endpoints(),
+            Self::Devnet(d) => d.er_endpoints(),
+            Self::Localhost(l) => l.er_endpoints(),
         }
     }
 }

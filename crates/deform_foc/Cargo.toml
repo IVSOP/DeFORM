@@ -1,0 +1,39 @@
+[package]
+name = "deform_foc"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+# How network latency is estimated. Exactly one must be enabled (compile-time
+# asserted); rtt-getslot is the default. To switch, disable default features.
+#   rtt-getslot — time an HTTP getSlot round-trip (default)
+#   rtt-ping    — WebSocket control-frame ping/pong (only if the ER answers pings)
+#   rtt-inputs  — true end-to-end: time set_inputs -> the inputs account reflecting it
+default = ["rtt-getslot"]
+rtt-getslot = []
+rtt-ping = []
+rtt-inputs = []
+tracy = ["dep:tracy-client"]
+
+[dependencies]
+anyhow = { workspace = true }
+deform_core = { path = "../deform_core" }
+tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "net", "macros"] }
+futures-util = "0.3"
+better_tokio_select = { workspace = true }
+# raw WebSocket: one connection carries both accountSubscribe and ping/pong RTT.
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+base64 = "0.22"
+solana-address = { workspace = true }
+solana-signature = { workspace = true }
+solana-rpc-client = { workspace = true }
+solana-sdk = { workspace = true }
+wincode = { workspace = true }
+glam = { workspace = true }
+tracing = { workspace = true }
+tracy-client = { workspace = true, optional = true, default-features = true }

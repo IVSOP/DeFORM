@@ -145,7 +145,7 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
             let (inputs_account, _) =
                 InputsAccount::<PongGame>::find_program_address(lobby_metadata.id, user, &game);
 
-            let inputs_delegation_accounts = DelegateAccounts::new(lobby_pubkey, game);
+            let inputs_delegation_accounts = DelegateAccounts::new(inputs_account, game);
 
             // TODO: some of these should be readonly
             inputs_accounts.push(AccountMeta::new(inputs_account, false));

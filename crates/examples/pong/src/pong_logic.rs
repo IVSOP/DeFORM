@@ -280,8 +280,22 @@ mod quic_logic {
             Ok(())
         }
     }
+
+    /// Fully-on-chain backend binding: same game, same instruction builder as the
+    /// Web2 backend, but state comes from the ER instead of a QUIC server.
+    #[cfg(feature = "foc")]
+    #[derive(Clone, Debug)]
+    pub struct PongFocLogic;
+
+    #[cfg(feature = "foc")]
+    impl deform_foc::DeformFocLogic for PongFocLogic {
+        type UserLogic = PongGame;
+        type ProgramClient = PongAnchorClient;
+    }
 }
 
+#[cfg(feature = "foc")]
+pub use quic_logic::PongFocLogic;
 #[cfg(feature = "bin")]
 pub use quic_logic::{NoAuth, PongQuicLogic};
 
