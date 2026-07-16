@@ -1,24 +1,7 @@
-//! Fully-on-chain (FoC) backend for DeForm.
-//!
-//! Where [`deform_quic`](../deform_quic) talks to a Web2 authoritative server over
-//! QUIC, this backend treats a MagicBlock **ephemeral rollup** as the authority:
-//!
-//! - **reading state** — subscribe to the lobby account over WebSocket
-//!   (`accountSubscribe`); each on-chain crank `tick` pushes a new `Lobby`.
-//! - **committing inputs** — send a `set_inputs` transaction to the ER over HTTP,
-//!   signed with the player's keypair.
-//!
-//! The client-side prediction/rollback loop is the same idea as the QUIC backend;
-//! only the transport and the latency estimate differ (see [`backend`]). The game
-//! engine still only sees a backend-agnostic [`DeformClient`].
-
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
+    sync::{Arc, atomic::AtomicU64},
     thread,
     time::{Duration, Instant},
 };
@@ -35,13 +18,14 @@ use deform_core::{
 };
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{message::Instruction, signature::Keypair, signer::Signer};
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 mod client;
 mod rtt;
 mod ws;
 
 use client::FocBackend;
+use tokio_util::sync::CancellationToken;
 
 // Exactly one latency strategy must be enabled (rtt-getslot is the default).
 const _: () = assert!(
@@ -73,6 +57,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
     lobby: Lobby<F::UserLogic>,
     visual_tick_micros: u64,
     slot_time_micros: u64,
+    cancellation_token: CancellationToken,
 ) -> UserFacingResult<F::UserLogic, DeformClient<F::UserLogic>> {
     let player = Pubkey::new_from_array(keypair.pubkey().to_bytes());
     let game_program = program_client.game_program();
@@ -126,19 +111,16 @@ pub fn new_foc_client<F: DeformFocLogic>(
         ),
     };
 
-    let terminate = Arc::new(Notify::new());
     let (set_inputs_sender, set_inputs_receiver) =
         mpsc::unbounded_channel::<<F::UserLogic as DeformUserLogic>::Inputs>();
     let backend_state = Arc::new(std::sync::Mutex::new(DeformSharedBackendState::<
         F::UserLogic,
     >::new_from_lobby(lobby.clone())?));
-    let backend_dead = Arc::new(AtomicBool::new(false));
 
     let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
-    let terminate_clone = terminate.clone();
     let backend_state_clone = backend_state.clone();
-    let backend_dead_clone = backend_dead.clone();
+    let cancellation_token_clone = cancellation_token.clone();
 
     let _rss_thread = thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -167,8 +149,8 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 ws_url.clone(),
                 lobby_pda,
                 state_tx,
-                terminate_clone.clone(),
                 ws_ready_tx,
+                cancellation_token.clone(),
             ));
             match ws_ready_rx.await {
                 Ok(Ok(())) => {}
@@ -189,14 +171,14 @@ pub fn new_foc_client<F: DeformFocLogic>(
             tokio::spawn(rtt::getslot_task(
                 rpc.clone(),
                 rtt_micros.clone(),
-                terminate_clone.clone(),
+                cancellation_token.clone(),
             ));
 
             #[cfg(feature = "rtt-ping")]
             tokio::spawn(rtt::ping_task(
                 ws_url.clone(),
                 rtt_micros.clone(),
-                terminate_clone.clone(),
+                cancellation_token.clone(),
             ));
 
             // The end-to-end probe reads the sim's per-commit send times.
@@ -208,7 +190,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 inputs_pda,
                 commit_times.clone(),
                 rtt_micros.clone(),
-                terminate_clone.clone(),
+                cancellation_token.clone(),
             ));
 
             // The commit task owns the RPC send path; the bounded channel backpressures
@@ -220,6 +202,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 keypair,
                 commit_rx,
                 slot_time_micros,
+                cancellation_token.clone(),
             ));
 
             let _ = setup_tx.send(Ok(()));
@@ -251,7 +234,6 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 state_rx,
                 rtt_micros,
 
-                terminate: terminate_clone.clone(),
                 set_inputs_receiver,
                 backend_state: backend_state_clone.clone(),
                 user_logic,
@@ -265,6 +247,8 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 avg_rtt: Duration::from_millis(50),
                 min_ticks_ahead: 4,
                 max_ticks_ahead: 12,
+
+                cancellation_token,
             };
 
             if let Err(e) = backend.tick_loop(starting_tick_info).await
@@ -273,8 +257,6 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 shared.internal_error = Err(e);
             }
         });
-
-        backend_dead_clone.store(true, Ordering::Relaxed);
     });
 
     setup_rx
@@ -282,9 +264,8 @@ pub fn new_foc_client<F: DeformFocLogic>(
         .map_err(|_| DeformError::Connection("setup thread terminated unexpectedly".into()))??;
 
     Ok(DeformClient {
-        terminate,
         set_inputs_sender,
         backend_state,
-        backend_dead,
+        cancellation_token: cancellation_token_clone,
     })
 }

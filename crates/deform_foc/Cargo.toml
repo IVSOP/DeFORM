@@ -22,6 +22,7 @@ tracy = ["dep:tracy-client"]
 anyhow = { workspace = true }
 deform_core = { path = "../deform_core" }
 tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "net", "macros"] }
+tokio-util = { workspace = true }
 futures-util = "0.3"
 better_tokio_select = { workspace = true }
 # raw WebSocket: one connection carries both accountSubscribe and ping/pong RTT.

@@ -1,6 +1,7 @@
-use std::sync::{atomic::AtomicBool, Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard};
 
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     accounts::lobby::Lobby, error::UserFacingResult, DeformError, DeformResult, DeformUserLogic,
@@ -9,15 +10,16 @@ use crate::{
 /// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
 /// Currently, the client is completely agnostic to the backend.
 pub struct DeformClient<T: DeformUserLogic> {
-    /// Used to tell the backend to terminate
-    pub terminate: Arc<Notify>,
     /// Channel used to set inputs
     // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send
     pub set_inputs_sender: mpsc::UnboundedSender<T::Inputs>,
     /// Game state to be read by the client, along with other useful info from the backend
     pub backend_state: Arc<Mutex<DeformSharedBackendState<T>>>,
-    /// Set to true by the backend thread when it exits (cleanly or due to error).
-    pub backend_dead: Arc<AtomicBool>,
+    /// This has three uses:
+    /// - Check if the backend has already exited
+    /// - Order the backend to stop what it is doing and exit cleanly
+    /// - Once the game ends, the backend will not imediately exit, to prevent issues: since we don't have a global mutex on this, it is possible to be sending inputs and just then the backend finishes, closing the channe. So, the user is responsible for manually calling this to shutdown the backend every time
+    pub cancellation_token: CancellationToken,
 }
 
 /// The state that is returned by the SDK to your application.
@@ -63,6 +65,6 @@ impl<T: DeformUserLogic> DeformClient<T> {
     }
 
     pub fn shutdown(&self) {
-        self.terminate.notify_one()
+        self.cancellation_token.cancel()
     }
 }

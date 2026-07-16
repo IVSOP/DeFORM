@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use bevy::prelude::*;
+use bevy::{ecs::message::MessageReader, prelude::*};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui_notify::EguiToastsPlugin;
 #[cfg(feature = "foc")]
@@ -60,10 +60,12 @@ pub fn run_game(wallet: Option<PathBuf>) {
             ),
         )
         .add_systems(PostUpdate, update_state.run_if(in_state(AppState::InGame)))
+        .add_systems(Update, on_app_exit)
         .run();
 }
 
 use pong::solana::anchor_client::PongAnchorClient;
+use tokio_util::sync::CancellationToken;
 
 use crate::menu::{MenuState, egui_in_game, egui_in_menu};
 
@@ -72,7 +74,7 @@ pub struct Ball;
 
 #[derive(Component)]
 #[repr(transparent)]
-pub struct Player(Pubkey);
+pub struct Player(pub Pubkey);
 
 #[derive(Resource)]
 #[repr(transparent)]
@@ -80,7 +82,11 @@ pub struct MultiplayerClient(pub DeformClient<PongGame>);
 
 #[derive(Resource)]
 #[repr(transparent)]
-pub struct PlayerEntities(HashMap<Pubkey, Entity>);
+pub struct PlayerEntities(pub HashMap<Pubkey, Entity>);
+
+#[derive(Resource)]
+#[repr(transparent)]
+pub struct BackendCancellationToken(pub CancellationToken);
 
 /// The two pre-spawned paddle entities, by field side.
 #[derive(Resource)]
@@ -279,7 +285,16 @@ pub fn start_offline(
         state: LobbyState::NotStarted(LobbyNotStarted { player_status }),
     };
 
-    let client = new_offline_client::<PongGame>(main_player, lobby, pong_bot, visual_tick_micros)?;
+    let cancellation_token = CancellationToken::new();
+    commands.insert_resource(BackendCancellationToken(cancellation_token.clone()));
+
+    let client = new_offline_client::<PongGame>(
+        main_player,
+        lobby,
+        pong_bot,
+        visual_tick_micros,
+        cancellation_token,
+    )?;
     commands.insert_resource(MultiplayerClient(client));
 
     // Creator (main_player) is always on the left
@@ -324,6 +339,9 @@ pub fn start_online(
             .copied(),
     };
 
+    let cancellation_token = CancellationToken::new();
+    commands.insert_resource(BackendCancellationToken(cancellation_token.clone()));
+
     let client = deform_quic::new_quic_client::<PongQuicLogic>(
         server_addr.to_string(),
         server_addr
@@ -336,6 +354,7 @@ pub fn start_online(
         skip_cert_verify,
         visual_tick_micros,
         NoAuth,
+        cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
 
@@ -393,6 +412,9 @@ pub fn start_online_foc(
             .copied(),
     };
 
+    let cancellation_token = CancellationToken::new();
+    commands.insert_resource(BackendCancellationToken(cancellation_token.clone()));
+
     let client = deform_foc::new_foc_client::<PongFocLogic>(
         endpoints.rpc.to_string(),
         endpoints.ws.to_string(),
@@ -401,6 +423,7 @@ pub fn start_online_foc(
         lobby,
         visual_tick_micros,
         slot_time_micros,
+        cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
 
@@ -473,4 +496,15 @@ pub fn update_state(
 
     ball.into_inner().translation = ongoing.tick_info.game_state.ball_pos.extend(0.0);
     Ok(())
+}
+
+pub fn on_app_exit(
+    mut exits: MessageReader<AppExit>,
+    cancellation_token: Option<Res<BackendCancellationToken>>,
+) {
+    for _exit in exits.read() {
+        if let Some(token) = &cancellation_token {
+            token.0.cancel();
+        }
+    }
 }

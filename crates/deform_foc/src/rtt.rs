@@ -5,7 +5,7 @@
 
 use std::sync::{Arc, atomic::AtomicU64};
 
-use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 /// Latency via an HTTP `getSlot` round-trip. Always works, and measures the same HTTP
 /// path `set_inputs` commits take. Reports network RTT only (the ticks-ahead target
@@ -14,7 +14,7 @@ use tokio::sync::Notify;
 pub async fn getslot_task(
     rpc: Arc<solana_rpc_client::nonblocking::rpc_client::RpcClient>,
     rtt_micros: Arc<AtomicU64>,
-    terminate: Arc<Notify>,
+    cancellation_token: CancellationToken,
 ) {
     use std::{
         sync::atomic::Ordering,
@@ -33,7 +33,7 @@ pub async fn getslot_task(
                     Err(e) => tracing::debug!("foc getSlot rtt probe failed: {e}"),
                 }
             }
-            _ = terminate.notified() => break,
+            _ = cancellation_token.cancelled() => break,
         }
     }
 }
@@ -43,7 +43,11 @@ pub async fn getslot_task(
 /// `websockets` probe in the crate docs). Reports network RTT only (the ticks-ahead
 /// target adds one slot of inclusion on top).
 #[cfg(feature = "rtt-ping")]
-pub async fn ping_task(ws_url: String, rtt_micros: Arc<AtomicU64>, terminate: Arc<Notify>) {
+pub async fn ping_task(
+    ws_url: String,
+    rtt_micros: Arc<AtomicU64>,
+    cancellation_token: CancellationToken,
+) {
     use std::{
         sync::atomic::Ordering,
         time::{Duration, Instant},
@@ -69,7 +73,7 @@ pub async fn ping_task(ws_url: String, rtt_micros: Arc<AtomicU64>, terminate: Ar
 
     loop {
         tokio::select! {
-            _ = terminate.notified() => break,
+            _ = cancellation_token.cancelled() => break,
             _ = ticker.tick() => {
                 let now = started.elapsed().as_micros() as u64;
                 if write.send(Message::Ping(now.to_le_bytes().to_vec().into())).await.is_err() {
@@ -106,7 +110,7 @@ pub async fn inputs_rtt_task<U: deform_core::DeformUserLogic>(
     inputs_pda: deform_core::Pubkey,
     commit_times: Arc<std::sync::Mutex<std::collections::BTreeMap<u64, std::time::Instant>>>,
     rtt_micros: Arc<AtomicU64>,
-    terminate: Arc<Notify>,
+    cancellation_token: CancellationToken,
 ) {
     use std::sync::atomic::Ordering;
 
@@ -140,7 +144,7 @@ pub async fn inputs_rtt_task<U: deform_core::DeformUserLogic>(
 
     loop {
         tokio::select! {
-            _ = terminate.notified() => break,
+            _ = cancellation_token.cancelled() => break,
             msg = read.next() => {
                 let Some(Ok(msg)) = msg else { break };
                 match msg {

@@ -25,9 +25,10 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use tokio::{
-    sync::{Notify, mpsc},
+    sync::mpsc,
     time::{Sleep, interval, sleep_until},
 };
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
 use crate::{DeformFocLogic, RTT_SAMPLE_INTERVAL_MS};
@@ -59,7 +60,7 @@ pub struct FocBackend<F: DeformFocLogic> {
     /// Latest WebSocket ping RTT, in microseconds, published by the WS task.
     pub rtt_micros: Arc<AtomicU64>,
 
-    pub terminate: Arc<Notify>,
+    pub cancellation_token: CancellationToken,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<<F::UserLogic as DeformUserLogic>::Inputs>,
     pub backend_state: Arc<Mutex<DeformSharedBackendState<F::UserLogic>>>,
     pub user_logic: F::UserLogic,
@@ -101,8 +102,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
         let mut inputs_ticker =
             interval(Duration::from_micros(commit_interval_ticks * tick_micros));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
-
-        let mut terminated = false;
 
         loop {
             tokio_select!(match .. {
@@ -212,12 +211,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     }
                 }
 
-                // Shutdown signal.
-                .. if let _ = self.terminate.notified() => {
-                    terminated = true;
-                    break;
-                }
-
                 // New inputs from the game engine.
                 .. if let new_inputs = self.set_inputs_receiver.recv() => {
                     if new_inputs.is_none() {
@@ -241,10 +234,14 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         }
                     }
                 }
+                .. if let _ = self.cancellation_token.cancelled() => {
+                    break;
+                }
             });
         }
 
-        if !terminated && let LobbyState::Finished(mut finished) = self.remote_lobby.state {
+        // when leaving, if the game has finished, set the final visual state to the state of the lobby
+        if let LobbyState::Finished(mut finished) = self.remote_lobby.state {
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
                 let visual_state = tick_info.clone();
                 {
@@ -257,7 +254,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     shared.lobby.state = LobbyState::Finished(finished);
                 }
             }
-            self.terminate.notified().await;
         }
 
         debug!("foc tick_loop exiting");
@@ -676,6 +672,7 @@ pub async fn commit_task(
     keypair: Arc<Keypair>,
     mut rx: mpsc::Receiver<Instruction>,
     slot_time_micros: u64,
+    cancellation_token: CancellationToken,
 ) {
     // FIX: get this unwrap out of here
     let mut blockhash = rpc.get_latest_blockhash().await.unwrap();
@@ -706,6 +703,9 @@ pub async fn commit_task(
                         }
                     }
                 }
+            }
+            .. if let _ = cancellation_token.cancelled() => {
+                break;
             }
         })
     }

@@ -1,9 +1,6 @@
 use std::{
     collections::BTreeMap,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -16,9 +13,10 @@ use deform_core::{
     error::{UserFacingError, UserFacingResult},
 };
 use tokio::{
-    sync::{Notify, mpsc, oneshot},
+    sync::{mpsc, oneshot},
     time::interval,
 };
+use tokio_util::sync::CancellationToken;
 
 pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     /// Last inputs set by the player. Since in offline mode we never roll back, there is no need to use any other structures.
@@ -32,7 +30,7 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
 
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
-    pub terminate: Arc<Notify>,
+    pub cancellation_token: CancellationToken,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
     // where we write the state to be read by the game engine
     pub backend_state: Arc<std::sync::Mutex<DeformSharedBackendState<T>>>,
@@ -48,6 +46,7 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         lobby: Lobby<T>,
         bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
         visual_tick_micros: u64,
+        cancellation_token: CancellationToken,
     ) -> UserFacingResult<T, DeformClient<T>> {
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
@@ -85,17 +84,13 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             LobbyState::Ongoing(ongoing) => (lobby.clone(), ongoing.tick_info.game_state.clone()),
         };
 
-        let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
-        let backend_dead = Arc::new(AtomicBool::new(false));
         let backend_state = Arc::new(Mutex::new(DeformSharedBackendState::new_from_lobby(
             lobby.clone(),
         )?));
         let backend_state_clone = backend_state.clone();
         let backend_state_clone_2 = backend_state.clone();
-
-        let terminate_clone = terminate.clone();
-        let backend_dead_clone = backend_dead.clone();
+        let cancellation_token_clone = cancellation_token.clone();
 
         let _rss_thread = thread::spawn(move || {
             match tokio::runtime::Builder::new_multi_thread()
@@ -118,13 +113,13 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                                 local_lobby: lobby,
                                 previous_game_state: game_state,
                                 player,
-                                terminate: terminate_clone,
                                 set_inputs_receiver,
                                 backend_state: backend_state.clone(),
                                 bot_fn,
                                 smoother,
                                 visual_tick_micros,
                                 last_sim_instant: Instant::now(),
+                                cancellation_token: cancellation_token_clone,
                             };
 
                             if let Err(e) = tick_info.tick_loop().await
@@ -149,7 +144,6 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     ))));
                 }
             }
-            backend_dead_clone.store(true, Ordering::Relaxed);
         });
 
         setup_rx.blocking_recv().map_err(|_| {
@@ -157,17 +151,15 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         })??;
 
         Ok(DeformClient {
-            terminate,
             set_inputs_sender,
             backend_state: backend_state_clone_2,
-            backend_dead,
+            cancellation_token,
         })
     }
 
     pub async fn tick_loop(mut self) -> UserFacingResult<T> {
         let mut tick_sleep = interval(Duration::from_micros(T::TICK_RATE_MICROS));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
-        let mut terminated = false;
 
         loop {
             tokio_select!(match .. {
@@ -202,13 +194,6 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                         }
                     }
                 }
-                // Shutdown signal
-                .. if let _ = self.terminate.notified() => {
-                    // #[cfg(feature = "log")]
-                    // warn!("Shutdown signal received; exiting");
-                    terminated = true;
-                    break;
-                }
                 // New inputs from the game engine
                 .. if let new_inputs = self.set_inputs_receiver.recv() => {
                     if new_inputs.is_none() {
@@ -220,12 +205,20 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                         self.player_input = new_inputs;
                     }
                 }
+                .. if let _ = self.cancellation_token.cancelled() => {
+                    break;
+                }
             });
         }
 
-        if !terminated && !matches!(self.local_lobby.state, LobbyState::Finished(_)) {
-            // Wait for termination signal
-            self.terminate.notified().await;
+        // when leaving, if the game has finished, set the final visual state to the state of the lobby
+        if let LobbyState::Finished(finished) = self.local_lobby.state {
+            let mut shared = self
+                .backend_state
+                .lock()
+                .map_err(|_| DeformError::LockPoisoned)?;
+
+            shared.lobby.state = LobbyState::Finished(finished);
         }
 
         Ok(())

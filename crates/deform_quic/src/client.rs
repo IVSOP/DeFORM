@@ -1,10 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     pin::Pin,
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -19,9 +16,10 @@ use deform_core::{
 use glam::FloatExt;
 use quinn::crypto::rustls::QuicClientConfig;
 use tokio::{
-    sync::{Notify, mpsc, oneshot},
+    sync::{mpsc, oneshot},
     time::{Sleep, interval, sleep_until},
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     ALPN_PROTOCOL, DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
@@ -47,7 +45,7 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub player: Pubkey,
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
-    pub terminate: Arc<Notify>,
+    pub cancellation_token: CancellationToken,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<<Q::UserLogic as DeformUserLogic>::Inputs>,
     pub backend_state: Arc<std::sync::Mutex<DeformSharedBackendState<Q::UserLogic>>>,
     // gets cloned into the backend_state, so we could tecnically use that
@@ -96,6 +94,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         skip_cert_verify: bool,
         visual_tick_micros: u64,
         auth: Q::Auth,
+        cancellation_token: CancellationToken,
     ) -> UserFacingResult<Q::UserLogic, DeformClient<Q::UserLogic>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
@@ -147,7 +146,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             ),
         };
 
-        let terminate = Arc::new(Notify::new());
         let (set_inputs_sender, set_inputs_receiver) =
             mpsc::unbounded_channel::<<Q::UserLogic as DeformUserLogic>::Inputs>();
 
@@ -156,14 +154,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         >::new_from_lobby(
             lobby.clone()
         )?));
-        let backend_dead = Arc::new(AtomicBool::new(false));
 
         // cursed
         let backend_state_clone = backend_state.clone();
         let backend_state_clone_2 = backend_state.clone();
-
-        let terminate_clone = terminate.clone();
-        let backend_dead_clone = backend_dead.clone();
+        let cancellation_token_clone = cancellation_token.clone();
 
         // tracing::info!(
         //     "QUIC init with server: {} (SNI: {})",
@@ -354,7 +349,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 control_recv,
 
                                 player,
-                                terminate: terminate_clone,
+                                cancellation_token: cancellation_token_clone,
                                 set_inputs_receiver,
                                 backend_state: backend_state_clone.clone(),
                                 user_logic,
@@ -392,7 +387,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     ))));
                 }
             }
-            backend_dead_clone.store(true, Ordering::Relaxed);
         });
 
         setup_rx.blocking_recv().map_err(|_| {
@@ -400,10 +394,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         })??;
 
         Ok(DeformClient {
-            terminate,
             set_inputs_sender,
             backend_state,
-            backend_dead,
+            cancellation_token,
         })
     }
 
@@ -421,8 +414,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
         ));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
-
-        let mut terminated = false;
 
         loop {
             tokio_select!(match .. {
@@ -547,14 +538,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     }
                 }
 
-                // Shutdown signal
-                .. if let _ = self.terminate.notified() => {
-                    // #[cfg(feature = "log")]
-                    // tracing::warn!("Shutdown signal received; exiting");
-                    terminated = true;
-                    break;
-                }
-
                 // New inputs from the game engine
                 .. if let new_inputs = self.set_inputs_receiver.recv() => {
                     if new_inputs.is_none() {
@@ -593,10 +576,15 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         }
                     }
                 }
+
+                .. if let _ = self.cancellation_token.cancelled() => {
+                    break;
+                }
             });
         }
 
-        if !terminated && let LobbyState::Finished(mut finished) = self.remote_lobby.state {
+        // when leaving, if the game has finished, set the final visual state to the state of the lobby
+        if let LobbyState::Finished(mut finished) = self.remote_lobby.state {
             if let Some(tick_info) = self.info_per_tick.get(&self.local_tick) {
                 let visual_state = tick_info.clone();
                 {
@@ -609,8 +597,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     shared.lobby.state = LobbyState::Finished(finished);
                 }
             }
-            // Wait for termination signal
-            self.terminate.notified().await;
         }
 
         self.connection.close(quinn::VarInt::from_u32(0), b"done");

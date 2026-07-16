@@ -4,7 +4,7 @@
 //! ping/pong — it only keepalive-pings and answers server pings so the socket stays
 //! open even while the lobby is idle.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use base64::Engine as _;
 use deform_core::{
@@ -12,8 +12,9 @@ use deform_core::{
     accounts::{DeformAccount, lobby::LobbyState},
 };
 use futures_util::{SinkExt, StreamExt};
-use tokio::sync::{Notify, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 /// How often to send a keepalive ping while the lobby account is otherwise idle.
@@ -26,8 +27,8 @@ pub async fn ws_task<U: DeformUserLogic>(
     ws_url: String,
     lobby_pda: Pubkey,
     state_tx: mpsc::UnboundedSender<LobbyState<U>>,
-    terminate: Arc<Notify>,
     ready: oneshot::Sender<DeformResult>,
+    cancellation_token: CancellationToken,
 ) {
     let stream = match tokio_tungstenite::connect_async(ws_url.as_str()).await {
         Ok((stream, _resp)) => stream,
@@ -66,7 +67,7 @@ pub async fn ws_task<U: DeformUserLogic>(
 
     loop {
         tokio::select! {
-            _ = terminate.notified() => break,
+            _ = cancellation_token.cancelled() => break,
 
             _ = keepalive.tick() => {
                 if let Err(e) = write.send(Message::Ping(Vec::new().into())).await {
@@ -138,6 +139,7 @@ enum TextOutcome<U: DeformUserLogic> {
     Ignored,
 }
 
+// FIX: this is cursed, is it even being used??
 fn handle_text<U: DeformUserLogic>(text: &str) -> TextOutcome<U> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
         return TextOutcome::Ignored;

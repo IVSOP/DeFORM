@@ -15,6 +15,7 @@ use solana_sdk::{
 };
 use solana_signature::Signature;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 use wincode::{SchemaRead, SchemaWrite, config::DefaultConfig};
 
@@ -221,6 +222,7 @@ pub fn new_quic_client<Q: DeformQuicLogic>(
     skip_cert_verify: bool,
     visual_tick_micros: u64,
     auth: Q::Auth,
+    cancellation_token: CancellationToken,
 ) -> UserFacingResult<Q::UserLogic, DeformClient<Q::UserLogic>> {
     client::QuicBackend::<Q>::init(
         server_addr,
@@ -230,5 +232,6 @@ pub fn new_quic_client<Q: DeformQuicLogic>(
         skip_cert_verify,
         visual_tick_micros,
         auth,
+        cancellation_token,
     )
 }

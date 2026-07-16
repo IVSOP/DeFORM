@@ -3560,6 +3560,7 @@ dependencies = [
  "strum_macros",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracy-client",
  "wincode",
 ]
@@ -3591,6 +3592,7 @@ dependencies = [
  "solana-signature",
  "tokio",
  "tokio-tungstenite",
+ "tokio-util",
  "tracing",
  "tracy-client",
  "wincode",
@@ -3606,6 +3608,7 @@ dependencies = [
  "serde",
  "solana-address 2.6.1",
  "tokio",
+ "tokio-util",
  "tracy-client",
  "wincode",
 ]
@@ -6855,6 +6858,7 @@ dependencies = [
  "solana-system-interface 3.2.0",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-util",
  "tracing",
  "tracing-subscriber",
  "tracy-client",
