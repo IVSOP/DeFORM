@@ -114,6 +114,9 @@ pub enum PongError {
 }
 
 // the ephemeral validators run at 20Hz
+#[cfg(feature = "20hz")]
+pub const TICK_RATE_MICROS: u64 = 50000;
+#[cfg(feature = "60hz")]
 pub const TICK_RATE_MICROS: u64 = 50000;
 
 impl DeformUserLogic for PongGame {

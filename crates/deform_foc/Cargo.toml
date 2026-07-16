@@ -36,4 +36,4 @@ solana-sdk = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 tracing = { workspace = true }
-tracy-client = { workspace = true, optional = true, default-features = true }
+tracy-client = { workspace = true, optional = true }

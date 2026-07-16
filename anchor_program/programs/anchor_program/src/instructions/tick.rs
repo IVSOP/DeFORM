@@ -82,6 +82,7 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
         // Once `advance_tick` returns `Finished`, the `let ... else` breaks so we never
         // tick a finished lobby again.
         let mut lobby_state = LobbyState::Ongoing(ongoing);
+        // WARN: this is actually deprecated and should not be relied on, but I will keep it here for now
         for _ in 0..num_ticks {
             let LobbyState::Ongoing(ongoing) = lobby_state else {
                 break;
