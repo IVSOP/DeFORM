@@ -9,7 +9,7 @@ const idl = JSON.parse(
 
 const codama = createFromRoot(rootNodeFromAnchor(idl));
 
-const outDir = "../crates/examples/pong";
+const outDir = process.argv[2] || "../crates/examples/pong";
 
 codama.accept(
   renderVisitor(outDir, { deleteFolderBeforeRendering: false })

@@ -117,7 +117,7 @@ pub enum PongError {
 #[cfg(feature = "20hz")]
 pub const TICK_RATE_MICROS: u64 = 50000;
 #[cfg(feature = "60hz")]
-pub const TICK_RATE_MICROS: u64 = 50000;
+pub const TICK_RATE_MICROS: u64 = 16667;
 
 impl DeformUserLogic for PongGame {
     type Inputs = PongInputs;

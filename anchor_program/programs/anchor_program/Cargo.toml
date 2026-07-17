@@ -9,7 +9,7 @@ crate-type = ["cdylib", "lib"]
 name = "anchor_program"
 
 [features]
-default = []
+default = ["pong"]
 cpi = ["no-entrypoint"]
 no-entrypoint = []
 no-idl = []
@@ -18,13 +18,14 @@ idl-build = ["anchor-lang/idl-build"]
 anchor-debug = []
 custom-heap = []
 custom-panic = []
+pong = ["dep:pong", "pong/20hz"]
 
 
 [dependencies]
 anchor-lang = "1.0.2"
 ephemeral-rollups-sdk = { version = "0.15.5", features = ["anchor"] }
 deform_core = { path = "../../../crates/deform_core", default-features = false, features = ["anchor"] }
-pong = { path = "../../../crates/examples/pong", default-features = false, features = ["anchor"] }
+pong = { path = "../../../crates/examples/pong", default-features = false, features = ["anchor"], optional = true}
 wincode = { version = "0.5.5", default-features = false, features = ["alloc", "derive"] }
 
 [lints.rust]
