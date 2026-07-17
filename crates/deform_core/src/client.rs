@@ -9,6 +9,7 @@ use crate::{
 
 /// A [`DeformClient`] acts as the frontend interface where the game interacts with the library, abstracting the underlying backend implementation.
 /// Currently, the client is completely agnostic to the backend.
+#[derive(Clone)]
 pub struct DeformClient<T: DeformUserLogic> {
     /// Channel used to set inputs
     // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send

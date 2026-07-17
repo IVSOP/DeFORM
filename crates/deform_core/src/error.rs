@@ -53,6 +53,9 @@ pub enum DeformError {
 
     #[error("deserialize inputs account: {0}")]
     DeserializeInputsAccount(String),
+
+    #[error("Error committing inputs: {0}")]
+    CommitInputsError(String),
 }
 
 pub type DeformResult<T = ()> = Result<T, DeformError>;
@@ -75,6 +78,7 @@ impl From<DeformError> for ProgramError {
             DeformError::Auth(_) => 13,
             DeformError::SerializeInputsAccount(_) => 14,
             DeformError::DeserializeInputsAccount(_) => 15,
+            DeformError::CommitInputsError(_) => 16,
         })
     }
 }

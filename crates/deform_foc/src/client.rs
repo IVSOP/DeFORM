@@ -10,8 +10,8 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, DeformInputs, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
-    Smooth, TickInfo,
+    DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
+    DeformUserLogic, Pubkey, Smooth, TickInfo,
     accounts::lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
@@ -663,6 +663,31 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
         Ok(())
     }
+
+    pub async fn commit_task_wrapper(
+        rpc: Arc<RpcClient>,
+        keypair: Arc<Keypair>,
+        rx: mpsc::Receiver<Instruction>,
+        slot_time_micros: u64,
+        client: DeformClient<F::UserLogic>,
+    ) {
+        if let Err(e) = commit_task(
+            rpc,
+            keypair,
+            rx,
+            slot_time_micros,
+            client.cancellation_token.clone(),
+        )
+        .await
+        {
+            if let Ok(mut backend) = client.backend_state.lock() {
+                backend.internal_error = Err(UserFacingError::Deform(
+                    DeformError::CommitInputsError(e.to_string()),
+                ));
+            }
+            client.cancellation_token.cancel();
+        }
+    }
 }
 
 // task that runs in a loop sending transactions
@@ -673,9 +698,8 @@ pub async fn commit_task(
     mut rx: mpsc::Receiver<Instruction>,
     slot_time_micros: u64,
     cancellation_token: CancellationToken,
-) {
-    // FIX: get this unwrap out of here
-    let mut blockhash = rpc.get_latest_blockhash().await.unwrap();
+) -> anyhow::Result<()> {
+    let mut blockhash = rpc.get_latest_blockhash().await?;
 
     let mut blockhash_refresh_interval = interval(Duration::from_micros(slot_time_micros * 100));
 
@@ -684,23 +708,19 @@ pub async fn commit_task(
     loop {
         tokio_select!(match .. {
             .. if let _ = blockhash_refresh_interval.tick() => {
-                // FIX: get this unwrap out of here
-                blockhash = rpc.get_latest_blockhash().await.unwrap();
+                blockhash = rpc.get_latest_blockhash().await?;
             }
             .. if let ix = rx.recv() => {
                 match ix {
                     None => {
-                        // FIX: error here
-                        break;
+                        anyhow::bail!("Commit task channel closed!");
                     }
                     Some(ix) => {
                         let msg = Message::new(&[ix], Some(&pubkey));
                         let mut tx = Transaction::new_unsigned(msg);
                         tx.sign(&[keypair.as_ref()], blockhash);
                         // fire-and-forget: skip confirmation for the lowest possible latency.
-                        if let Err(e) = rpc.send_transaction(&tx).await {
-                            debug!("foc set_inputs send failed: {e}");
-                        }
+                        rpc.send_transaction(&tx).await?;
                     }
                 }
             }
@@ -710,4 +730,5 @@ pub async fn commit_task(
         })
     }
     debug!("foc commit task exiting");
+    Ok(())
 }

@@ -120,7 +120,13 @@ pub fn new_foc_client<F: DeformFocLogic>(
     let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
     let backend_state_clone = backend_state.clone();
-    let cancellation_token_clone = cancellation_token.clone();
+
+    let deform_client = DeformClient {
+        set_inputs_sender,
+        backend_state,
+        cancellation_token: cancellation_token.clone(),
+    };
+    let deform_client_clone = deform_client.clone();
 
     let _rss_thread = thread::spawn(move || {
         let rt = match tokio::runtime::Builder::new_multi_thread()
@@ -197,12 +203,12 @@ pub fn new_foc_client<F: DeformFocLogic>(
             // the sim loop if sends fall behind.
             // TODO: do not hardcode 64 here
             let (commit_tx, commit_rx) = mpsc::channel::<Instruction>(64);
-            tokio::spawn(client::commit_task(
+            tokio::spawn(FocBackend::<F>::commit_task_wrapper(
                 rpc,
                 keypair,
                 commit_rx,
                 slot_time_micros,
-                cancellation_token.clone(),
+                deform_client_clone,
             ));
 
             let _ = setup_tx.send(Ok(()));
@@ -263,9 +269,5 @@ pub fn new_foc_client<F: DeformFocLogic>(
         .blocking_recv()
         .map_err(|_| DeformError::Connection("setup thread terminated unexpectedly".into()))??;
 
-    Ok(DeformClient {
-        set_inputs_sender,
-        backend_state,
-        cancellation_token: cancellation_token_clone,
-    })
+    Ok(deform_client)
 }
