@@ -56,6 +56,9 @@ pub enum DeformError {
 
     #[error("Error committing inputs: {0}")]
     CommitInputsError(String),
+
+    #[error("Tick rate missmatch: {0}")]
+    TickRateMissmatch(String),
 }
 
 pub type DeformResult<T = ()> = Result<T, DeformError>;
@@ -79,6 +82,7 @@ impl From<DeformError> for ProgramError {
             DeformError::SerializeInputsAccount(_) => 14,
             DeformError::DeserializeInputsAccount(_) => 15,
             DeformError::CommitInputsError(_) => 16,
+            DeformError::TickRateMissmatch(_) => 17,
         })
     }
 }

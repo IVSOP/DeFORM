@@ -59,6 +59,16 @@ pub fn new_foc_client<F: DeformFocLogic>(
     slot_time_micros: u64,
     cancellation_token: CancellationToken,
 ) -> UserFacingResult<F::UserLogic, DeformClient<F::UserLogic>> {
+    let game_tick_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS;
+    if slot_time_micros != game_tick_micros {
+        Err(UserFacingError::Deform(DeformError::TickRateMissmatch(
+            format!(
+                "Slot time of {} does not match the expected tick rate {}. In FoC, the game must run at the validator's tick rate.",
+                slot_time_micros, game_tick_micros
+            ),
+        )))?;
+    }
+
     let player = Pubkey::new_from_array(keypair.pubkey().to_bytes());
     let game_program = program_client.game_program();
     let lobby_id = lobby.metadata.id;
