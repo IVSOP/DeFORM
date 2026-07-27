@@ -28,7 +28,9 @@ pub type Pubkey = solana_address::Address;
 /// Note that the callbacks have mutable access to `self`, meaning you can provide and mutate your own data,
 /// using the struct that implements this trait.
 ///
-/// Note that while this trait defines [`DeformUserLogic::Inputs`] and [`DeformUserLogic::GameState`], the backend is the one responsible for holding stateful information. You should use the struct that implements this trait to store aditional data that you want to keep out of the [`DeformUserLogic::GameState`].
+/// Types that implement this trait may also contain state that is separate from the game state. The main difference is that, every tick, a new game state will be created, and others may be deleted or overwritten, but [`DeformUserLogic`] objects will be reused as long as the match lives.
+/// 
+/// NOTE: this should be as quick to serialize as possible, as serialization/deserialization happens many times per second.
 // TODO: make the callbacks receive the entire lobby state instead of just the game state??
 pub trait DeformUserLogic:
     Debug
@@ -48,6 +50,8 @@ pub trait DeformUserLogic:
 {
     // user must define inputs and game state
     type Inputs: DeformInputs;
+
+    /// NOTE: this should be as quick to serialize as possible, as serialization/deserialization happens many times per second.
     type GameState: DeformGameState;
     type Smoother: Smooth<Self::GameState>;
     type Error: std::error::Error

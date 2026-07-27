@@ -25,7 +25,7 @@ trap cleanup INT TERM EXIT
 # cwd = CRATES_DIR so the in-app keypair dropdown (which scans ".") also finds the wallets.
 cd "$CRATES_DIR"
 # cargo run --release -p pong -- run ${WALLET1:+--wallet="$WALLET1"} &
-cargo run --release -p pong --no-default-features --features="client,server,anchor,foc-ping,tracy" -- run ${WALLET1:+--wallet="$WALLET1"} &
+cargo run --release -p pong --no-default-features --features="client,server,anchor,foc-ping,tracy,20hz" -- run ${WALLET1:+--wallet="$WALLET1"} &
 pids+=($!)
 cargo run --release -p pong -- run ${WALLET2:+--wallet="$WALLET2"} &
 pids+=($!)

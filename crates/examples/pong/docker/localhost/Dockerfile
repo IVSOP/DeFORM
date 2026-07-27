@@ -9,7 +9,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
-ARG CARGO_BUILD_FEATURES="server,anchor"
+ARG CARGO_BUILD_FEATURES="server,anchor,20hz"
 RUN cargo chef cook --release --recipe-path recipe.json \
     --no-default-features --features="${CARGO_BUILD_FEATURES}" -p pong
 COPY . .
