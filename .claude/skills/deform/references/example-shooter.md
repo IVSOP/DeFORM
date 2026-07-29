@@ -105,10 +105,11 @@ crates/examples/shooter/run.sh         # docker (surfpool + QUIC server) + two c
 
 In each client: Connect (Localhost) → Create/Join Lobby → Ready → Read Lobby →
 Play Online (web2). Or skip all of it with "Play Offline (vs bot)" — no
-infrastructure at all, and the aim-bot exercises the full sim. WASD moves, mouse
-looks, M1 fires, Esc frees the cursor.
+infrastructure at all, and the aim-bot exercises the full sim. WASD moves, Space
+jumps (hold for full height; tnua's ground-only action means no double jumps),
+mouse looks, M1 fires, Esc frees the cursor.
 
 The sim has real tests (`cargo test -p shooter --no-default-features --features
-physics`): floating, movement, projectile flight/expiry, scoring hits, rebuilding
-a sim mid-match, wire-format round-trips, and a per-tick time budget guard for
-rollback bursts.
+physics`): floating, movement, jumping (single, full-height, no re-trigger while
+held), projectile flight/expiry, scoring hits, rebuilding a sim mid-match,
+wire-format round-trips, and a per-tick time budget guard for rollback bursts.

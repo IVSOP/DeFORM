@@ -1,0 +1,38 @@
+# Local stack for the shooter example. Compared to pong's, there is no ephemeral
+# validator: the shooter is Web2-only (its avian/tnua simulation cannot run inside
+# the on-chain program), so the chain is only used for lobbies + settlement and the
+# QUIC server is the realtime authority.
+#
+# NOTE: surfpool deploys whatever is in anchor_program/target — run
+# `anchor_program/build_shooter.sh` first so the deployed program is the one built
+# with the `shooter` feature.
+services:
+  surfpool:
+    # image: surfpool/surfpool
+    # local image built with `docker buildx build --platform linux/amd64 -t surfpool/surfpool:programsubscribe-local --load .` on the surfpool repo
+    image: surfpool/surfpool:programsubscribe-local
+    container_name: surfpool-instance
+    ports:
+    - "8899:8899"
+    - "8900:8900"
+    volumes:
+      - ../../../../../surfpool/:/workspace
+      - ../../../../../anchor_program/target:/artifacts:ro
+      - ../../../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json:/root/.config/solana/id.json:ro
+    # Fork devnet, same as pong's stack (harmless here, and it keeps the two stacks
+    # interchangeable — devnet is required whenever the ephemeral validator runs).
+    command: start --no-tui --network devnet
+    restart: unless-stopped
+
+  shooter_server:
+    image: shooter-server:latest
+    container_name: shooter-server
+    ports:
+      - "4433:4433/udp"
+    volumes:
+      - ../../../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json:/app/admin.json:ro
+    environment:
+      - RUST_LOG=info
+      - KEYPAIR_PATH=admin.json
+      - RPC_URL=http://surfpool:8899
+    restart: unless-stopped

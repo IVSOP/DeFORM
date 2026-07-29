@@ -93,7 +93,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
             ctx.accounts.system_program.key(),
             ctx.program_id,
             // create account already using the max space
-            UserLogic::MAX_LOBBY_ACCOUNT_BYTES,
+            UserLogic::MAX_INPUTS_ACCOUNT_BYTES,
             seeds,
         )?;
 

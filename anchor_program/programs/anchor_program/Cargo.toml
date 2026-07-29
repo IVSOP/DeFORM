@@ -19,6 +19,9 @@ anchor-debug = []
 custom-heap = []
 custom-panic = []
 pong = ["dep:pong", "pong/20hz"]
+# The shooter compiles here without its avian/tnua simulation (that can't build for
+# SBF), so its lobbies are managed and settled on-chain but can only be Web2.
+shooter = ["dep:shooter"]
 
 
 [dependencies]
@@ -26,6 +29,7 @@ anchor-lang = "1.0.2"
 ephemeral-rollups-sdk = { version = "0.15.5", features = ["anchor"] }
 deform_core = { path = "../../../crates/deform_core", default-features = false, features = ["anchor"] }
 pong = { path = "../../../crates/examples/pong", default-features = false, features = ["anchor"], optional = true}
+shooter = { path = "../../../crates/examples/shooter", default-features = false, features = ["anchor"], optional = true}
 wincode = { version = "0.5.5", default-features = false, features = ["alloc", "derive"] }
 
 [lints.rust]
