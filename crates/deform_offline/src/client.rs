@@ -265,7 +265,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
         };
 
         ongoing.tick += 1;
-        ongoing.tick_info = next_info;
+        // The outgoing state becomes the origin of the visual interpolation, the
+        // same (prev tick, current tick) pair the networked backends read from
+        // their history. Leaving it stale makes every visual tick lerp from the
+        // *initial* state instead, which oscillates the whole world at tick rate.
+        self.previous_game_state = std::mem::replace(&mut ongoing.tick_info, next_info).game_state;
 
         Ok(())
     }
