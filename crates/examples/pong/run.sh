@@ -33,3 +33,4 @@ pids+=($!)
 # Foreground so repeated Ctrl+C reaches docker compose directly.
 cd "$DOCKER_DIR"
 ./up.sh
+

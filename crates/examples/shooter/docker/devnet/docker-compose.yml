@@ -1,0 +1,28 @@
+# Devnet stack for the shooter server: the QUIC server and nothing else.
+#
+# The localhost stack also runs surfpool (a stand-in base layer); on devnet that
+# role is played by Solana devnet itself, so all that is left is the QUIC server
+# -- which is the realtime authority for the shooter either way, since its
+# avian/tnua simulation cannot run on-chain.
+#
+# Everything is configured through the .env file sitting next to this one.
+#
+# The project name is pinned rather than taken from the directory, so pong and
+# shooter bundles can sit side by side on the same host without colliding.
+name: shooter-server
+
+services:
+  shooter_server:
+    image: shooter-server:latest
+    container_name: shooter-server
+    ports:
+      # The binary always binds 4433 inside the container; PORT only moves the
+      # host-side mapping.
+      - "${PORT:-4433}:4433/udp"
+    volumes:
+      - ./admin.json:/app/admin.json:ro
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - KEYPAIR_PATH=admin.json
+      - RPC_URL=${RPC_URL:-https://api.devnet.solana.com}
+    restart: unless-stopped
