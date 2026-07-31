@@ -23,9 +23,12 @@ use syn::{
 ///
 /// | Parameter      | Default | Description                                                   |
 /// |----------------|---------|---------------------------------------------------------------|
-/// | `decay`        | `0.9`   | Multiplier applied to offsets each frame (lower = faster snap)|
-/// | `max_offset`   | `200.0` | Offsets larger than this are discarded (teleport threshold)   |
+/// | `decay`        | `0.9`   | Multiplier applied to offsets each *simulation tick* (lower = faster snap) |
+/// | `max_offset`   | `200.0` | Discontinuity threshold: rollback offsets larger than this are discarded, and single-tick jumps larger than this snap instead of interpolating |
 /// | `min_offset_sq`| `4.0`   | Offsets with squared magnitude below this are zeroed out      |
+///
+/// `max_offset` must sit above the largest distance a field covers in one tick
+/// during normal play, and below the smallest genuine teleport.
 ///
 /// # Field attributes
 ///
@@ -238,12 +241,21 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
         let name = &f.ident;
         quote! {
             {
-                let target = ::deform_core::SmoothableField::lerp_toward(&prev.#name, &current.#name, t);
-                self.#name *= self.__params.decay;
-                if ::deform_core::SmoothableField::magnitude_sq(&self.#name) < self.__params.min_offset_sq {
+                // A single-tick jump larger than `max_offset` is a discontinuity
+                // (respawn, round reset, warp), not motion. Lerping across it would
+                // drag the entity over the whole gap, so snap and drop any residual
+                // offset instead.
+                let __jump = current.#name.clone() - prev.#name.clone();
+                if ::deform_core::SmoothableField::magnitude_sq(&__jump) > self.__params.max_offset_sq {
                     self.#name = Default::default();
+                } else {
+                    let target = ::deform_core::SmoothableField::lerp_toward(&prev.#name, &current.#name, t);
+                    self.#name *= self.__params.decay;
+                    if ::deform_core::SmoothableField::magnitude_sq(&self.#name) < self.__params.min_offset_sq {
+                        self.#name = Default::default();
+                    }
+                    current.#name = target + self.#name.clone();
                 }
-                current.#name = target + self.#name.clone();
             }
         }
     });

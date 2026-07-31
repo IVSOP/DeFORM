@@ -40,7 +40,13 @@ pub struct PlayerState {
 #[derive(
     Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
 )]
-#[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
+// `decay` is per simulation tick (50ms at 20Hz), so 0.5 absorbs a correction in
+// ~5 ticks / ~250ms. Mispredicting the opponent's release costs up to
+// `max_ticks_ahead * PADDLE_SPEED * dt` = 288 units, which at 0.9 took over two
+// seconds to bleed off and read as the paddle sliding on its own.
+// `max_offset` sits above the 52.5 units the ball covers in a tick and below the
+// ~850 unit jump of `reset_round`, so a round reset snaps instead of sweeping.
+#[smooth(decay = 0.5, max_offset = 200.0, min_offset_sq = 9.0)]
 pub struct PongGameState {
     #[smooth]
     #[wincode(with = "PodVec2")]
