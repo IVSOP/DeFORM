@@ -410,9 +410,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             + Duration::from_micros(<Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
         let mut tick_sleep = Box::pin(sleep_until(self.next_tick_deadline));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
-        let mut inputs_ticker = interval(Duration::from_micros(
-            <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
-        ));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         loop {
@@ -453,6 +450,18 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                             remote_tick
                         }
                     };
+
+                    // Commit right after the simulation step, so an input is transmitted as soon
+                    // as its tick closes. Sending on an independent timer instead meant a sample
+                    // could wait a whole extra period for a commit it had just missed.
+                    #[cfg(feature = "tracy")]
+                    if let Some(max_input) = self.inputs.keys().max()
+                        && let Some(client) = tracy_client::Client::running()
+                    {
+                        client.plot(tracy_client::plot_name!("commit_inputs"), *max_input as f64);
+                    }
+
+                    self.commit_inputs().await?;
 
                     // Advance the anchored deadline by the (variable) dilated interval rather than
                     // sleeping from `now`, so the work done in this arm does not accumulate as drift.
@@ -499,26 +508,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     }
                 }
 
-                // Commit inputs periodically
-                .. if let _ = inputs_ticker.tick() => {
-                    // only while the match is live; no authoritative tick exists otherwise
-                    if matches!(self.remote_lobby.state, LobbyState::Ongoing(_)) {
-                        #[cfg(feature = "tracy")]
-                        {
-                            if let Some(max_input) = self.inputs.keys().max() {
-                                if let Some(client) = tracy_client::Client::running() {
-                                    client.plot(
-                                        tracy_client::plot_name!("commit_inputs"),
-                                        *max_input as f64,
-                                    );
-                                }
-                            }
-                        }
-
-                        self.commit_inputs().await?;
-                    }
-                }
-
                 // Sample RTT from quinn (already an EWMA internally)
                 .. if let _ = rtt_ticker.tick() => {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
@@ -546,7 +535,15 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
-                        self.inputs.entry(self.local_tick).or_insert(new_inputs);
+                        // The engine can provide several samples within one tick. Merge them
+                        // instead of keeping only the first, which silently dropped the rest.
+                        // Safe to mutate in place: this entry is not sent until the tick closes.
+                        match self.inputs.get_mut(&self.local_tick) {
+                            Some(existing) => existing.merge(&new_inputs),
+                            None => {
+                                self.inputs.insert(self.local_tick, new_inputs);
+                            }
+                        }
                     }
                 }
 
@@ -758,11 +755,24 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("commit_inputs");
 
-        if self.inputs.is_empty() {
+        // Never send the tick still in progress: samples are still being merged into it.
+        // The server commits first-write-wins, so a non-final value would be locked in
+        // there while we keep changing ours, guaranteeing a mismatch and a rollback.
+        // Normally this filters nothing, since the caller has just advanced past that
+        // tick, but the simulation does not advance while frozen at `max_ticks_ahead`.
+        // NOTE: this may add 1 tick of delay to committing inputs!!!
+        let pending: HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs> = self
+            .inputs
+            .iter()
+            .filter(|(tick, _)| **tick < self.local_tick)
+            .map(|(tick, inputs)| (*tick, inputs.clone()))
+            .collect();
+
+        if pending.is_empty() {
             return Ok(());
         }
 
-        let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(self.inputs.clone());
+        let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(pending);
         let bytes = wincode::serialize(&ix)?;
 
         self.connection

@@ -29,7 +29,7 @@ use tokio::{
     time::{Sleep, interval, sleep_until},
 };
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, error, warn};
 
 use crate::{DeformFocLogic, RTT_SAMPLE_INTERVAL_MS};
 
@@ -84,6 +84,16 @@ pub struct FocBackend<F: DeformFocLogic> {
 }
 
 impl<F: DeformFocLogic> FocBackend<F> {
+    /// How many game ticks are batched into a single `set_inputs` transaction: as many
+    /// as fit in one ER slot, at least one. Committing every tick is not viable here,
+    /// so this is also the worst-case wait an input can sit through before being sent,
+    /// which is why [`Self::update_ticks_ahead`] folds it into the ticks-ahead target.
+    fn commit_interval_ticks(&self) -> u64 {
+        self.slot_time_micros
+            .div_ceil(<F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
+            .max(1)
+    }
+
     pub async fn tick_loop(
         mut self,
         starting_tick_info: TickInfo<F::UserLogic>,
@@ -94,13 +104,12 @@ impl<F: DeformFocLogic> FocBackend<F> {
             + Duration::from_micros(<F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
         let mut tick_sleep = Box::pin(sleep_until(self.next_tick_deadline));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
-        // Commit ~once per ER slot: batch as many game ticks as fit in a slot (at
-        // least one). Each commit still carries the full accumulated input batch, so
-        // committing less often loses no inputs, it only adds a little commit latency.
+        // Each commit carries the full accumulated input batch, so committing less
+        // often loses no inputs, it only adds a little commit latency.
         let tick_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS;
-        let commit_interval_ticks = self.slot_time_micros.div_ceil(tick_micros).max(1);
-        let mut inputs_ticker =
-            interval(Duration::from_micros(commit_interval_ticks * tick_micros));
+        let commit_interval_ticks = self.commit_interval_ticks();
+        let mut last_commit_tick = self.local_tick;
+        let mut last_commit_at = tokio::time::Instant::now();
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         loop {
@@ -132,6 +141,34 @@ impl<F: DeformFocLogic> FocBackend<F> {
                             remote_tick
                         }
                     };
+
+                    // Commit once enough new input ticks have piled up, rather than on a
+                    // wall-clock timer. Inputs are produced by ticks, so counting ticks keeps
+                    // the batch size constant under time dilation; a timer would instead fire
+                    // with little new to send and pay for a near-empty transaction.
+                    //
+                    // The elapsed check is only a backstop: the simulation stops advancing
+                    // while frozen at `max_ticks_ahead`, and the tick count alone would then
+                    // never reach the threshold again.
+                    let ticks_since_commit = self.local_tick.saturating_sub(last_commit_tick);
+                    let commit_stalled = last_commit_at.elapsed()
+                        > Duration::from_micros(2 * commit_interval_ticks * tick_micros);
+
+                    if ticks_since_commit >= commit_interval_ticks || commit_stalled {
+                        #[cfg(feature = "tracy")]
+                        if let Some(max_input) = self.inputs.keys().max()
+                            && let Some(client) = tracy_client::Client::running()
+                        {
+                            client.plot(
+                                tracy_client::plot_name!("commit_inputs"),
+                                *max_input as f64,
+                            );
+                        }
+
+                        self.commit_inputs().await?;
+                        last_commit_tick = self.local_tick;
+                        last_commit_at = tokio::time::Instant::now();
+                    }
 
                     let dilated = self.compute_dilated_tick_interval(remote_tick);
                     self.next_tick_deadline += dilated;
@@ -172,25 +209,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     }
                 }
 
-                // Commit our accumulated inputs to the ER as a set_inputs transaction.
-                .. if let _ = inputs_ticker.tick() => {
-                    if matches!(self.remote_lobby.state, LobbyState::Ongoing(_)) {
-                        #[cfg(feature = "tracy")]
-                        {
-                            if let Some(max_input) = self.inputs.keys().max() {
-                                if let Some(client) = tracy_client::Client::running() {
-                                    client.plot(
-                                        tracy_client::plot_name!("commit_inputs"),
-                                        *max_input as f64,
-                                    );
-                                }
-                            }
-                        }
-
-                        self.commit_inputs().await?;
-                    }
-                }
-
                 // Refresh the latency estimate and re-derive the ticks-ahead target.
                 .. if let _ = rtt_ticker.tick() => {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
@@ -219,7 +237,15 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
-                        self.inputs.entry(self.local_tick).or_insert(new_inputs);
+                        // The engine can provide several samples within one tick. Merge them
+                        // instead of keeping only the first, which silently dropped the rest.
+                        // Safe to mutate in place: this entry is not sent until the tick closes.
+                        match self.inputs.get_mut(&self.local_tick) {
+                            Some(existing) => existing.merge(&new_inputs),
+                            None => {
+                                self.inputs.insert(self.local_tick, new_inputs);
+                            }
+                        }
                     }
                 }
 
@@ -269,10 +295,13 @@ impl<F: DeformFocLogic> FocBackend<F> {
         #[cfg(feature = "rtt-inputs")]
         let latency_micros = rtt_secs * 1_000_000.0 + 3000.0;
 
+        // Inputs are batched, so one for a tick that just missed a commit waits out the
+        // rest of the interval before it is even sent. The lead has to cover that wait,
+        // not just the network latency, or we fall behind and start fast-forwarding.
         self.min_ticks_ahead = (latency_micros
             / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64)
             .ceil() as u64
-            + 1;
+            + self.commit_interval_ticks();
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
         #[cfg(feature = "tracy")]
@@ -397,7 +426,17 @@ impl<F: DeformFocLogic> FocBackend<F> {
     /// loop; the network send is the task's job. An ix-build error is surfaced
     /// synchronously.
     pub async fn commit_inputs(&self) -> UserFacingResult<F::UserLogic> {
-        if self.inputs.is_empty() {
+        // Never send the tick still in progress: samples are still being merged into it,
+        // and the program commits first-write-wins, so a non-final value would be locked
+        // in on-chain while we keep changing ours, guaranteeing a mismatch and a rollback.
+        let pending: HashMap<u64, <F::UserLogic as DeformUserLogic>::Inputs> = self
+            .inputs
+            .iter()
+            .filter(|(tick, _)| **tick < self.local_tick)
+            .map(|(tick, inputs)| (*tick, inputs.clone()))
+            .collect();
+
+        if pending.is_empty() {
             return Ok(());
         }
 
@@ -408,7 +447,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
                 self.inputs_pda,
                 self.lobby_pda,
                 self.lobby_id,
-                &self.inputs,
+                &pending,
             )
             .map_err(UserFacingError::User)?;
 
@@ -429,7 +468,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
         // Record when this batch (identified by its max tick) was sent, so the
         // inputs-account RTT probe can time when it lands.
         #[cfg(feature = "rtt-inputs")]
-        if let Some(&max_tick) = self.inputs.keys().max() {
+        if let Some(&max_tick) = pending.keys().max() {
             if let Ok(mut times) = self.commit_times.lock() {
                 times.insert(max_tick, Instant::now());
                 // bound memory if the probe stalls (drop oldest)
@@ -680,6 +719,9 @@ impl<F: DeformFocLogic> FocBackend<F> {
         )
         .await
         {
+            // Cancelling here tears down the sim loop, which drops `set_inputs_receiver`
+            // and surfaces to the game as an opaque "channel closed". Log the real cause.
+            error!("foc commit task died, ending the match: {e}");
             if let Ok(mut backend) = client.backend_state.lock() {
                 backend.internal_error = Err(UserFacingError::Deform(
                     DeformError::CommitInputsError(e.to_string()),
@@ -708,19 +750,33 @@ pub async fn commit_task(
     loop {
         tokio_select!(match .. {
             .. if let _ = blockhash_refresh_interval.tick() => {
-                blockhash = rpc.get_latest_blockhash().await?;
+                // A transient RPC blip must not end the match. Blockhashes stay valid for
+                // ~2 minutes, so keeping the current one until the next refresh is fine.
+                match rpc.get_latest_blockhash().await {
+                    Ok(new_blockhash) => blockhash = new_blockhash,
+                    Err(e) => warn!("blockhash refresh failed, keeping the previous one: {e}"),
+                }
             }
             .. if let ix = rx.recv() => {
                 match ix {
                     None => {
-                        anyhow::bail!("Commit task channel closed!");
+                        // The sim loop dropped its sender, so it has already exited. This is
+                        // ordinary shutdown, not a failure: treating it as one used to report
+                        // a spurious commit error that masked whatever really ended the loop.
+                        debug!("foc commit task: sim loop closed the channel");
+                        break;
                     }
                     Some(ix) => {
                         let msg = Message::new(&[ix], Some(&pubkey));
                         let mut tx = Transaction::new_unsigned(msg);
                         tx.sign(&[keypair.as_ref()], blockhash);
                         // fire-and-forget: skip confirmation for the lowest possible latency.
-                        rpc.send_transaction(&tx).await?;
+                        // A failed send is not fatal either: every commit carries the whole
+                        // pending input batch, so the next one re-sends whatever this tx
+                        // would have carried. Killing the match over one dropped tx is worse.
+                        if let Err(e) = rpc.send_transaction(&tx).await {
+                            warn!("set_inputs tx send failed, retrying on next commit: {e}");
+                        }
                     }
                 }
             }

@@ -230,6 +230,16 @@ pub trait DeformInputs:
     fn predict(&self) -> Self {
         self.clone()
     }
+
+    /// Combines a later sample from the same tick into this one. The game engine usually
+    /// runs faster than the simulation, so several inputs can be provided within one tick,
+    /// and only one of them is ever applied.
+    ///
+    /// By default the newest sample wins. Override this to OR button presses together, so
+    /// a button pressed and released inside a single tick is not lost.
+    fn merge(&mut self, newer: &Self) {
+        *self = newer.clone();
+    }
 }
 
 pub trait DeformGameState:
