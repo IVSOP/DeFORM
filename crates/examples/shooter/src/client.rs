@@ -2,7 +2,7 @@ use std::{collections::HashMap, path::PathBuf};
 
 use bevy::{
     ecs::message::MessageReader,
-    input::mouse::AccumulatedMouseMotion,
+    input::mouse::MouseMotion,
     prelude::*,
     window::{CursorGrabMode, CursorOptions, PrimaryWindow},
 };
@@ -45,7 +45,8 @@ pub struct CameraOrientation {
     pub pitch: f32,
 }
 
-/// The inputs being composed this frame, sent to the backend by [`send_inputs`].
+/// The inputs being composed this frame, pushed to the backend by [`mouse_look`]
+/// after every mouse movement and again by [`send_inputs`] at the end of the frame.
 #[derive(Resource, Default)]
 pub struct CurrentInputs(pub ShooterInputs);
 
@@ -110,7 +111,7 @@ pub fn run_game(wallet: Option<PathBuf>) {
         .add_systems(Startup, setup)
         .add_systems(
             Update,
-            (cursor_grab, mouse_look, update_inputs, send_inputs)
+            (cursor_grab, update_inputs, mouse_look, send_inputs)
                 .chain()
                 .run_if(in_state(AppState::InGame)),
         )
@@ -394,26 +395,45 @@ pub fn cursor_grab(
     }
 }
 
-/// Runs every render frame, straight from the mouse to the camera — no netcode in
-/// between, see [`CameraOrientation`].
+/// Straight from the mouse to the camera — no netcode in between, see
+/// [`CameraOrientation`] — and, on the way past, one input sample per movement.
+///
+/// The raw [`MouseMotion`] stream is read rather than `AccumulatedMouseMotion`
+/// because a mouse reports far faster than the game renders: at a 1000 Hz polling
+/// rate a 60 Hz tick sees on the order of sixteen movements. Pushing after each one
+/// means whichever movement the tick boundary falls between is the aim the
+/// simulation uses, instead of an end-of-frame value that can be a whole frame
+/// stale. Only one sample per tick survives — [`ShooterInputs::merge`] decides
+/// which — so the extra pushes cost a channel send, not bandwidth.
 pub fn mouse_look(
-    motion: Res<AccumulatedMouseMotion>,
+    client: ResMut<MultiplayerClient>,
+    mut current: ResMut<CurrentInputs>,
+    mut motion: MessageReader<MouseMotion>,
     mut orientation: ResMut<CameraOrientation>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     scene: Res<SceneAssets>,
     mut transforms: Query<&mut Transform>,
-) {
+) -> Result<()> {
     if cursor.grab_mode == CursorGrabMode::None {
-        return;
+        motion.clear();
+        return Ok(());
     }
 
-    orientation.yaw -= motion.delta.x * MOUSE_SENSITIVITY;
-    orientation.pitch = (orientation.pitch - motion.delta.y * MOUSE_SENSITIVITY).clamp(-1.54, 1.54); // just short of straight up/down
+    for motion in motion.read() {
+        orientation.yaw -= motion.delta.x * MOUSE_SENSITIVITY;
+        orientation.pitch =
+            (orientation.pitch - motion.delta.y * MOUSE_SENSITIVITY).clamp(-1.54, 1.54); // just short of straight up/down
+
+        current.0.set_look(orientation.yaw, orientation.pitch);
+        client.0.set_inputs(current.0.clone())?;
+    }
 
     if let Ok(mut camera_transform) = transforms.get_mut(scene.camera) {
         camera_transform.rotation =
             Quat::from_euler(EulerRot::YXZ, orientation.yaw, orientation.pitch, 0.0);
     }
+
+    Ok(())
 }
 
 pub fn update_inputs(
@@ -444,11 +464,18 @@ pub fn update_inputs(
 
     current.0.move_x = move_x;
     current.0.move_z = move_z;
-    current.0.fire = grabbed && mouse.pressed(MouseButton::Left);
-    current.0.jump = grabbed && keys.pressed(KeyCode::Space);
+    // `just_pressed` as well as `pressed`: a click that starts and ends inside one
+    // frame leaves `pressed` false, and dropping it would eat the shot outright.
+    current.0.fire =
+        grabbed && (mouse.pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Left));
+    current.0.jump = grabbed && (keys.pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Space));
     current.0.set_look(orientation.yaw, orientation.pitch);
 }
 
+/// The frame's closing sample. Unconditional: a tick that receives nothing has its
+/// inputs predicted by repeating the previous tick's, so staying quiet — even while
+/// idle — is a guess, and this is the one push guaranteed to carry the keyboard
+/// state that [`mouse_look`] never sees on a frame with no mouse movement.
 pub fn send_inputs(client: ResMut<MultiplayerClient>, current: Res<CurrentInputs>) -> Result<()> {
     client.0.set_inputs(current.0.clone())?;
     Ok(())

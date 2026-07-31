@@ -126,7 +126,19 @@ impl ShooterInputs {
     }
 }
 
-impl DeformInputs for ShooterInputs {}
+impl DeformInputs for ShooterInputs {
+    /// Several render frames land inside one tick, and only one value survives.
+    /// Movement and look are *held* state, so the newest sample is the truthful
+    /// one; `fire` and `jump` are actions, so they are OR-ed instead — a click that
+    /// starts and ends between two ticks must still fire the shot.
+    fn merge(&mut self, newer: &Self) {
+        let fire = self.fire || newer.fire;
+        let jump = self.jump || newer.jump;
+        *self = newer.clone();
+        self.fire = fire;
+        self.jump = jump;
+    }
+}
 
 #[derive(
     Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
