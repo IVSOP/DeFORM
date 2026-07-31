@@ -27,6 +27,7 @@ rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
 tracing = { workspace = true }
 tracy-client = { workspace = true, optional = true }
+zstd = { workspace = true }
 
 [features]
 tracy = ["dep:tracy-client"]

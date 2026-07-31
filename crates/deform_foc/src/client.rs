@@ -159,10 +159,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         if let Some(max_input) = self.inputs.keys().max()
                             && let Some(client) = tracy_client::Client::running()
                         {
-                            client.plot(
-                                tracy_client::plot_name!("commit_inputs"),
-                                *max_input as f64,
-                            );
+                            client
+                                .plot(tracy_client::plot_name!("commit_inputs"), *max_input as f64);
                         }
 
                         self.commit_inputs().await?;

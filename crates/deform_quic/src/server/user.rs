@@ -7,10 +7,11 @@ use tokio::{
     sync::{broadcast, mpsc},
     time::sleep,
 };
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::{
-    DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
+    DeformQuicLogic, ReliableMessage, UnreliableServerInstruction, datagram,
+    datagram::{DatagramDefragmentor, DatagramFragmentor},
     server::{
         DeformQuicServer,
         matches::{InternalServerResponse, MatchMessage},
@@ -31,6 +32,11 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
             .await
             .map_err(|_| DeformError::ChannelClosed)?;
 
+        // Each holds its own `Connection` handle, which is just an Arc, so `connection`
+        // stays usable below for closing.
+        let mut fragmentor = DatagramFragmentor::new(connection.clone());
+        let mut defragmentor = DatagramDefragmentor::<Q>::new(connection.clone());
+
         loop {
             tokio_select!(match .. {
                 .. if let internal_response = state_receiver.recv() => {
@@ -40,6 +46,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                                 &connection,
                                 control_send,
                                 internal_response,
+                                &mut fragmentor,
                             )
                             .await?;
 
@@ -50,14 +57,31 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                         Err(broadcast::error::RecvError::Closed) => {
                             Err(DeformError::ChannelClosed)?;
                         }
-                        Err(_) => continue,
+                        // This client task fell behind the match task and the broadcast
+                        // dropped snapshots for it. Silently continuing looks exactly
+                        // like the network losing them, so say so.
+                        Err(broadcast::error::RecvError::Lagged(missed)) => {
+                            warn!(player = %pubkey, missed, "client task lagged; snapshots dropped");
+                            continue;
+                        }
                     }
                 }
-                .. if let datagram = connection.read_datagram() => {
-                    let datagram = datagram.map_err(|e| DeformError::Connection(e.to_string()))?;
+                // instead of triggering every time a datagram is received, this waits for an entire message to be collected first
+                .. if let body = defragmentor.recv() => {
+                    // A client is not trusted, so one datagram it malformed must not end its match
+                    let body = match body {
+                        Ok(body) => body,
+                        Err(e @ DeformError::Connection(_)) => Err(e)?,
+                        Err(e) => {
+                            warn!(player = %pubkey, "discarding datagram: {e}");
+                            continue;
+                        }
+                    };
+
+                    let body = datagram::decompress(body, Q::COMPRESSION)?;
                     let instruction: UnreliableServerInstruction<
                         <Q::UserLogic as DeformUserLogic>::Inputs,
-                    > = wincode::deserialize(&datagram)
+                    > = wincode::deserialize(&body)
                         .map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
                     match instruction {
@@ -80,14 +104,13 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         connection: &Connection,
         control_send: &mut quinn::SendStream,
         internal_response: InternalServerResponse<Q>,
+        fragmentor: &mut DatagramFragmentor<Q>,
     ) -> UserFacingResult<Q::UserLogic, bool> {
         let mut finished = false;
 
         match internal_response {
             InternalServerResponse::SendDatagram(msg) => {
-                connection
-                    .send_datagram(msg.0.into())
-                    .map_err(|e| DeformError::Connection(e.to_string()))?;
+                fragmentor.send(&msg.0)?;
             }
             InternalServerResponse::SendReliableMessage(msg) => {
                 msg.write(control_send).await?;

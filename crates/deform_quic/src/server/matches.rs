@@ -25,7 +25,7 @@ use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
     DeformQuicLogic, ReliableMessage, SerializedUnreliableServerResponse, UnreliableServerResponse,
-    server::DeformQuicServer,
+    datagram::compress, server::DeformQuicServer,
 };
 
 // TODO: put this in the PlayerInputsAccount
@@ -178,7 +178,13 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         }),
     };
 
-    let mut tick_timer = interval(Duration::from_micros(16667));
+    // The game decides the rate, not this loop. Hardcoding 60 Hz here silently desynced
+    // every game whose tick rate is anything else: the server advanced at its own pace
+    // while the client simulated at the game's, so the client could never hold its lead
+    // and every input arrived for a tick the server had already passed.
+    let mut tick_timer = interval(Duration::from_micros(
+        <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
+    ));
 
     // inputs that were last applied to the game state
     // if the user does not send any inputs, these are used, as server-side input prediction
@@ -245,9 +251,11 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     lobby_state: LobbyState::Ongoing(ongoing.clone()),
                 };
                 // TODO: TREAT ERRORS
-                if let Ok(serialized_message) = wincode::serialize(&message) {
+                if let Ok(serialized_message) = wincode::serialize(&message)
+                    && let Ok(body) = compress(serialized_message, Q::COMPRESSION)
+                {
                     let _ = state_sender.send(InternalServerResponse::SendDatagram(
-                        SerializedUnreliableServerResponse(serialized_message),
+                        SerializedUnreliableServerResponse(body),
                     ));
                 }
 

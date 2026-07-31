@@ -20,6 +20,7 @@ use tracing::{info, warn};
 use wincode::{SchemaRead, SchemaWrite, config::DefaultConfig};
 
 mod client;
+pub mod datagram;
 pub mod server;
 
 pub const ALPN_PROTOCOL: &[u8] = b"deform/1";
@@ -51,6 +52,19 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     // and this makes it so each server logic has a specific user logic associated
     type UserLogic: DeformUserLogic;
     type ProgramClient: GameProgramClient<Self::UserLogic>;
+
+    /// zstd level for datagram bodies, or `None` to send them uncompressed.
+    ///
+    /// Symmetric by construction, since both peers are generic over the same logic
+    /// type, so nothing says so on the wire. Not checked across builds: a client and
+    /// server compiled with different values will fail to deserialize each other.
+    const COMPRESSION: Option<i32> = Some(10);
+
+    /// Maximum number of incomplete messages that we buffer
+    const MAX_MESSAGE_BUFFER: u8 = 32;
+
+    /// Maximum number of fragments per incomplete message
+    const MAX_FRAGMENTS: u8 = 64;
 
     // https://github.com/rust-lang/rust/issues/29661
     // type Result<T = ()> = Result<T, Self::Error>;
@@ -170,6 +184,7 @@ pub enum UnreliableServerInstruction<I: DeformInputs> {
 }
 
 // FIX: change to Bytes that quinn uses?? or at least change to Arc??
+/// An [`UnreliableServerResponse`] serialized into bytes. NOTE: may be compressed.
 #[repr(transparent)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct SerializedUnreliableServerResponse(pub Vec<u8>);

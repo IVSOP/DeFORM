@@ -23,7 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     ALPN_PROTOCOL, DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
-    UnreliableServerResponse, UserIdentification,
+    UnreliableServerResponse, UserIdentification, datagram,
+    datagram::{DatagramDefragmentor, DatagramFragmentor},
 };
 
 pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
@@ -412,6 +413,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
+        let mut fragmentor = DatagramFragmentor::new(self.connection.clone());
+        let mut defragmentor = DatagramDefragmentor::<Q>::new(self.connection.clone());
+
         loop {
             tokio_select!(match .. {
                 // Tick every ~16ms (or more, depending on time dilation)
@@ -461,7 +465,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         client.plot(tracy_client::plot_name!("commit_inputs"), *max_input as f64);
                     }
 
-                    self.commit_inputs().await?;
+                    self.commit_inputs(&mut fragmentor).await?;
 
                     // Advance the anchored deadline by the (variable) dilated interval rather than
                     // sleeping from `now`, so the work done in this arm does not accumulate as drift.
@@ -547,11 +551,22 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     }
                 }
 
-                // Receive game state updates via unreliable datagrams
-                .. if let datagram = self.connection.read_datagram() => {
+                // instead of triggering every time a datagram is received, this waits for an entire message to be collected first
+                .. if let body = defragmentor.recv() => {
+                    // One unusable datagram is not worth ending the match over. A
+                    // connection error is critical and must exit.
+                    let body = match body {
+                        Ok(body) => body,
+                        Err(e @ DeformError::Connection(_)) => Err(e)?,
+                        Err(e) => {
+                            tracing::warn!("discarding datagram: {e}");
+                            continue;
+                        }
+                    };
+
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
-                        let bytes = datagram.map_err(|e| DeformError::Connection(e.to_string()))?;
-                        self.process_server_update(&bytes, &mut tick_sleep).await?;
+                        let body = datagram::decompress(body, Q::COMPRESSION)?;
+                        self.process_server_update(&body, &mut tick_sleep).await?;
                     }
                 }
 
@@ -751,7 +766,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         Ok(())
     }
 
-    pub async fn commit_inputs(&mut self) -> DeformResult {
+    pub async fn commit_inputs(&mut self, fragmentor: &mut DatagramFragmentor<Q>) -> DeformResult {
         #[cfg(feature = "tracy")]
         let _span = tracy_client::span!("commit_inputs");
 
@@ -773,11 +788,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         }
 
         let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(pending);
-        let bytes = wincode::serialize(&ix)?;
-
-        self.connection
-            .send_datagram(bytes.into())
-            .map_err(|e| DeformError::Connection(e.to_string()))?;
+        let body = datagram::compress(wincode::serialize(&ix)?, Q::COMPRESSION)?;
+        fragmentor.send(&body)?;
 
         Ok(())
     }
