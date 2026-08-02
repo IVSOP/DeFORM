@@ -442,14 +442,15 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                     self.advance_local_simulation()?
                                     // finish is handled when server tells us, not here
                                 }
+                                self.last_sim_instant = Instant::now();
                             } else {
                                 let max_target_tick = ongoing.tick + self.max_ticks_ahead;
                                 if current_tick < max_target_tick {
-                                    self.advance_local_simulation()?
+                                    self.advance_local_simulation()?;
                                     // finish is handled when server tells us, not here
+                                    self.last_sim_instant = Instant::now();
                                 }
                             }
-                            self.last_sim_instant = Instant::now();
 
                             remote_tick
                         }

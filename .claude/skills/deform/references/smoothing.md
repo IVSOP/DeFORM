@@ -24,7 +24,13 @@ pub trait Smooth<G>: Default + Send + Clone {
     fn set_params(&mut self, params: SmoothParams);
 }
 
-pub struct SmoothParams { pub decay: f32, pub max_offset_sq: f32, pub min_offset_sq: f32 }
+pub struct SmoothParams {
+    pub decay: f32,
+    pub max_offset_sq: f32,
+    pub min_offset_sq: f32,
+    pub max_correction: f32,   // f32::INFINITY = unbounded (pure exponential decay)
+    pub motion_ratio: f32,     // f32::INFINITY = offset never capped by how fast the field moves
+}
 ```
 
 `type Smoother` on `DeformUserLogic` must be a `Smooth<Self::GameState>`. Three options:
@@ -43,19 +49,61 @@ structs only.
 
 ```rust
 #[derive(Smooth)]
-#[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
+#[smooth(decay = 0.5, max_offset = 200.0, min_offset_sq = 9.0,
+         max_correction = 40.0, motion_ratio = 2.0)]
 struct GameState { /* … */ }
 ```
 
 | Parameter | Default | Meaning |
 | --- | --- | --- |
-| `decay` | `0.9` | offset multiplier per visual frame — lower snaps harder |
-| `max_offset` | `200.0` | corrections larger than this are discarded (teleport instead of a long visible slide) |
+| `decay` | `0.9` | offset multiplier per **simulation tick** — lower snaps harder |
+| `max_offset` | `200.0` | discontinuity threshold: rollback offsets above it are dropped, **and** single-tick jumps above it snap instead of interpolating |
 | `min_offset_sq` | `4.0` | squared magnitude below which the offset is zeroed, so it doesn't crawl forever |
+| `max_correction` | unset | max distance the offset is pulled toward zero per **simulation tick**, on top of `decay` |
+| `motion_ratio` | unset | caps the offset at this multiple of the distance the field moved this tick |
 
-Omitting the attribute uses the defaults *and* marks the smoother as "no custom params", so a
-parent smoother's `set_params` will override it. Specifying `#[smooth(...)]` pins your values
-and makes them win over any parent. That is the mechanism behind `#[smooth(map)]` inheritance.
+`decay` and `max_correction` are authored **per simulation tick**; the backend calls
+`scale_decay(visual_tick / sim_tick)` at construction to convert them to per-frame values, so
+the same numbers behave identically at 60 and 144 Hz. Never compensate by hand. `motion_ratio`
+is dimensionless and is not rescaled.
+
+### Choosing them
+
+`decay` alone is asymptotic, and rollbacks arrive *every tick*. For a per-tick prediction
+error `e`, the offset does not converge to zero — it settles at `e / (1 - decay)`:
+
+| `decay` | steady-state offset | at 20 Hz, time constant |
+| --- | --- | --- |
+| `0.9` | `10 × e` | 475 ms |
+| `0.5` | `2 × e` | 72 ms |
+
+So a `decay` chosen at 60 Hz means something very different at 20 Hz: `tick_ms / ln(1/decay)`
+is the number to compare across tick rates, not `decay` itself.
+
+- `max_correction` bounds how long *any* correction can last, however it is being re-fed.
+  Start at `worst_case_offset / ticks_you_are_willing_to_spend`.
+- `motion_ratio` targets the case the eye is most sensitive to: an offset that outlives the
+  motion it was hiding inside. A correction is invisible while the object is genuinely
+  moving, but once the true state comes to rest any residual offset *is* the only motion on
+  screen. With a finite ratio the allowance falls to zero as the object stops, so a halted
+  remote entity snaps instead of gliding. Reach for this first when "the other player keeps
+  sliding after they stop".
+- `max_offset` must sit above the largest distance a field covers in one tick during normal
+  play, and below the smallest genuine teleport.
+
+### Inheritance
+
+Omitting the attribute uses the defaults *and* marks the smoother as "no custom params", so
+the containing smoother's values flow into it. Specifying `#[smooth(...)]` pins your values.
+The contract, in both directions:
+
+- a struct-level `#[smooth(...)]` applies to that type **and its whole subtree**
+- any descendant that authors its own `#[smooth(...)]` overrides for **itself and everything
+  below it**, and is not bypassed in favour of a grandparent's values
+- this holds for `#[smooth(nested)]` fields and `#[smooth(map)]` entries alike, including map
+  entries created long after the root was constructed and scaled
+
+Covered by `deform_core/tests/smooth_hierarchy.rs`; extend it if you touch the derive.
 
 ### Field attributes
 
@@ -77,7 +125,7 @@ pub struct PlayerState {
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
-#[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
+#[smooth(decay = 0.5, max_offset = 200.0, min_offset_sq = 9.0, max_correction = 40.0, motion_ratio = 2.0)]
 pub struct PongGameState {
     #[smooth]
     #[wincode(with = "PodVec2")]
@@ -115,15 +163,23 @@ code does offset arithmetic directly.
   ammo counts, booleans, enum states, anything a game rule reads. Remember the smoothed state
   is *presentation only* — but if your renderer feeds it back into any decision, discrete
   fields must be exact.
-- **Don't smooth what teleports on purpose**: a respawn or a round reset is a legitimate jump.
-  `max_offset` is the blunt guard (a correction bigger than that is discarded rather than
-  slid through), but if you have explicit teleports, consider `NoopSmoother` on that
-  sub-struct or a custom impl that checks a flag.
+- **Teleports are handled for you, if `max_offset` is set sanely**: `apply` compares the
+  single-tick jump against `max_offset` and snaps rather than sweeping the object across the
+  gap, so a respawn or round reset does not streak across the screen. This only works if
+  `max_offset` sits between "fastest normal per-tick motion" and "smallest real teleport"; if
+  those overlap, use `NoopSmoother` on that sub-struct or a custom impl that checks a flag.
 
 ## Tuning
 
-- Corrections visibly lag → lower `decay` (e.g. 0.8) or lower `max_offset`.
-- Objects visibly "swim" or overshoot → raise `min_offset_sq` so small offsets get dropped.
-- Long-distance corrections slide across the screen → lower `max_offset` so they snap.
-- `decay` is per **visual** frame; the backend calls `scale_decay(visual_tick / sim_tick)` at
-  construction so the same value behaves identically at 60 and 144 Hz. Don't compensate by hand.
+| Symptom | Reach for |
+| --- | --- |
+| a remote entity keeps gliding after it stops | `motion_ratio` (2.0 is a reasonable start) |
+| corrections drag on for seconds | `decay` is too high for your tick rate — compare `tick_ms / ln(1/decay)`, not `decay`; then bound it with `max_correction` |
+| objects "swim" or overshoot | raise `min_offset_sq` so small offsets are dropped |
+| a teleport streaks across the screen | lower `max_offset` below the jump distance |
+| a fast object pops instead of smoothing | raise `max_offset` above its per-tick travel |
+
+**Smoothing cannot fix a state that is persistently wrong.** If corrections keep arriving,
+the offset is being re-injected faster than it decays, and no smoothing parameter removes
+that — it only chooses between a visible slide and a visible pop. The fix is upstream: a
+better `DeformInputs::predict()` (see `netcode.md`), or a shorter prediction horizon.

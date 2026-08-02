@@ -40,9 +40,14 @@ rollback, so the logic type carries no data. `advance_frame(&mut self, …)` sti
 `has_ended()` is `players.values().any(|ps| ps.score >= 10)`.
 
 Note `ball_vel` is deliberately *not* `#[smooth]`ed — smoothing a velocity fights the
-integrator. And `PongGameState` uses `#[smooth(decay = 0.9, max_offset = 200.0,
-min_offset_sq = 4.0)]`, which pins those params and propagates them to the per-entry
-`PlayerState` smoothers created by `#[smooth(map)]`.
+integrator. `PongGameState` pins its own `#[smooth(...)]` params, which propagate to the
+per-entry `PlayerState` smoothers created by `#[smooth(map)]`.
+
+Pong is the hard case for smoothing and worth reading as a worked example: 20 Hz ticks,
+binary input (`direction` is ±100 or 0, so every misprediction is worth full paddle speed),
+and a tight 2D field where an error of 70 units out of 1000 is obvious. Its params are
+commented in `pong_logic.rs` with the arithmetic behind each one. `PongInputs` keeps the
+default `predict()` on purpose, and the comment there records why damping it backfires.
 
 ## Backend swap
 

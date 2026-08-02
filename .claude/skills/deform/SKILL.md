@@ -162,7 +162,10 @@ pub struct MiniPaddle {
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, SchemaRead, SchemaWrite, Smooth)]
-#[smooth(decay = 0.9, max_offset = 200.0, min_offset_sq = 4.0)]
+// decay/max_correction are per SIMULATION tick; see references/smoothing.md before
+// picking numbers — a value tuned at 60Hz means something very different at 20Hz.
+#[smooth(decay = 0.5, max_offset = 200.0, min_offset_sq = 9.0,
+         max_correction = 40.0, motion_ratio = 2.0)]
 pub struct MiniState {
     #[smooth]
     pub ball_y: f32,
@@ -295,7 +298,8 @@ single `CancellationToken` you pass in — **call `client.shutdown()` (or cancel
 exit; backends do not self-terminate when a match ends.**
 
 `visual_tick_micros` is your *render* rate; `TICK_RATE_MICROS` is the *simulation* rate.
-They are deliberately independent — the smoother rescales its decay by the ratio.
+They are deliberately independent — the smoother rescales its per-tick rates by the ratio, so
+you author `decay`/`max_correction` per simulation tick and never compensate for refresh rate.
 
 ## Using the client from a game loop
 
@@ -323,6 +327,11 @@ and drop it; the backend thread blocks on the same mutex. The `game_state` you r
 motion at any render rate, and absorb rollback corrections as a decaying offset so a
 mispredicted paddle *eases* into place instead of teleporting. Use `NoopSmoother` as
 `type Smoother` to disable it. Details and all field attributes: `references/smoothing.md`.
+
+Two things that catch people out, both covered there: `decay` is per **simulation** tick (so
+`0.9` at 20 Hz is ~6× slower in wall-clock than `0.9` at 60 Hz), and smoothing cannot fix a
+state that is persistently wrong — if a remote entity visibly rubber-bands, fix
+`DeformInputs::predict()` first, then reach for `motion_ratio`.
 
 ## The on-chain program is yours
 

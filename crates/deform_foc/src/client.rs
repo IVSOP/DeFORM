@@ -130,13 +130,14 @@ impl<F: DeformFocLogic> FocBackend<F> {
                                 for _ in 0..delta_ticks {
                                     self.advance_local_simulation()?
                                 }
+                                self.last_sim_instant = Instant::now();
                             } else {
                                 let max_target_tick = ongoing.tick + self.max_ticks_ahead;
                                 if current_tick < max_target_tick {
-                                    self.advance_local_simulation()?
+                                    self.advance_local_simulation()?;
+                                    self.last_sim_instant = Instant::now();
                                 }
                             }
-                            self.last_sim_instant = Instant::now();
 
                             remote_tick
                         }

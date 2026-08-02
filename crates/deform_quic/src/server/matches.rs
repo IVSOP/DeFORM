@@ -9,7 +9,7 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformError, DeformGameState, DeformUserLogic, Pubkey, TickInfo,
+    DeformError, DeformGameState, DeformInputs, DeformUserLogic, Pubkey, TickInfo,
     accounts::lobby::{
         Lobby, LobbyMetadata, LobbyState, not_started::LobbyNotStarted, ongoing::LobbyOngoing,
     },
@@ -186,9 +186,8 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
     ));
 
-    // inputs that were last applied to the game state
-    // if the user does not send any inputs, these are used, as server-side input prediction
-    // NOTE: doubles as a cache to pass to advance_frame() the inputs that are supposed to be applied in this tick
+    // inputs last applied to the game state
+    // used to predict new inputs if none are provided
     let mut last_applied_inputs: BTreeMap<Pubkey, <Q::UserLogic as DeformUserLogic>::Inputs> =
         BTreeMap::new();
     for player in players_data.keys() {
@@ -215,10 +214,11 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
                 for (player, player_inputs) in players_data.iter_mut() {
                     // read inputs from this slot
-                    // if there were no inputs, last_applied_inputs will be used anyway
-                    // but if there were, then overwrite them now
+                    // if there were no inputs, predict
                     if let Some(inputs) = player_inputs.get(&current_tick) {
                         last_applied_inputs.insert(*player, inputs.clone());
+                    } else if let Some(stale) = last_applied_inputs.get_mut(player) {
+                        *stale = stale.predict();
                     };
 
                     // remove old inputs, including from current tick since they have already been copied

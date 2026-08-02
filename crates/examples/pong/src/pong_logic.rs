@@ -40,13 +40,17 @@ pub struct PlayerState {
 #[derive(
     Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
 )]
-// `decay` is per simulation tick (50ms at 20Hz), so 0.5 absorbs a correction in
-// ~5 ticks / ~250ms. Mispredicting the opponent's release costs up to
-// `max_ticks_ahead * PADDLE_SPEED * dt` = 288 units, which at 0.9 took over two
-// seconds to bleed off and read as the paddle sliding on its own.
-// `max_offset` sits above the 52.5 units the ball covers in a tick and below the
-// ~850 unit jump of `reset_round`, so a round reset snaps instead of sweeping.
-#[smooth(decay = 0.5, max_offset = 200.0, min_offset_sq = 9.0)]
+// Per-tick correction is `offset * (1 - decay) + max_correction`: `decay` gives the fast
+// start, `max_correction` floors the finish so it never crawls (200 units clears in 5 ticks
+// at 60/48/38/31/23). Keep it under the paddle's own 24 units/tick or corrections read as
+// jumps. `max_offset` sits above the ball's 52.5 units/tick and below `reset_round`'s ~850,
+// so a round reset snaps instead of sweeping.
+#[smooth(
+    decay = 0.8,
+    max_offset = 200.0,
+    min_offset_sq = 4.0,
+    max_correction = 20.0
+)]
 pub struct PongGameState {
     #[smooth]
     #[wincode(with = "PodVec2")]
@@ -101,6 +105,7 @@ pub struct PongInputs {
     pub direction: i8,
 }
 
+// Deliberately keeps the default `predict` (repeat the last input verbatim)
 impl DeformInputs for PongInputs {}
 
 #[derive(Debug, Clone, SchemaRead, SchemaWrite, serde::Serialize, serde::Deserialize)]

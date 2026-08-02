@@ -36,8 +36,31 @@ max_ticks_ahead = max(3 * min_ticks_ahead, 5)
 
 A **full** RTT, not half: the authoritative state you just received is already RTT/2 old, and
 your inputs need another RTT/2 to get back — so the authority advances a full RTT between the
-state you saw and the state your input lands in. The `+3000 µs` and `+1` absorb commit-timer
-jitter. Recomputed on every RTT sample (500 ms for FoC; QUIC uses quinn's own RTT estimate).
+state you saw and the state your input lands in. Recomputed on every RTT sample (500 ms for
+FoC; QUIC uses quinn's own RTT estimate).
+
+The `+1` is **not** a safety margin — it repays a tick the commit path withholds.
+`commit_inputs` only ships ticks strictly below `local_tick`, because the authority merges
+first-write-wins and a half-finished sample for the in-progress tick would be locked in while
+you are still merging newer ones. So the newest input you ever send is for `local_tick - 1`,
+and the requirement works out to `ticks_ahead ≥ RTT/tick + 1`. That makes the formula minimal,
+not conservative: on localhost `RTT/tick ≈ 0`, so you sit at **2 ticks ahead**, one for
+latency and one for the withheld tick. At 20 Hz that withheld tick costs 50 ms of prediction
+horizon — the largest single constant in the budget. Getting to 1 means changing the
+authority's merge semantics for the current tick, not tuning a number.
+
+The `+3000 µs` is nearly free: `ceil()` already rounds any partial tick up, so the margin only
+changes the result when it crosses an integer boundary.
+
+### What the horizon actually is
+
+`max_ticks_ahead` is a *ceiling*, not the operating point. The catch-up burst pulls you back
+to `min_ticks_ahead`, and dilation does not engage until 30 % into the `min..max` window, so
+in steady state you sit between `min` and `min + 0.3 × window`. On localhost at 20 Hz that is
+~2–3.2 ticks (100–160 ms), not 6. `max_ticks_ahead` only matters during a hitch.
+
+This is the number that governs how wrong a remote entity can be: at `PADDLE_SPEED = 480`,
+3 ticks of extrapolation is ~72 units on a 1000-unit field.
 
 For FoC there is an extra floor: transaction inclusion can't beat the slot time, so the slot
 duration is folded into the target.
@@ -53,6 +76,25 @@ To advance a tick, the client needs everyone's inputs, but only has its own:
 This is why `DeformInputs::predict()` exists as an override point. The default clone is right
 for continuous state (a held direction), wrong for edge-triggered actions — a `jump: bool`
 predicted as `true` every tick makes the predicted player fly. Zero those fields in `predict`.
+
+**The authority extrapolates with the same `predict`.** When no input arrives for a tick, the
+QUIC server (`server/matches.rs`) and the on-chain `advance_tick` both call `predict()` on the
+last applied input, exactly as clients do for players they have no input for. Both sides must
+use the same function. If they differ, a merely missing input desyncs every client from the
+authority and forces a rollback the game never caused.
+
+**Do not damp a held axis to shrink the extrapolation.** It looks appealing, because `predict`
+chains off its own output once per extrapolated tick, so a multiplier bounds the predicted
+travel instead of letting it grow with the horizon. It backfires. The authority uses the *real*
+input whenever one arrives, which is the normal case, so a damped guess disagrees with the
+authority on every tick the input is held. That is a rollback per tick during the most common
+state in the game. Fix the visual artifact with `motion_ratio` instead (see `smoothing.md`).
+
+What `predict` *is* for: zeroing edge-triggered fields. A `jump: bool` or `fire: bool` predicted
+as `true` every tick makes the extrapolated player fly or fire forever.
+
+**Reducing prediction error beats smoothing it.** No `#[smooth(...)]` parameter can fix a
+state that is persistently wrong; it only chooses between a visible slide and a visible pop.
 
 Prediction is also why `advance_frame` must be pure and deterministic: it is going to be
 re-run over the same ticks with corrected inputs, and its output must match what the
@@ -117,6 +159,19 @@ So `client.read_state()` always gives you a presentation-ready state; there is n
 interpolate in your renderer. The smoother's decay is rescaled by
 `visual_tick_micros / TICK_RATE_MICROS` at construction so a 144 Hz client and a 60 Hz client
 converge at the same real-world speed.
+
+Note what this model is: DeFORM predicts **every** entity and absorbs the correction, the
+GGPO/fighting-game approach. It assumes corrections are short — 2–4 frames at 60 Hz. At 20 Hz
+the same 2–4 ticks is 100–200 ms, four times the window the model was designed for, which is
+why remote-entity smoothing is far more visible in a 20 Hz game.
+
+The other industry model is **snapshot interpolation** (Quake/Source and most FPS games):
+predict only the local player, and render every remote entity *in the past*, lerped between
+two received authoritative snapshots (Valve's `cl_interp`, default 100 ms). Remote entities
+then cannot rubber-band, because they are never extrapolated. It costs nothing in local input
+lag — only in how recently you see everyone else. DeFORM does not implement this today; it
+would need the backend to expose authoritative history to the renderer, since the smoother is
+only ever handed predicted states.
 
 ## Authority-side differences
 

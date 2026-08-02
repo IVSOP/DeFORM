@@ -7,7 +7,7 @@ use deform_core::{
         lobby::{ongoing::LobbyOngoing, LobbyFinished, LobbyState, Network},
         DeformAccount,
     },
-    DeformGameState, DeformUserLogic,
+    DeformGameState, DeformInputs, DeformUserLogic,
 };
 
 use crate::{
@@ -133,6 +133,8 @@ pub fn advance_tick(
 
         if let Some(new_inputs) = inputs_info.inputs.remove(&current_tick) {
             *current_inputs = new_inputs.clone();
+        } else {
+            *current_inputs = current_inputs.predict();
         }
     }
 

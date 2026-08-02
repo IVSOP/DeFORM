@@ -4,6 +4,17 @@ pub struct SmoothParams {
     pub decay: f32,
     pub max_offset_sq: f32,
     pub min_offset_sq: f32,
+    /// Hard ceiling on how fast an offset is pulled toward zero, applied on top of
+    /// `decay`.
+    ///
+    /// `f32::INFINITY` disables it, leaving pure exponential decay.
+    pub max_correction: f32,
+    /// Caps the offset at this multiple of the distance the field actually moved
+    /// during the current tick.
+    ///
+    /// Dimensionless, so unlike `max_correction` it is not rescaled per frame.
+    /// `f32::INFINITY` disables it.
+    pub motion_ratio: f32,
 }
 
 /// Trait for interpolating between game states and absorbing rollback corrections.
