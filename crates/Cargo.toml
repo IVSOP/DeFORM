@@ -52,6 +52,7 @@ zstd = "0.13.3"
 strum = "0.28.0"
 strum_macros = "0.28"
 ephemeral-rollups-sdk = { version = "0.15.5" }
+fastrand = "2.5.0"
 
 # deps shared between examples
 bevy = "0.19.0"

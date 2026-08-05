@@ -4445,9 +4445,9 @@ dependencies = [
 
 [[package]]
 name = "fastrand"
-version = "2.4.1"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fax"
@@ -8693,6 +8693,48 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "soccer"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anyhow",
+ "bevy",
+ "bevy-egui-notify",
+ "bevy_egui",
+ "borsh 1.7.0",
+ "clap",
+ "deform_core",
+ "deform_foc",
+ "deform_offline",
+ "deform_quic",
+ "egui-probe",
+ "ephemeral-rollups-sdk",
+ "fastrand",
+ "glam",
+ "magicblock-magic-program-api",
+ "num-derive",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "solana-account-info 3.1.1",
+ "solana-address 2.6.1",
+ "solana-client",
+ "solana-cpi 3.1.0",
+ "solana-instruction 3.4.0",
+ "solana-program-error 3.0.1",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-system-interface 3.2.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "tracy-client",
+ "wincode",
 ]
 
 [[package]]

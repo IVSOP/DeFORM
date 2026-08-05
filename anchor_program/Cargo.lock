@@ -347,6 +347,7 @@ dependencies = [
  "ephemeral-rollups-sdk",
  "pong",
  "shooter",
+ "soccer",
  "wincode",
 ]
 
@@ -3086,6 +3087,28 @@ name = "smallvec"
 version = "1.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "soccer"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "borsh 1.6.1",
+ "deform_core",
+ "ephemeral-rollups-sdk",
+ "glam",
+ "num-derive",
+ "num-traits",
+ "serde",
+ "solana-account-info 3.1.1",
+ "solana-address 2.6.1",
+ "solana-cpi 3.1.0",
+ "solana-instruction 3.4.0",
+ "solana-program-error 3.0.1",
+ "solana-system-interface 3.2.0",
+ "thiserror 2.0.18",
+ "wincode",
+]
 
 [[package]]
 name = "socket2"

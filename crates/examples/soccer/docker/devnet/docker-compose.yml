@@ -1,0 +1,29 @@
+# Devnet stack for the soccer server: the QUIC server and nothing else.
+#
+# No surfpool and no ephemeral validator here -- those two only exist in the
+# localhost stack to stand in for the real thing. On devnet the base layer is
+# Solana devnet and the ER is MagicBlock's hosted devnet-{eu,us,as} validator;
+# clients resolve both from the lobby's ValidatorNetwork, so the server only ever
+# needs a base-layer RPC.
+#
+# Everything is configured through the .env file sitting next to this one.
+#
+# The project name is pinned rather than taken from the directory, so pong and
+# shooter bundles can sit side by side on the same host without colliding.
+name: soccer-server
+
+services:
+  soccer_server:
+    image: soccer-server:latest
+    container_name: soccer-server
+    ports:
+      # The binary always binds 4433 inside the container; PORT only moves the
+      # host-side mapping.
+      - "${PORT:-4433}:4433/udp"
+    volumes:
+      - ./admin.json:/app/admin.json:ro
+    environment:
+      - RUST_LOG=${RUST_LOG:-info}
+      - KEYPAIR_PATH=admin.json
+      - RPC_URL=${RPC_URL:-https://api.devnet.solana.com}
+    restart: unless-stopped
