@@ -287,20 +287,28 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
     pub fn update_ticks_ahead(&mut self) -> DeformResult {
         let rtt_secs = self.avg_rtt.as_secs_f64();
-        // getSlot/ping measure network RTT only, so add one ER slot of inclusion. The
-        // inputs-account probe already includes inclusion, so it adds nothing on top.
-        #[cfg(any(feature = "rtt-getslot", feature = "rtt-ping"))]
-        let latency_micros = rtt_secs * 1_000_000.0 + self.slot_time_micros as f64 + 3000.0;
-        #[cfg(feature = "rtt-inputs")]
-        let latency_micros = rtt_secs * 1_000_000.0 + 3000.0;
+        // // getSlot/ping measure network RTT only, so add one ER slot of inclusion. The
+        // // inputs-account probe already includes inclusion, so it adds nothing on top.
+        // #[cfg(any(feature = "rtt-getslot", feature = "rtt-ping"))]
+        // let latency_micros = rtt_secs * 1_000_000.0 + self.slot_time_micros as f64 + 3000.0;
+        // #[cfg(feature = "rtt-inputs")]
+        // let latency_micros = rtt_secs * 1_000_000.0 + 3000.0;
+        //
+        // // Inputs are batched, so one for a tick that just missed a commit waits out the
+        // // rest of the interval before it is even sent. The lead has to cover that wait,
+        // // not just the network latency, or we fall behind and start fast-forwarding.
+        // self.min_ticks_ahead = (latency_micros
+        //     / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64)
+        //     .ceil() as u64
+        //     + self.commit_interval_ticks();
+        // self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
-        // Inputs are batched, so one for a tick that just missed a commit waits out the
-        // rest of the interval before it is even sent. The lead has to cover that wait,
-        // not just the network latency, or we fall behind and start fast-forwarding.
-        self.min_ticks_ahead = (latency_micros
-            / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64)
-            .ceil() as u64
-            + self.commit_interval_ticks();
+        // Testing: use the same formula as the QUIC backend
+        let mut rtt_micros = rtt_secs * 1_000_000.0;
+        rtt_micros += 3000.0;
+        self.min_ticks_ahead =
+            (rtt_micros / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64).ceil() as u64
+                + 1;
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
         #[cfg(feature = "tracy")]

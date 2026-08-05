@@ -188,10 +188,10 @@ pub struct PlayerState {
     Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
 )]
 #[smooth(
-    decay = 0.8,
+    decay = 0.92,
     max_offset = 200.0,
     min_offset_sq = 4.0,
-    max_correction = 20.0
+    max_correction = 8.0
 )]
 pub struct SoccerGameState {
     #[smooth]
