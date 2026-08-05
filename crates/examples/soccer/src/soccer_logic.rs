@@ -712,14 +712,13 @@ mod server_logic {
     }
 }
 
+// ─── Bot AI ─────────────────────────────────────────────────────
+use std::cell::RefCell;
+
 #[cfg(feature = "foc")]
 pub use server_logic::SoccerFocLogic;
 #[cfg(feature = "bin")]
 pub use server_logic::{NoAuth, SoccerQuicLogic};
-
-// ─── Bot AI ─────────────────────────────────────────────────────
-
-use std::cell::RefCell;
 
 const BOT_DT: f32 = 1.0 / FPS;
 const ACTION_HOLD_MIN: u32 = 2;
@@ -777,7 +776,11 @@ fn compute_bot_inputs(
     };
 
     let is_left_player = *bot == state.creator;
-    let own_goal_x = if is_left_player { LEFT_WALL } else { RIGHT_WALL };
+    let own_goal_x = if is_left_player {
+        LEFT_WALL
+    } else {
+        RIGHT_WALL
+    };
     let attack_dir: f32 = if is_left_player { 1.0 } else { -1.0 };
 
     let ball_moving_toward_own_goal = (state.ball_vel.x * attack_dir) < -50.0;

@@ -21,7 +21,6 @@ pub struct SetInputsAccounts<'info> {
     #[account(mut)]
     pub user: Signer<'info>,
     /// CHECK: PDA derived and verified manually because LobbyAccount uses wincode, not borsh.
-    #[account(mut)]
     pub lobby: UncheckedAccount<'info>,
     /// CHECK: PDA derived and verified manually because InputsAccount uses wincode, not borsh.
     #[account(mut)]

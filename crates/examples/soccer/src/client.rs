@@ -196,12 +196,8 @@ pub fn setup(
     let floor_offset = 135.0 * bg_scale;
     commands.spawn((
         Sprite::from_image(asset_server.load("SolanaMap.png")),
-        Transform::from_translation(Vec3::new(
-            0.0,
-            1080.0 * bg_scale * 0.5 - floor_offset,
-            0.0,
-        ))
-        .with_scale(Vec3::splat(bg_scale)),
+        Transform::from_translation(Vec3::new(0.0, 1080.0 * bg_scale * 0.5 - floor_offset, 0.0))
+            .with_scale(Vec3::splat(bg_scale)),
     ));
 
     // goals — anchor from the TOP at the crossbar, positioned at the goalpost.
