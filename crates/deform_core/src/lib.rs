@@ -209,6 +209,11 @@ pub trait MaybeSerdeDeserialize {}
 #[cfg(target_arch = "bpf")]
 impl<T> MaybeSerdeDeserialize for T {}
 
+/// Inputs used by a game.
+///
+/// NOTE: `Eq` may not work well with floats; you may wish to manually override it.
+/// For example, you may want inputs with a difference of <0.000001 to not be considered different inputs.
+/// TODO: define a different trait method for this??
 pub trait DeformInputs:
     Default
     + Debug
