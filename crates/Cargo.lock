@@ -3775,6 +3775,7 @@ version = "0.1.0"
 dependencies = [
  "anchor-lang",
  "deform_derive",
+ "deform_metrics",
  "egui-probe",
  "glam",
  "serde",
@@ -3786,7 +3787,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
- "tracy-client",
  "wincode",
 ]
 
@@ -3807,6 +3807,7 @@ dependencies = [
  "base64 0.22.1",
  "better_tokio_select",
  "deform_core",
+ "deform_metrics",
  "futures-util",
  "glam",
  "serde",
@@ -3819,8 +3820,15 @@ dependencies = [
  "tokio-tungstenite",
  "tokio-util",
  "tracing",
- "tracy-client",
  "wincode",
+]
+
+[[package]]
+name = "deform_metrics"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tracy-client",
 ]
 
 [[package]]
@@ -3829,12 +3837,12 @@ version = "0.1.0"
 dependencies = [
  "better_tokio_select",
  "deform_core",
+ "deform_metrics",
  "glam",
  "serde",
  "solana-address 2.6.1",
  "tokio",
  "tokio-util",
- "tracy-client",
  "wincode",
 ]
 
@@ -3845,6 +3853,7 @@ dependencies = [
  "anyhow",
  "better_tokio_select",
  "deform_core",
+ "deform_metrics",
  "glam",
  "quinn",
  "rcgen",
@@ -3858,7 +3867,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
- "tracy-client",
  "webpki-roots 0.26.11",
  "wincode",
  "zstd",
@@ -7266,6 +7274,7 @@ dependencies = [
  "clap",
  "deform_core",
  "deform_foc",
+ "deform_metrics",
  "deform_offline",
  "deform_quic",
  "egui-probe",
@@ -7290,7 +7299,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "tracy-client",
  "wincode",
 ]
 
@@ -8487,6 +8495,7 @@ dependencies = [
  "borsh 1.7.0",
  "clap",
  "deform_core",
+ "deform_metrics",
  "deform_offline",
  "deform_quic",
  "egui-probe",
@@ -8511,7 +8520,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "tracy-client",
  "wincode",
 ]
 
@@ -8708,6 +8716,7 @@ dependencies = [
  "clap",
  "deform_core",
  "deform_foc",
+ "deform_metrics",
  "deform_offline",
  "deform_quic",
  "egui-probe",
@@ -8733,7 +8742,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "tracy-client",
  "wincode",
 ]
 

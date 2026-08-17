@@ -8,7 +8,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 anyhow = { workspace = true }
-deform_core = { path = "../deform_core" }
+deform_core = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "net", "macros"] }
 tokio-util = { workspace = true }
 serde = { workspace = true }
@@ -26,8 +26,8 @@ better_tokio_select = { workspace = true }
 rustls-pemfile = { workspace = true }
 rcgen = { workspace = true }
 tracing = { workspace = true }
-tracy-client = { workspace = true, optional = true }
+deform_metrics = { workspace = true, optional = true }
 zstd = { workspace = true }
 
 [features]
-tracy = ["dep:tracy-client"]
+metrics = ["dep:deform_metrics"]

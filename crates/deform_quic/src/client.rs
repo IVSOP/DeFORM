@@ -100,6 +100,15 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
 
+        #[cfg(feature = "metrics")]
+        deform_metrics::init(deform_metrics::RunInfo {
+            backend: "quic",
+            player: player.to_string(),
+            lobby_id: lobby.metadata.id,
+            tick_rate_micros: <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
+            extra: vec![("server".into(), server_addr.clone())],
+        });
+
         let (lobby, user_logic, starting_tick_info) = match &lobby.state {
             LobbyState::Finished(_) => {
                 Err(DeformError::InvalidState("Game already ended!".into()))?
@@ -459,11 +468,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     // Commit right after the simulation step, so an input is transmitted as soon
                     // as its tick closes. Sending on an independent timer instead meant a sample
                     // could wait a whole extra period for a commit it had just missed.
-                    #[cfg(feature = "tracy")]
-                    if let Some(max_input) = self.inputs.keys().max()
-                        && let Some(client) = tracy_client::Client::running()
-                    {
-                        client.plot(tracy_client::plot_name!("commit_inputs"), *max_input as f64);
+                    #[cfg(feature = "metrics")]
+                    if let Some(max_input) = self.inputs.keys().max() {
+                        deform_metrics::plot!("commit_inputs", *max_input as f64);
                     }
 
                     self.commit_inputs(&mut fragmentor).await?;
@@ -518,15 +525,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
                         self.avg_rtt = self.connection.rtt();
 
-                        #[cfg(feature = "tracy")]
-                        {
-                            if let Some(client) = tracy_client::Client::running() {
-                                client.plot(
-                                    tracy_client::plot_name!("RTT"),
-                                    self.avg_rtt.as_secs_f64() * 1000.0,
-                                );
-                            }
-                        }
+                        #[cfg(feature = "metrics")]
+                        deform_metrics::plot!("RTT", self.avg_rtt.as_secs_f64() * 1000.0);
 
                         self.update_ticks_ahead()?;
                     }
@@ -614,13 +614,16 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         self.connection.close(quinn::VarInt::from_u32(0), b"done");
 
+        #[cfg(feature = "metrics")]
+        deform_metrics::flush();
+
         Ok(())
     }
 
     /// Change our ticks ahead target based on the current RTT
     pub fn update_ticks_ahead(&mut self) -> DeformResult {
-        #[cfg(feature = "tracy")]
-        let _span = tracy_client::span!("update_ticks_ahead");
+        #[cfg(feature = "metrics")]
+        let _span = deform_metrics::span!("update_ticks_ahead");
 
         let rtt_secs = self.avg_rtt.as_secs_f64();
         let mut rtt_micros = rtt_secs * 1_000_000.0;
@@ -637,18 +640,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 + 1;
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
-        #[cfg(feature = "tracy")]
+        #[cfg(feature = "metrics")]
         {
-            if let Some(client) = tracy_client::Client::running() {
-                client.plot(
-                    tracy_client::plot_name!("min ticks ahead"),
-                    self.min_ticks_ahead as f64,
-                );
-                client.plot(
-                    tracy_client::plot_name!("max ticks ahead"),
-                    self.max_ticks_ahead as f64,
-                );
-            }
+            deform_metrics::plot!("min ticks ahead", self.min_ticks_ahead as f64);
+            deform_metrics::plot!("max ticks ahead", self.max_ticks_ahead as f64);
         }
 
         {
@@ -668,8 +663,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     ///
     /// We have a `min_ticks_ahead` target that is computed based on the latency to the server. A % is taken using this value. For example, if the target is 10, and we are exactly 10 ticks ahead of the server, the % is 0. If we are 20 ticks ahead of the server, the % is 10. So, the percentage varies according to how much we expect to be ahead of the server.
     fn compute_dilated_tick_interval(&mut self, remote_tick: u64) -> Duration {
-        #[cfg(feature = "tracy")]
-        let _span = tracy_client::span!("compute_dilated_tick_interval");
+        #[cfg(feature = "metrics")]
+        let _span = deform_metrics::span!("compute_dilated_tick_interval");
         let base_sleep_ms: f32 =
             <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32 / 1000.0;
         let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
@@ -693,30 +688,28 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         let micros = (sleep_ms * 1000.0) as u64;
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(tracy_client::plot_name!("sleep_time"), sleep_ms as f64);
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("sleep_time", sleep_ms as f64);
 
         Duration::from_micros(micros)
     }
 
     pub fn advance_local_simulation(&mut self) -> UserFacingResult<Q::UserLogic> {
-        #[cfg(feature = "tracy")]
-        let _span = tracy_client::span!("advance_local_simulation");
+        #[cfg(feature = "metrics")]
+        let _span = deform_metrics::span!("advance_local_simulation");
 
         // inneficient but only used in dev
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
+        #[cfg(feature = "metrics")]
+        {
             let remote_tick = match &self.remote_lobby.state {
                 LobbyState::Ongoing(ongoing) => ongoing.tick,
                 LobbyState::Finished(LobbyFinished(finished)) => finished.tick,
                 LobbyState::NotStarted(_) => 0,
             };
 
-            client.plot(
-                tracy_client::plot_name!("current_vs_remote_adv"),
-                self.local_tick as f64 - remote_tick as f64,
+            deform_metrics::plot!(
+                "current_vs_remote_adv",
+                self.local_tick as f64 - remote_tick as f64
             );
         }
 
@@ -746,10 +739,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             }
         }
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(tracy_client::plot_name!("advance_sim"), new_tick as f64);
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("advance_sim", new_tick as f64);
 
         let new_state = self
             .user_logic
@@ -764,12 +755,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         self.local_tick = new_tick;
         self.info_per_tick.insert(new_tick, next_info);
 
+        // Attribute every subsequent record to the tick it happened on. Rollbacks and
+        // fast-forwards re-enter here, so this alone keeps the attribution honest.
+        #[cfg(feature = "metrics")]
+        deform_metrics::set_tick(new_tick);
+
         Ok(())
     }
 
     pub async fn commit_inputs(&mut self, fragmentor: &mut DatagramFragmentor<Q>) -> DeformResult {
-        #[cfg(feature = "tracy")]
-        let _span = tracy_client::span!("commit_inputs");
+        #[cfg(feature = "metrics")]
+        let _span = deform_metrics::span!("commit_inputs");
 
         // Never send the tick still in progress: samples are still being merged into it.
         // The server commits first-write-wins, so a non-final value would be locked in
@@ -800,8 +796,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         bytes: &[u8],
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
-        #[cfg(feature = "tracy")]
-        let _span = tracy_client::span!("process_server_update");
+        #[cfg(feature = "metrics")]
+        let _span = deform_metrics::span!("process_server_update");
 
         let UnreliableServerResponse {
             lobby_state: new_remote_state,
@@ -809,17 +805,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
         // inneficient since the variant is checked below, but this is only used in dev
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
+        #[cfg(feature = "metrics")]
+        {
             let new_remote = match &new_remote_state {
                 LobbyState::Finished(LobbyFinished(finished_state)) => finished_state.tick,
                 LobbyState::NotStarted(_) => 0,
                 LobbyState::Ongoing(ongoing) => ongoing.tick,
             };
 
-            client.plot(
-                tracy_client::plot_name!("current_vs_remote_reception"),
-                self.local_tick as f64 - new_remote as f64,
+            deform_metrics::plot!(
+                "current_vs_remote_reception",
+                self.local_tick as f64 - new_remote as f64
             );
         }
 
@@ -861,10 +857,12 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.message("rollback", 0);
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::event!(
+            "rollback",
+            to_tick = conflicting_tick,
+            depth = self.local_tick.saturating_sub(conflicting_tick),
+        );
 
         let previous_local_tick = self.local_tick;
         // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick
@@ -933,13 +931,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         };
         let new_tick_info = remote_ongoing.tick_info.clone();
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(
-                tracy_client::plot_name!("last_tick_slot"),
-                new_remote_tick as f64,
-            );
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("last_tick_slot", new_remote_tick as f64);
 
         /// Trying to handle all cases was a mess to keep up with all invariants so this makes it cleaner. I assume the compiler will take care of this.
         /// IMPORTANT: each case is evaluated one after another; this means that the [`ReceivedScenario::Default`] branch will only trigger if all others do not.
@@ -1064,13 +1057,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         // if new_lobby_state.tick <= self.remote_tick {
         //     self.stale_datagrams += 1;
-        //     #[cfg(feature = "tracy")]
-        //     if let Some(client) = tracy_client::Client::running() {
-        //         client.plot(
-        //             tracy_client::plot_name!("stale datagrams"),
-        //             self.stale_datagrams as f64,
-        //         );
-        //     }
+        //     #[cfg(feature = "metrics")]
+        //     deform_metrics::plot!("stale datagrams", self.stale_datagrams as f64);
         //     return Ok(());
         // }
 
@@ -1080,13 +1068,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         //     .saturating_sub(self.remote_tick + 1);
         // if gap > 0 {
         //     self.dropped_datagrams += gap;
-        //     #[cfg(feature = "tracy")]
-        //     if let Some(client) = tracy_client::Client::running() {
-        //         client.plot(
-        //             tracy_client::plot_name!("dropped datagrams"),
-        //             self.dropped_datagrams as f64,
-        //         );
-        //     }
+        //     #[cfg(feature = "metrics")]
+        //     deform_metrics::plot!("dropped datagrams", self.dropped_datagrams as f64);
         // }
 
         // prune all local inputs that are older than the new remote tick
@@ -1095,13 +1078,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         // #[cfg(feature = "log")]
         // tracing::trace!("QUIC received tick {}", new_remote_tick);
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(
-                tracy_client::plot_name!("remote_tick (clean)"),
-                new_remote_tick as f64,
-            );
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("remote_tick (clean)", new_remote_tick as f64);
 
         match scenario {
             // if a gap was detected, no need to compare inputs. we have to rollback either way.

@@ -32,7 +32,9 @@ impl SetInputs {
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.user, true));
-        accounts.push(solana_instruction::AccountMeta::new(self.lobby, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            self.lobby, false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(self.inputs, false));
         accounts.extend_from_slice(remaining_accounts);
         let mut data = SetInputsInstructionData::new().try_to_vec().unwrap();
@@ -87,7 +89,7 @@ impl SetInputsInstructionArgs {
 /// ### Accounts:
 ///
 ///   0. `[writable, signer]` user
-///   1. `[writable]` lobby
+///   1. `[]` lobby
 ///   2. `[writable]` inputs
 #[derive(Clone, Debug, Default)]
 pub struct SetInputsBuilder {
@@ -224,7 +226,10 @@ impl<'a, 'b> SetInputsCpi<'a, 'b> {
     ) -> solana_program_error::ProgramResult {
         let mut accounts = Vec::with_capacity(3 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.user.key, true));
-        accounts.push(solana_instruction::AccountMeta::new(*self.lobby.key, false));
+        accounts.push(solana_instruction::AccountMeta::new_readonly(
+            *self.lobby.key,
+            false,
+        ));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.inputs.key,
             false,
@@ -267,7 +272,7 @@ impl<'a, 'b> SetInputsCpi<'a, 'b> {
 /// ### Accounts:
 ///
 ///   0. `[writable, signer]` user
-///   1. `[writable]` lobby
+///   1. `[]` lobby
 ///   2. `[writable]` inputs
 #[derive(Clone, Debug)]
 pub struct SetInputsCpiBuilder<'a, 'b> {

@@ -17,7 +17,7 @@ bin = ["dep:clap", "deform_core/client", "dep:deform_offline", "dep:anyhow", "de
 server = ["bin"]
 client = ["bin", "dep:bevy", "dep:bevy_egui", "dep:bevy-egui-notify", "bevy/dynamic_linking", "dep:egui-probe", "deform_core/egui-probe"]
 anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
-tracy = ["dep:tracy-client", "deform_quic/tracy", "deform_core/tracy", "deform_foc/tracy"]
+metrics = ["dep:deform_metrics", "deform_core/metrics", "deform_quic?/metrics", "deform_foc?/metrics", "deform_offline?/metrics"]
 
 # Fully-on-chain client backend. Pick exactly one latency strategy (deform_foc asserts
 # this at compile time). `foc-getslot` is in `default`; to switch, e.g.:
@@ -32,8 +32,8 @@ foc-inputs = ["foc", "deform_foc/rtt-inputs"]
 
 [dependencies]
 anchor-lang = { workspace = true, optional = true }
-deform_core = { path = "../../deform_core" }
-deform_offline = { path = "../../deform_offline", optional = true }
+deform_core = { workspace = true }
+deform_offline = { workspace = true, optional = true }
 glam = { workspace = true }
 serde = { workspace = true }
 wincode = { workspace = true }
@@ -48,13 +48,13 @@ solana-rpc-client = { workspace = true, optional = true }
 anyhow = { version = "1.0.102", optional = true }
 clap = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
-deform_quic = { path = "../../deform_quic", optional = true }
-deform_foc = { path = "../../deform_foc", optional = true, default-features = false }
+deform_quic = { workspace = true, optional = true }
+deform_foc = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt-multi-thread", "macros"] }
 tokio-util = { workspace = true, optional = true } 
 tracing = { workspace = true, optional = true }
 tracing-subscriber = { workspace = true, optional = true }
-tracy-client = { workspace = true, optional = true, default-features = true}
+deform_metrics = { workspace = true, optional = true }
 borsh = { workspace = true }
 egui-probe = { workspace = true, optional = true }
 num-derive = { workspace = true }

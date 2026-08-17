@@ -77,7 +77,7 @@ server  — the QUIC server (pulls `bin`)
 anchor  — borsh/Anchor derives on the shared types; needed by the on-chain program
 foc / foc-getslot / foc-ping / foc-inputs — FoC backend + exactly one RTT strategy
 20hz / 60hz — sets TICK_RATE_MICROS (50_000 / 16_667)
-tracy   — profiling spans and plots across all crates
+metrics — deform_metrics spans/plots/events across all crates (Tracy + on-disk run dir)
 ```
 
 `20hz` is the default because the ephemeral validators run at 20 Hz and FoC requires

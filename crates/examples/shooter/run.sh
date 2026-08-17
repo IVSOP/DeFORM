@@ -32,7 +32,7 @@ trap cleanup INT TERM EXIT
 
 # cwd = CRATES_DIR so the in-app keypair dropdown (which scans ".") also finds the wallets.
 cd "$CRATES_DIR"
-cargo run --release -p shooter --features="tracy" -- run ${WALLET1:+--wallet="$WALLET1"} &
+cargo run --release -p shooter --features="metrics" -- run ${WALLET1:+--wallet="$WALLET1"} &
 pids+=($!)
 cargo run --release -p shooter -- run ${WALLET2:+--wallet="$WALLET2"} &
 pids+=($!)

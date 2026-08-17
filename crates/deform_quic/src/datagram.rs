@@ -130,13 +130,8 @@ fn split_into_datagrams(
 
     // The metric that says whether this layer is a safety net or the steady state.
     // Anything durably above 1 means the state encoding, not the framing, is the problem.
-    #[cfg(feature = "tracy")]
-    if let Some(client) = tracy_client::Client::running() {
-        client.plot(
-            tracy_client::plot_name!("datagram_fragments"),
-            total_fragments as f64,
-        );
-    }
+    #[cfg(feature = "metrics")]
+    deform_metrics::plot!("datagram_fragments", total_fragments as f64);
 
     body.chunks(chunk_size)
         // `chunks` yields nothing for an empty body; this keeps the one-datagram case.
@@ -293,13 +288,11 @@ pub fn compress(body: Vec<u8>, level: Option<i32>) -> DeformResult<Vec<u8>> {
             let compressed = zstd::stream::encode_all(body.as_slice(), level)
                 .map_err(|e| DeformError::Serialize(format!("compress datagram: {e}")))?;
 
-            #[cfg(feature = "tracy")]
-            if let Some(client) = tracy_client::Client::running() {
-                client.plot(
-                    tracy_client::plot_name!("compression_ratio"),
-                    compressed.len() as f64 / body.len().max(1) as f64,
-                );
-            }
+            #[cfg(feature = "metrics")]
+            deform_metrics::plot!(
+                "compression_ratio",
+                compressed.len() as f64 / body.len().max(1) as f64
+            );
 
             compressed
         }
@@ -307,13 +300,8 @@ pub fn compress(body: Vec<u8>, level: Option<i32>) -> DeformResult<Vec<u8>> {
 
     // What actually has to fit the MTU, so this is the number to watch alongside
     // `datagram_fragments`.
-    #[cfg(feature = "tracy")]
-    if let Some(client) = tracy_client::Client::running() {
-        client.plot(
-            tracy_client::plot_name!("datagram_body_bytes"),
-            out.len() as f64,
-        );
-    }
+    #[cfg(feature = "metrics")]
+    deform_metrics::plot!("datagram_body_bytes", out.len() as f64);
 
     Ok(out)
 }

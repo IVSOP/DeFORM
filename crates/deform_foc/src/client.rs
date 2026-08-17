@@ -156,12 +156,9 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         > Duration::from_micros(2 * commit_interval_ticks * tick_micros);
 
                     if ticks_since_commit >= commit_interval_ticks || commit_stalled {
-                        #[cfg(feature = "tracy")]
-                        if let Some(max_input) = self.inputs.keys().max()
-                            && let Some(client) = tracy_client::Client::running()
-                        {
-                            client
-                                .plot(tracy_client::plot_name!("commit_inputs"), *max_input as f64);
+                        #[cfg(feature = "metrics")]
+                        if let Some(max_input) = self.inputs.keys().max() {
+                            deform_metrics::plot!("commit_inputs", *max_input as f64);
                         }
 
                         self.commit_inputs().await?;
@@ -214,15 +211,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         self.avg_rtt =
                             Duration::from_micros(self.rtt_micros.load(Ordering::Relaxed));
 
-                        #[cfg(feature = "tracy")]
-                        {
-                            if let Some(client) = tracy_client::Client::running() {
-                                client.plot(
-                                    tracy_client::plot_name!("RTT"),
-                                    self.avg_rtt.as_secs_f64() * 1000.0,
-                                );
-                            }
-                        }
+                        #[cfg(feature = "metrics")]
+                        deform_metrics::plot!("RTT", self.avg_rtt.as_secs_f64() * 1000.0);
 
                         self.update_ticks_ahead()?;
                     }
@@ -281,6 +271,9 @@ impl<F: DeformFocLogic> FocBackend<F> {
             }
         }
 
+        #[cfg(feature = "metrics")]
+        deform_metrics::flush();
+
         debug!("foc tick_loop exiting");
         Ok(())
     }
@@ -311,18 +304,10 @@ impl<F: DeformFocLogic> FocBackend<F> {
                 + 1;
         self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
 
-        #[cfg(feature = "tracy")]
+        #[cfg(feature = "metrics")]
         {
-            if let Some(client) = tracy_client::Client::running() {
-                client.plot(
-                    tracy_client::plot_name!("min ticks ahead"),
-                    self.min_ticks_ahead as f64,
-                );
-                client.plot(
-                    tracy_client::plot_name!("max ticks ahead"),
-                    self.max_ticks_ahead as f64,
-                );
-            }
+            deform_metrics::plot!("min ticks ahead", self.min_ticks_ahead as f64);
+            deform_metrics::plot!("max ticks ahead", self.max_ticks_ahead as f64);
         }
 
         {
@@ -359,10 +344,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
             mid_sleep_ms.lerp(max_sleep_ms, t)
         };
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(tracy_client::plot_name!("sleep_time"), sleep_ms as f64);
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("sleep_time", sleep_ms as f64);
 
         Duration::from_micros((sleep_ms * 1000.0) as u64)
     }
@@ -372,17 +355,17 @@ impl<F: DeformFocLogic> FocBackend<F> {
         let new_tick = self.local_tick + 1;
 
         // inneficient but only used in dev
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
+        #[cfg(feature = "metrics")]
+        {
             let remote_tick = match &self.remote_lobby.state {
                 LobbyState::Ongoing(ongoing) => ongoing.tick,
                 LobbyState::Finished(LobbyFinished(finished)) => finished.tick,
                 LobbyState::NotStarted(_) => 0,
             };
 
-            client.plot(
-                tracy_client::plot_name!("current_vs_remote_adv"),
-                self.local_tick as f64 - remote_tick as f64,
+            deform_metrics::plot!(
+                "current_vs_remote_adv",
+                self.local_tick as f64 - remote_tick as f64
             );
         }
 
@@ -407,10 +390,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
             }
         }
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(tracy_client::plot_name!("advance_sim"), new_tick as f64);
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("advance_sim", new_tick as f64);
 
         let new_state = self
             .user_logic
@@ -424,6 +405,11 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
         self.local_tick = new_tick;
         self.info_per_tick.insert(new_tick, next_info);
+
+        // Attribute every subsequent record to the tick it happened on. Rollbacks and
+        // fast-forwards re-enter here, so this alone keeps the attribution honest.
+        #[cfg(feature = "metrics")]
+        deform_metrics::set_tick(new_tick);
 
         Ok(())
     }
@@ -497,17 +483,17 @@ impl<F: DeformFocLogic> FocBackend<F> {
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<F::UserLogic> {
         // inneficient since the variant is checked below, but this is only used in dev
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
+        #[cfg(feature = "metrics")]
+        {
             let new_remote = match &new_remote_state {
                 LobbyState::Finished(LobbyFinished(finished_state)) => finished_state.tick,
                 LobbyState::NotStarted(_) => 0,
                 LobbyState::Ongoing(ongoing) => ongoing.tick,
             };
 
-            client.plot(
-                tracy_client::plot_name!("current_vs_remote_reception"),
-                self.local_tick as f64 - new_remote as f64,
+            deform_metrics::plot!(
+                "current_vs_remote_reception",
+                self.local_tick as f64 - new_remote as f64
             );
         }
 
@@ -535,6 +521,13 @@ impl<F: DeformFocLogic> FocBackend<F> {
         conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<F::UserLogic> {
+        #[cfg(feature = "metrics")]
+        deform_metrics::event!(
+            "rollback",
+            to_tick = conflicting_tick,
+            depth = self.local_tick.saturating_sub(conflicting_tick),
+        );
+
         let previous_local_tick = self.local_tick;
         let pre_rollback_info = self
             .info_per_tick
@@ -584,13 +577,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
         };
         let new_tick_info = remote_ongoing.tick_info.clone();
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(
-                tracy_client::plot_name!("last_tick_slot"),
-                new_remote_tick as f64,
-            );
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("last_tick_slot", new_remote_tick as f64);
 
         #[derive(Clone, Copy)]
         enum ReceivedScenario {
@@ -673,13 +661,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
         // prune local inputs older than the new remote tick
         self.inputs.retain(|tick, _| *tick >= new_remote_tick);
 
-        #[cfg(feature = "tracy")]
-        if let Some(client) = tracy_client::Client::running() {
-            client.plot(
-                tracy_client::plot_name!("remote_tick (clean)"),
-                new_remote_tick as f64,
-            );
-        }
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("remote_tick (clean)", new_remote_tick as f64);
 
         match scenario {
             ReceivedScenario::Gap => {

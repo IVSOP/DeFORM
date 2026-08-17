@@ -51,7 +51,7 @@ picked at runtime (see `crates/examples/pong/src/client.rs` — `start_offline`,
 
 `deform_core` features: `client` (default; enables `DeformClient`, pulls tokio), `anchor`
 (adds Anchor ser/de to the account types — use with `default-features = false` in the
-on-chain program), `egui-probe`, `tracy`.
+on-chain program), `egui-probe`, `metrics`.
 
 ## Adding DeFORM to your project
 

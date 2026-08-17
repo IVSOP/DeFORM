@@ -9,7 +9,7 @@ crate-type = ["rlib"]
 [dependencies]
 anchor-lang = { workspace = true, optional = true }
 egui-probe = { workspace = true, optional = true }
-deform_derive = { path = "../deform_derive" }
+deform_derive = { workspace = true }
 tokio = { workspace = true, features = ["sync"], optional = true }
 tokio-util = { workspace = true, optional = true }
 serde = { workspace = true }
@@ -19,7 +19,7 @@ glam = { workspace = true }
 thiserror = { workspace = true }
 solana-address = { workspace = true }
 solana-instruction = { workspace = true }
-tracy-client = { workspace = true, optional = true }
+deform_metrics = { workspace = true, optional = true }
 strum = { workspace = true }
 strum_macros = { workspace = true }
 
@@ -27,5 +27,5 @@ strum_macros = { workspace = true }
 default = ["client"]
 client = ["dep:tokio", "dep:tokio-util"]
 anchor = ["solana-address/borsh", "dep:anchor-lang"]
-tracy = ["dep:tracy-client"]
+metrics = ["dep:deform_metrics"]
 egui-probe = ["dep:egui-probe"]

@@ -1,0 +1,21 @@
+[package]
+name = "deform_metrics"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = ["tracy", "file"]
+# Live view: forwards every record to a running Tracy profiler.
+tracy = ["dep:tracy-client"]
+# Offline analysis: buffers records in memory and writes them to a run directory.
+file = []
+
+[dependencies]
+serde_json = { workspace = true }
+# default features on: the whole point of enabling this sink is for tracy to be
+# live, and the workspace default (`default-features = false`) compiles the
+# tracy client out into no-ops.
+tracy-client = { workspace = true, optional = true, default-features = true }

@@ -49,6 +49,16 @@ pub trait DeformFocLogic: Clone + Sized + Debug + Send + Sync + 'static {
 /// of the on-chain tick the local simulation should run.
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
+/// The latency probe compiled in, for labelling a metrics run.
+#[cfg(feature = "rtt-getslot")]
+pub const RTT_PROBE: &str = "getslot";
+/// The latency probe compiled in, for labelling a metrics run.
+#[cfg(feature = "rtt-ping")]
+pub const RTT_PROBE: &str = "ping";
+/// The latency probe compiled in, for labelling a metrics run.
+#[cfg(feature = "rtt-inputs")]
+pub const RTT_PROBE: &str = "inputs";
+
 pub fn new_foc_client<F: DeformFocLogic>(
     rpc_url: String,
     ws_url: String,
@@ -128,6 +138,20 @@ pub fn new_foc_client<F: DeformFocLogic>(
     >::new_from_lobby(lobby.clone())?));
 
     let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
+
+    #[cfg(feature = "metrics")]
+    deform_metrics::init(deform_metrics::RunInfo {
+        backend: "foc",
+        player: player.to_string(),
+        lobby_id,
+        tick_rate_micros: game_tick_micros,
+        extra: vec![
+            ("rpc_url".into(), rpc_url.clone()),
+            ("slot_time_micros".into(), slot_time_micros.to_string()),
+            // Which probe fed `min_ticks_ahead` changes what the RTT plot means.
+            ("rtt_probe".into(), RTT_PROBE.into()),
+        ],
+    });
 
     let backend_state_clone = backend_state.clone();
 

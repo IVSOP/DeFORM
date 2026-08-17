@@ -10,7 +10,7 @@ use deform_core::accounts::lobby::Network;
 pub use instructions::*;
 use state::Inputs;
 
-declare_id!("5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r");
+declare_id!("GameMg5foV7LJYM7Yzf1u83oQkgwXQKMzkfRQo5Uj3tk");
 
 #[program]
 pub mod anchor_program {

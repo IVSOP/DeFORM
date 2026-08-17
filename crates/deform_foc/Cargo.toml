@@ -16,11 +16,11 @@ default = ["rtt-getslot"]
 rtt-getslot = []
 rtt-ping = []
 rtt-inputs = []
-tracy = ["dep:tracy-client"]
+metrics = ["dep:deform_metrics"]
 
 [dependencies]
 anyhow = { workspace = true }
-deform_core = { path = "../deform_core" }
+deform_core = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "net", "macros"] }
 tokio-util = { workspace = true }
 futures-util = "0.3"
@@ -37,4 +37,4 @@ solana-sdk = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 tracing = { workspace = true }
-tracy-client = { workspace = true, optional = true }
+deform_metrics = { workspace = true, optional = true }

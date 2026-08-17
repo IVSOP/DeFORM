@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "deform_core",
     "deform_derive",
+    "deform_metrics",
     "deform_quic",
     "deform_foc",
     "deform_offline",
@@ -47,6 +48,16 @@ tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 clap = { version = "4.6.1", features = ["derive", "env"] }
 serde_json = "1.0.150"
 tracy-client = { version = "0.18", default-features = false }
+deform_metrics = { path = "deform_metrics" }
+deform_core = { path = "deform_core" }
+deform_derive = { path = "deform_derive" }
+deform_offline = { path = "deform_offline" }
+deform_quic = { path = "deform_quic" }
+# `default-features` is decided here, not per member: a member inheriting a workspace
+# dependency can add features but cannot take the defaults away, so a crate that any
+# member needs stripped has to be declared stripped. deform_foc's default picks an RTT
+# probe (`rtt-getslot`) and every consumer selects its own, so defaults are off.
+deform_foc = { path = "deform_foc", default-features = false }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 zstd = "0.13.3"
 strum = "0.28.0"

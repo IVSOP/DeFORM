@@ -120,7 +120,7 @@ impl StartInstructionArgs {
 ///
 ///   0. `[writable, signer]` user
 ///   1. `[writable]` lobby
-///   2. `[optional]` owner_program (default to `5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r`)
+///   2. `[optional]` owner_program (default to `GameMg5foV7LJYM7Yzf1u83oQkgwXQKMzkfRQo5Uj3tk`)
 ///   3. `[writable]` lobby_buffer
 ///   4. `[writable]` lobby_delegation_record
 ///   5. `[writable]` lobby_delegation_metadata
@@ -154,7 +154,7 @@ impl StartBuilder {
         self.lobby = Some(lobby);
         self
     }
-    /// `[optional account, default to '5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r']`
+    /// `[optional account, default to 'GameMg5foV7LJYM7Yzf1u83oQkgwXQKMzkfRQo5Uj3tk']`
     #[inline(always)]
     pub fn owner_program(&mut self, owner_program: solana_address::Address) -> &mut Self {
         self.owner_program = Some(owner_program);
@@ -219,7 +219,7 @@ impl StartBuilder {
             user: self.user.expect("user is not set"),
             lobby: self.lobby.expect("lobby is not set"),
             owner_program: self.owner_program.unwrap_or(solana_address::address!(
-                "5Ku1phD9gZ6PQYv8YVBpK6WnzXQFBZ5un9u59RL7G82r"
+                "GameMg5foV7LJYM7Yzf1u83oQkgwXQKMzkfRQo5Uj3tk"
             )),
             lobby_buffer: self.lobby_buffer.expect("lobby_buffer is not set"),
             lobby_delegation_record: self

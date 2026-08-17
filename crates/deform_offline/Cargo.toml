@@ -7,7 +7,7 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-deform_core = { path = "../deform_core" }
+deform_core = { workspace = true }
 tokio = { workspace = true, features = ["sync", "time", "rt-multi-thread", "macros"] }
 tokio-util = { workspace = true } 
 serde = { workspace = true }
@@ -15,7 +15,7 @@ solana-address = { workspace = true }
 wincode = { workspace = true }
 glam = { workspace = true }
 better_tokio_select = { workspace = true }
-tracy-client = { workspace = true, optional = true }
+deform_metrics = { workspace = true, optional = true }
 
 [features]
-tracy = ["dep:tracy-client"]
+metrics = ["dep:deform_metrics"]
