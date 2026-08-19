@@ -453,6 +453,9 @@ impl<F: DeformFocLogic> FocBackend<F> {
             return Ok(());
         }
 
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("commit_batch_ticks", pending.len() as f64);
+
         let ix = self
             .program_client
             .set_inputs_ix(

@@ -811,6 +811,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         }
 
         #[cfg(feature = "metrics")]
+        deform_metrics::plot!("commit_batch_ticks", pending.len() as f64);
+
+        #[cfg(feature = "metrics")]
         let newest = pending.keys().max().copied();
 
         let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(pending);
