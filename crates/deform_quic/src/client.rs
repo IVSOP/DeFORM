@@ -56,6 +56,8 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub smoother: <Q::UserLogic as DeformUserLogic>::Smoother,
     pub visual_tick_micros: u64,
     pub last_sim_instant: Instant,
+    /// Duration of a tick. May be dilated.
+    pub tick_duration: Duration,
     /// Absolute deadline for the next simulation tick. Anchored to the previous deadline
     /// (not to `Instant::now()`), so time spent doing per-tick work and scheduling jitter
     /// do not accumulate as drift relative to the server's fixed-rate clock.
@@ -369,6 +371,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 smoother,
                                 visual_tick_micros,
                                 last_sim_instant: Instant::now(),
+                                tick_duration: Duration::from_micros(
+                                    <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
+                                ),
                                 // real value is set at the top of `tick_loop`
                                 next_tick_deadline: tokio::time::Instant::now(),
 
@@ -478,8 +483,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     // Advance the anchored deadline by the (variable) dilated interval rather than
                     // sleeping from `now`, so the work done in this arm does not accumulate as drift.
                     // Dilation is preserved: `compute_dilated_tick_interval` still decides the step.
-                    let dilated = self.compute_dilated_tick_interval(remote_tick);
-                    self.next_tick_deadline += dilated;
+                    self.tick_duration = self.compute_dilated_tick_interval(remote_tick);
+                    self.next_tick_deadline += self.tick_duration;
                     // If a stall pushed us a full tick past the deadline, resync to `now` so we
                     // don't fire a burst of back-to-back catch-up ticks (manual MissedTickBehavior::Delay).
                     let now = tokio::time::Instant::now();
@@ -498,9 +503,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         self.info_per_tick.get(&self.local_tick),
                     ) {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                        let t = (elapsed
-                            / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32)
-                            .clamp(0.0, 1.0);
+                        let tick_duration = self.tick_duration.as_micros() as f32;
+                        let t = (elapsed / tick_duration).clamp(0.0, 1.0);
 
                         let mut visual_state = current.clone();
                         self.smoother
@@ -662,7 +666,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     /// then we start to slow down to let it catch up.
     ///
     /// We have a `min_ticks_ahead` target that is computed based on the latency to the server. A % is taken using this value. For example, if the target is 10, and we are exactly 10 ticks ahead of the server, the % is 0. If we are 20 ticks ahead of the server, the % is 10. So, the percentage varies according to how much we expect to be ahead of the server.
-    fn compute_dilated_tick_interval(&mut self, remote_tick: u64) -> Duration {
+    fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
         #[cfg(feature = "metrics")]
         let _span = deform_metrics::span!("compute_dilated_tick_interval");
         let base_sleep_ms: f32 =

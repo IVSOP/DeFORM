@@ -282,6 +282,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 visual_tick_micros,
                 slot_time_micros,
                 last_sim_instant: Instant::now(),
+                tick_duration: Duration::from_micros(F::UserLogic::TICK_RATE_MICROS),
                 next_tick_deadline: tokio::time::Instant::now(),
 
                 avg_rtt: Duration::from_millis(50),

@@ -72,6 +72,8 @@ pub struct FocBackend<F: DeformFocLogic> {
     /// inclusion-latency floor folded into the ticks-ahead target.
     pub slot_time_micros: u64,
     pub last_sim_instant: Instant,
+    /// Duration of a tick. May be dilated.
+    pub tick_duration: Duration,
     /// Absolute deadline for the next simulation tick, anchored to the previous
     /// deadline so per-tick work and jitter don't accumulate as drift.
     pub next_tick_deadline: tokio::time::Instant,
@@ -166,8 +168,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         last_commit_at = tokio::time::Instant::now();
                     }
 
-                    let dilated = self.compute_dilated_tick_interval(remote_tick);
-                    self.next_tick_deadline += dilated;
+                    self.tick_duration = self.compute_dilated_tick_interval(remote_tick);
+                    self.next_tick_deadline += self.tick_duration;
                     let now = tokio::time::Instant::now();
                     if self.next_tick_deadline < now {
                         self.next_tick_deadline = now;
@@ -184,9 +186,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         self.info_per_tick.get(&self.local_tick),
                     ) {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                        let t = (elapsed
-                            / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32)
-                            .clamp(0.0, 1.0);
+                        let tick_duration = self.tick_duration.as_micros() as f32;
+                        let t = (elapsed / tick_duration).clamp(0.0, 1.0);
 
                         let mut visual_state = current.clone();
                         self.smoother
@@ -322,7 +323,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
         Ok(())
     }
 
-    fn compute_dilated_tick_interval(&mut self, remote_tick: u64) -> Duration {
+    fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
         let base_sleep_ms: f32 =
             <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32 / 1000.0;
         let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
