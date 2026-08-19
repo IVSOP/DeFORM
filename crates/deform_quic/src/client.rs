@@ -505,6 +505,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
                         let tick_duration = self.tick_duration.as_micros() as f32;
                         let t = (elapsed / tick_duration).clamp(0.0, 1.0);
+                        #[cfg(feature = "metrics")]
+                        deform_metrics::plot!("visual_t", t as f64);
 
                         let mut visual_state = current.clone();
                         self.smoother
