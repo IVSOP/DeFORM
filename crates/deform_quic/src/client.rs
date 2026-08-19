@@ -901,13 +901,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         conflicting_tick: u64,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
-        #[cfg(feature = "metrics")]
-        deform_metrics::event!(
-            "rollback",
-            to_tick = conflicting_tick,
-            depth = self.local_tick.saturating_sub(conflicting_tick),
-        );
-
         let previous_local_tick = self.local_tick;
         // at this point, there was a predicted state, meaning the local tick is either == or > than the remote tick
         // by using remove here we avoid a clone
@@ -941,9 +934,21 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             .get(&self.local_tick)
             .ok_or(DeformError::InvalidState("State not found!".into()))?;
 
+        #[cfg(feature = "metrics")]
+        let discarded_before = self.smoother.corrections_discarded();
+
         self.smoother.on_rollback(
             &pre_rollback_info.game_state,
             &post_rollback_info.game_state,
+        );
+
+        #[cfg(feature = "metrics")]
+        deform_metrics::event!(
+            "rollback",
+            to_tick = conflicting_tick,
+            depth = previous_local_tick.saturating_sub(conflicting_tick),
+            magnitude = self.smoother.correction_magnitude_sq().sqrt(),
+            corrections_discarded = self.smoother.corrections_discarded() - discarded_before,
         );
 
         self.user_logic
@@ -1075,6 +1080,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 //     &mut self.events_queue,
                 // );
 
+                #[cfg(feature = "metrics")]
+                deform_metrics::event!(
+                    "fast_forward",
+                    from_tick = self.local_tick,
+                    to_tick = new_remote_tick,
+                    jump = new_remote_tick.saturating_sub(self.local_tick),
+                );
+
                 self.user_logic
                     .on_fast_forward(last_computed_state, &new_tick_info)
                     .map_err(|e| UserFacingError::User(e))?;
@@ -1143,6 +1156,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 //     &new_lobby_state.game_state,
                 //     &mut self.events_queue,
                 // );
+
+                #[cfg(feature = "metrics")]
+                deform_metrics::event!(
+                    "gap",
+                    from_tick = old_remote_tick,
+                    to_tick = new_remote_tick,
+                    missed = new_remote_tick.saturating_sub(old_remote_tick + 1),
+                );
 
                 self.user_logic
                     .on_gap(old_remote_state, &new_tick_info)

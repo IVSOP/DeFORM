@@ -240,6 +240,8 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
                 self.#name = pre_visual - post.#name.clone();
                 if ::deform_core::SmoothableField::magnitude_sq(&self.#name) > self.__scaled.max_offset_sq {
                     self.#name = Default::default();
+                    // Metrics only: the dropped offset is a snap the player saw.
+                    self.__discarded += 1;
                 }
             }
         }
@@ -366,6 +368,36 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
     let nested_set_params_names: Vec<_> = nested_fields.iter().map(|f| &f.ident).collect();
     let map_field_names: Vec<_> = map_fields.iter().map(|f| &f.ident).collect();
 
+    // Metrics only. Offsets from separate fields are independent, so squares sum.
+    let direct_magnitude = direct_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! { __total += ::deform_core::SmoothableField::magnitude_sq(&self.#name); }
+    });
+    let nested_magnitude = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! { __total += ::deform_core::Smooth::correction_magnitude_sq(&self.#name); }
+    });
+    let map_magnitude = map_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! {
+            for __smoother in self.#name.values() {
+                __total += ::deform_core::Smooth::correction_magnitude_sq(__smoother);
+            }
+        }
+    });
+    let nested_discarded = nested_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! { __total += ::deform_core::Smooth::corrections_discarded(&self.#name); }
+    });
+    let map_discarded = map_fields.iter().map(|f| {
+        let name = &f.ident;
+        quote! {
+            for __smoother in self.#name.values() {
+                __total += ::deform_core::Smooth::corrections_discarded(__smoother);
+            }
+        }
+    });
+
     let expanded = quote! {
         #[derive(Clone)]
         #vis struct #smoother_name {
@@ -381,6 +413,8 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
             /// `__params` converted to per-visual-frame units. The hot paths read this.
             __scaled: ::deform_core::SmoothParams,
             __custom_params: bool,
+            /// Metrics only: cumulative dropped-offset count, diffed across a rollback.
+            __discarded: u64,
         }
 
         impl #smoother_name {
@@ -413,6 +447,7 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
                     __scale: 1.0,
                     __scaled: __authored,
                     __custom_params: #has_custom_params,
+                    __discarded: 0,
                 };
                 // Nested children build themselves from `Default` and so start on the
                 // *derive* defaults. Push ours down so `#[smooth(nested)]` inherits like
@@ -467,6 +502,23 @@ pub fn derive_smooth(input: TokenStream) -> TokenStream {
                 #(for __smoother in self.#map_field_names.values_mut() {
                     ::deform_core::Smooth::set_params(__smoother, __effective);
                 })*
+            }
+
+            /// Metrics only: how far the world jumped, read right after `on_rollback`.
+            fn correction_magnitude_sq(&self) -> f32 {
+                let mut __total = 0.0f32;
+                #(#direct_magnitude)*
+                #(#nested_magnitude)*
+                #(#map_magnitude)*
+                __total
+            }
+
+            /// Metrics only: corrections too big to absorb, so the player saw a snap.
+            fn corrections_discarded(&self) -> u64 {
+                let mut __total = self.__discarded;
+                #(#nested_discarded)*
+                #(#map_discarded)*
+                __total
             }
         }
 

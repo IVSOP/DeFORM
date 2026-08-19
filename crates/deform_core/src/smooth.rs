@@ -42,6 +42,18 @@ pub trait Smooth<G>: Default + Send + Clone {
 
     /// Override the smoothing parameters. Used by `#[smooth(map)]` to inherit the parent's config.
     fn set_params(&mut self, params: SmoothParams);
+
+    /// Squared magnitude of the offsets currently being absorbed. Read right after
+    /// [`Smooth::on_rollback`] to see how far the world jumped.
+    fn correction_magnitude_sq(&self) -> f32 {
+        0.0
+    }
+
+    /// Cumulative count of offsets dropped for exceeding `max_offset` — corrections the
+    /// smoother gave up on, so the player saw a snap. Diff it across a rollback.
+    fn corrections_discarded(&self) -> u64 {
+        0
+    }
 }
 
 /// Trait linking a type to its derived smoother.
