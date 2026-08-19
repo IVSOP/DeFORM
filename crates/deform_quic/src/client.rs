@@ -792,6 +792,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         // Normally this filters nothing, since the caller has just advanced past that
         // tick, but the simulation does not advance while frozen at `max_ticks_ahead`.
         // NOTE: this may add 1 tick of delay to committing inputs!!!
+        // TODO: this is important in FOC mode as users could change their inputs last second to gain an advantage.
+        // However, in QUIC mode, we could allow the server to overwrite/merge inputs instead of having first-write-wins,
+        // which would take care of this issue.
         let pending: HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs> = self
             .inputs
             .iter()
@@ -807,9 +810,22 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             return Ok(());
         }
 
+        #[cfg(feature = "metrics")]
+        let newest = pending.keys().max().copied();
+
         let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(pending);
         let body = datagram::compress(wincode::serialize(&ix)?, Q::COMPRESSION)?;
         fragmentor.send(&body)?;
+
+        #[cfg(feature = "metrics")]
+        if let Some(newest) = newest
+            && let Some(entry) = self.inputs.get(&newest)
+        {
+            deform_metrics::plot!(
+                "input_to_commit",
+                entry.creation_time.elapsed().as_micros() as f64
+            );
+        }
 
         Ok(())
     }

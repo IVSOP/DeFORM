@@ -478,10 +478,13 @@ impl<F: DeformFocLogic> FocBackend<F> {
             data: ix.data,
         };
 
+        #[allow(unused)]
+        let max_tick = pending.keys().max();
+
         // Record when this batch (identified by its max tick) was sent, so the
         // inputs-account RTT probe can time when it lands.
         #[cfg(feature = "rtt-inputs")]
-        if let Some(&max_tick) = pending.keys().max() {
+        if let Some(&max_tick) = max_tick {
             if let Ok(mut times) = self.commit_times.lock() {
                 times.insert(max_tick, Instant::now());
                 // bound memory if the probe stalls (drop oldest)
@@ -495,6 +498,17 @@ impl<F: DeformFocLogic> FocBackend<F> {
         // Bounded channel: this awaits — backpressuring the sim loop — if the commit
         // task has fallen behind. A closed channel just means we're shutting down.
         let _ = self.commit_tx.send(sdk_ix).await;
+
+        #[cfg(feature = "metrics")]
+        if let Some(newest) = max_tick
+            && let Some(entry) = self.inputs.get(newest)
+        {
+            deform_metrics::plot!(
+                "input_to_commit",
+                entry.creation_time.elapsed().as_micros() as f64
+            );
+        }
+
         Ok(())
     }
     pub fn process_new_state(
