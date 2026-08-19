@@ -8,7 +8,7 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
+    ChannelInputs, DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
     DeformUserLogic, Pubkey, Smooth, TickInfo,
     accounts::lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
@@ -47,7 +47,7 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
     pub cancellation_token: CancellationToken,
-    pub set_inputs_receiver: mpsc::UnboundedReceiver<<Q::UserLogic as DeformUserLogic>::Inputs>,
+    pub set_inputs_receiver: mpsc::UnboundedReceiver<ChannelInputs<Q::UserLogic>>,
     pub backend_state: Arc<std::sync::Mutex<DeformSharedBackendState<Q::UserLogic>>>,
     // gets cloned into the backend_state, so we could tecnically use that
     // but I use a local copy instead so I don't have to lock mutexes a lot
@@ -159,7 +159,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         };
 
         let (set_inputs_sender, set_inputs_receiver) =
-            mpsc::unbounded_channel::<<Q::UserLogic as DeformUserLogic>::Inputs>();
+            mpsc::unbounded_channel::<ChannelInputs<Q::UserLogic>>();
 
         let backend_state = Arc::new(std::sync::Mutex::new(DeformSharedBackendState::<
             Q::UserLogic,
@@ -408,11 +408,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             DeformError::Connection("setup thread terminated unexpectedly".into())
         })??;
 
-        Ok(DeformClient {
+        Ok(DeformClient::new(
             set_inputs_sender,
             backend_state,
             cancellation_token,
-        })
+        ))
     }
 
     pub async fn tick_loop(
@@ -544,6 +544,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
+                        #[cfg(feature = "metrics")]
+                        let (new_inputs, _creation_time) =
+                            (new_inputs.inputs, new_inputs.creation_time);
+
                         // The engine can provide several samples within one tick. Merge them
                         // instead of keeping only the first, which silently dropped the rest.
                         // Safe to mutate in place: this entry is not sent until the tick closes.

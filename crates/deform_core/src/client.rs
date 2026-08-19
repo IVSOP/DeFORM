@@ -1,4 +1,6 @@
 use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(feature = "metrics")]
+use std::time::Instant;
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -11,9 +13,10 @@ use crate::{
 /// Currently, the client is completely agnostic to the backend.
 #[derive(Clone)]
 pub struct DeformClient<T: DeformUserLogic> {
-    /// Channel used to set inputs
+    /// Channel used to set inputs. Private so its type stays an implementation detail;
+    /// go through [`DeformClient::set_inputs`].
     // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send
-    pub set_inputs_sender: mpsc::UnboundedSender<T::Inputs>,
+    set_inputs_sender: mpsc::UnboundedSender<ChannelInputs<T>>,
     /// Game state to be read by the client, along with other useful info from the backend
     pub backend_state: Arc<Mutex<DeformSharedBackendState<T>>>,
     /// This has three uses:
@@ -46,7 +49,31 @@ pub struct Stats {
     pub ping_ms: f64,
 }
 
+/// Inputs plus when the game produced them.
+#[cfg(feature = "metrics")]
+pub struct StampedInputs<I> {
+    pub inputs: I,
+    pub creation_time: Instant,
+}
+
+#[cfg(not(feature = "metrics"))]
+pub type ChannelInputs<T> = <T as DeformUserLogic>::Inputs;
+#[cfg(feature = "metrics")]
+pub type ChannelInputs<T> = StampedInputs<<T as DeformUserLogic>::Inputs>;
+
 impl<T: DeformUserLogic> DeformClient<T> {
+    pub fn new(
+        set_inputs_sender: mpsc::UnboundedSender<ChannelInputs<T>>,
+        backend_state: Arc<Mutex<DeformSharedBackendState<T>>>,
+        cancellation_token: CancellationToken,
+    ) -> Self {
+        Self {
+            set_inputs_sender,
+            backend_state,
+            cancellation_token,
+        }
+    }
+
     /// Returns the latest state along with other useful information.
     /// To prevent unecessary cloning (and having to derive Clone), this is just a very thin
     /// wrapper of locking the mutex. You must drop it as soon as possible to avoid contention.
@@ -60,6 +87,13 @@ impl<T: DeformUserLogic> DeformClient<T> {
     }
 
     pub fn set_inputs(&self, inputs: T::Inputs) -> DeformResult {
+        // Stamped here, in the game's thread, so the delay includes the channel hop.
+        #[cfg(feature = "metrics")]
+        let inputs = StampedInputs {
+            inputs,
+            creation_time: Instant::now(),
+        };
+
         self.set_inputs_sender
             .send(inputs)
             .map_err(|_| DeformError::ChannelClosed)

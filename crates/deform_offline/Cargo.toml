@@ -18,4 +18,4 @@ better_tokio_select = { workspace = true }
 deform_metrics = { workspace = true, optional = true }
 
 [features]
-metrics = ["dep:deform_metrics"]
+metrics = ["dep:deform_metrics", "deform_core/metrics"]

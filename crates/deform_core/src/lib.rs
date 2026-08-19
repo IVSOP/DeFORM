@@ -12,8 +12,10 @@ pub mod error;
 pub mod game_program_client;
 pub mod smooth;
 
+#[cfg(all(feature = "client", feature = "metrics"))]
+pub use client::StampedInputs;
 #[cfg(feature = "client")]
-pub use client::{DeformClient, DeformSharedBackendState, Stats};
+pub use client::{ChannelInputs, DeformClient, DeformSharedBackendState, Stats};
 pub use error::{DeformError, DeformResult};
 pub use smooth::{NoopSmoother, Smooth, SmoothParams, Smoothable, SmoothableField};
 

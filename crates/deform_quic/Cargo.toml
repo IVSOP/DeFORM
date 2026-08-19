@@ -30,4 +30,4 @@ deform_metrics = { workspace = true, optional = true }
 zstd = { workspace = true }
 
 [features]
-metrics = ["dep:deform_metrics"]
+metrics = ["dep:deform_metrics", "deform_core/metrics"]

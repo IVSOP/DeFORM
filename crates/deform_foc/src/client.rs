@@ -10,7 +10,7 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
+    ChannelInputs, DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
     DeformUserLogic, Pubkey, Smooth, TickInfo,
     accounts::lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
@@ -61,7 +61,7 @@ pub struct FocBackend<F: DeformFocLogic> {
     pub rtt_micros: Arc<AtomicU64>,
 
     pub cancellation_token: CancellationToken,
-    pub set_inputs_receiver: mpsc::UnboundedReceiver<<F::UserLogic as DeformUserLogic>::Inputs>,
+    pub set_inputs_receiver: mpsc::UnboundedReceiver<ChannelInputs<F::UserLogic>>,
     pub backend_state: Arc<Mutex<DeformSharedBackendState<F::UserLogic>>>,
     pub user_logic: F::UserLogic,
 
@@ -227,6 +227,10 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
+                        #[cfg(feature = "metrics")]
+                        let (new_inputs, _creation_time) =
+                            (new_inputs.inputs, new_inputs.creation_time);
+
                         // The engine can provide several samples within one tick. Merge them
                         // instead of keeping only the first, which silently dropped the rest.
                         // Safe to mutate in place: this entry is not sent until the tick closes.

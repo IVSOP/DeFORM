@@ -16,7 +16,7 @@ default = ["rtt-getslot"]
 rtt-getslot = []
 rtt-ping = []
 rtt-inputs = []
-metrics = ["dep:deform_metrics"]
+metrics = ["dep:deform_metrics", "deform_core/metrics"]
 
 [dependencies]
 anyhow = { workspace = true }

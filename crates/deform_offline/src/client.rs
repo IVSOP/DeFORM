@@ -7,8 +7,8 @@ use std::{
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    DeformClient, DeformError, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
-    Smooth, TickInfo,
+    ChannelInputs, DeformClient, DeformError, DeformResult, DeformSharedBackendState,
+    DeformUserLogic, Pubkey, Smooth, TickInfo,
     accounts::lobby::{Lobby, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
@@ -31,7 +31,7 @@ pub(crate) struct OfflineBackend<T: DeformUserLogic> {
     // pub lobby: Pubkey,
     // pub lobby_id: u64,
     pub cancellation_token: CancellationToken,
-    pub set_inputs_receiver: mpsc::UnboundedReceiver<T::Inputs>,
+    pub set_inputs_receiver: mpsc::UnboundedReceiver<ChannelInputs<T>>,
     // where we write the state to be read by the game engine
     pub backend_state: Arc<std::sync::Mutex<DeformSharedBackendState<T>>>,
     pub bot_fn: fn(&T::GameState, &Pubkey, &T::Inputs) -> T::Inputs,
@@ -84,7 +84,8 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             LobbyState::Ongoing(ongoing) => (lobby.clone(), ongoing.tick_info.game_state.clone()),
         };
 
-        let (set_inputs_sender, set_inputs_receiver) = mpsc::unbounded_channel::<T::Inputs>();
+        let (set_inputs_sender, set_inputs_receiver) =
+            mpsc::unbounded_channel::<ChannelInputs<T>>();
         let backend_state = Arc::new(Mutex::new(DeformSharedBackendState::new_from_lobby(
             lobby.clone(),
         )?));
@@ -150,11 +151,11 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
             DeformError::Connection("setup thread terminated unexpectedly".into())
         })??;
 
-        Ok(DeformClient {
+        Ok(DeformClient::new(
             set_inputs_sender,
-            backend_state: backend_state_clone_2,
+            backend_state_clone_2,
             cancellation_token,
-        })
+        ))
     }
 
     pub async fn tick_loop(mut self) -> UserFacingResult<T> {
@@ -202,6 +203,10 @@ impl<T: DeformUserLogic> OfflineBackend<T> {
                     if !matches!(self.local_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
+                        #[cfg(feature = "metrics")]
+                        let (new_inputs, _creation_time) =
+                            (new_inputs.inputs, new_inputs.creation_time);
+
                         self.player_input = new_inputs;
                     }
                 }

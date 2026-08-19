@@ -132,7 +132,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
     };
 
     let (set_inputs_sender, set_inputs_receiver) =
-        mpsc::unbounded_channel::<<F::UserLogic as DeformUserLogic>::Inputs>();
+        mpsc::unbounded_channel::<deform_core::ChannelInputs<F::UserLogic>>();
     let backend_state = Arc::new(std::sync::Mutex::new(DeformSharedBackendState::<
         F::UserLogic,
     >::new_from_lobby(lobby.clone())?));
@@ -155,11 +155,8 @@ pub fn new_foc_client<F: DeformFocLogic>(
 
     let backend_state_clone = backend_state.clone();
 
-    let deform_client = DeformClient {
-        set_inputs_sender,
-        backend_state,
-        cancellation_token: cancellation_token.clone(),
-    };
+    let deform_client =
+        DeformClient::new(set_inputs_sender, backend_state, cancellation_token.clone());
     let deform_client_clone = deform_client.clone();
 
     let _rss_thread = thread::spawn(move || {
