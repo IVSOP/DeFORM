@@ -398,10 +398,13 @@ impl<F: DeformFocLogic> FocBackend<F> {
         #[cfg(feature = "metrics")]
         deform_metrics::plot!("advance_sim", new_tick as f64);
 
-        let new_state = self
-            .user_logic
-            .advance_frame(&current_info.game_state, &new_players_inputs)
-            .map_err(UserFacingError::User)?;
+        let new_state = {
+            #[cfg(feature = "metrics")]
+            let _span = deform_metrics::span!("sim_compute");
+            self.user_logic
+                .advance_frame(&current_info.game_state, &new_players_inputs)
+        }
+        .map_err(UserFacingError::User)?;
 
         let next_info = TickInfo {
             game_state: new_state,
