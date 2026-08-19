@@ -3,8 +3,8 @@
 //! # Layout
 //!
 //! One directory per run, under `DEFORM_METRICS_DIR` (default
-//! `./deform-metrics`), named `<backend>-<unix_seconds>-<pid>`. The pid keeps
-//! two clients on one machine from colliding.
+//! `./deform-metrics`), named `<unix_seconds>-<first 8 of the player pubkey>`. The
+//! pubkey keeps two clients on one machine from colliding.
 //!
 //! - `run.json` — what this run was: backend, player, lobby, tick rate, start time.
 //! - `samples.csv` — `t_us,tick,metric,value`, long format. Pivot it and plot.
@@ -78,12 +78,13 @@ pub fn start(run: RunInfo) {
 
     let parent = std::env::var("DEFORM_METRICS_DIR").unwrap_or_else(|_| "deform-metrics".into());
     let started_unix_us = now_micros();
-    let dir = Path::new(&parent).join(format!(
-        "{}-{}-{}",
-        run.backend,
-        started_unix_us / 1_000_000,
-        std::process::id()
-    ));
+    let player: String = run
+        .player
+        .chars()
+        .take(8)
+        .filter(|c| !c.is_whitespace())
+        .collect();
+    let dir = Path::new(&parent).join(format!("{}-{}", started_unix_us / 1_000_000, player));
 
     if let Err(e) = fs::create_dir_all(&dir) {
         eprintln!("deform_metrics: cannot create {}: {e}", dir.display());

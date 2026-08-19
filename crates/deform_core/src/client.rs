@@ -15,7 +15,7 @@ use crate::{
 pub struct DeformClient<T: DeformUserLogic> {
     /// Channel used to set inputs. Private so its type stays an implementation detail;
     /// go through [`DeformClient::set_inputs`].
-    // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send
+    // FIX: in the future, this should be changed to no longer be a channel; instead client can access the inputs directly, like I do for reading state. When that happens I thing Inputs no longer needs to be Send. But would that support multiple inputs per frame??? The client would need to be the one merging them
     set_inputs_sender: mpsc::UnboundedSender<ChannelInputs<T>>,
     /// Game state to be read by the client, along with other useful info from the backend
     pub backend_state: Arc<Mutex<DeformSharedBackendState<T>>>,

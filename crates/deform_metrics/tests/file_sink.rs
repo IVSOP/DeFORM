@@ -15,7 +15,7 @@ fn writes_a_run_directory() {
 
     deform_metrics::init(RunInfo {
         backend: "test",
-        player: "PLAYER".into(),
+        player: "CLi1od28M3eAGH54s7jsvvJXZJjoe6ELyuabiPvcwUym".into(),
         lobby_id: 7,
         tick_rate_micros: 16667,
         extra: vec![("scenario".into(), "smoke".into())],
@@ -38,9 +38,19 @@ fn writes_a_run_directory() {
         .expect("readable entry")
         .path();
 
+    let name = run_dir.file_name().unwrap().to_str().unwrap();
+    let (secs, player) = name.split_once('-').expect("<unix_seconds>-<player8>");
+    assert!(secs.parse::<u64>().is_ok(), "{name}");
+    assert_eq!(player, "CLi1od28");
+    assert!(!name.contains(' '), "{name}");
+
     let run: serde_json::Value =
         serde_json::from_slice(&fs::read(run_dir.join("run.json")).unwrap()).unwrap();
     assert_eq!(run["backend"], "test");
+    assert_eq!(
+        run["player"],
+        "CLi1od28M3eAGH54s7jsvvJXZJjoe6ELyuabiPvcwUym"
+    );
     assert_eq!(run["lobby_id"], 7);
     assert_eq!(run["extra"]["scenario"], "smoke");
 
