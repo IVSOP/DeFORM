@@ -36,7 +36,7 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub remote_lobby: Lobby<Q::UserLogic>,
     // these are the inputs from our own player, appended only by set_inputs().
     // FIX: this might not be necessary. We may be able to just store the latest inputs, then reuse the old ones from `info_per_tick`. I only did it this way because it was easier in my head
-    pub inputs: HashMap<u64, <Q::UserLogic as DeformUserLogic>::Inputs>,
+    pub inputs: HashMap<u64, ChannelInputs<Q::UserLogic>>,
 
     // pub rpc_client: Arc<RpcClient>,
     pub connection: quinn::Connection,
@@ -544,14 +544,15 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
-                        #[cfg(feature = "metrics")]
-                        let (new_inputs, _creation_time) =
-                            (new_inputs.inputs, new_inputs.creation_time);
-
                         // The engine can provide several samples within one tick. Merge them
                         // instead of keeping only the first, which silently dropped the rest.
                         // Safe to mutate in place: this entry is not sent until the tick closes.
                         match self.inputs.get_mut(&self.local_tick) {
+                            // Merging keeps the existing entry's creation_time, so a tick
+                            // reports its first sample: the one that waited longest.
+                            #[cfg(feature = "metrics")]
+                            Some(existing) => existing.inputs.merge(&new_inputs.inputs),
+                            #[cfg(not(feature = "metrics"))]
                             Some(existing) => existing.merge(&new_inputs),
                             None => {
                                 self.inputs.insert(self.local_tick, new_inputs);
@@ -738,6 +739,13 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             *inputs = if *player == self.player {
                 // for our own player: try to get from the map. else, copy previous value, pruning it
                 if let Some(provided_inputs) = self.inputs.get(&current_tick) {
+                    #[cfg(feature = "metrics")]
+                    deform_metrics::plot!(
+                        "local_input_delay",
+                        provided_inputs.creation_time.elapsed().as_micros() as f64
+                    );
+                    #[cfg(feature = "metrics")]
+                    let provided_inputs = &provided_inputs.inputs;
                     provided_inputs.clone()
                 } else {
                     inputs.predict()
@@ -788,7 +796,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             .inputs
             .iter()
             .filter(|(tick, _)| **tick < self.local_tick)
-            .map(|(tick, inputs)| (*tick, inputs.clone()))
+            .map(|(tick, inputs)| {
+                #[cfg(feature = "metrics")]
+                let inputs = &inputs.inputs;
+                (*tick, inputs.clone())
+            })
             .collect();
 
         if pending.is_empty() {

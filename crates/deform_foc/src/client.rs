@@ -38,7 +38,7 @@ pub struct FocBackend<F: DeformFocLogic> {
     pub info_per_tick: HashMap<u64, TickInfo<F::UserLogic>>,
     pub remote_lobby: Lobby<F::UserLogic>,
     /// Inputs from our own player, keyed by the tick they apply to.
-    pub inputs: HashMap<u64, <F::UserLogic as DeformUserLogic>::Inputs>,
+    pub inputs: HashMap<u64, ChannelInputs<F::UserLogic>>,
 
     pub player: Pubkey,
     pub lobby_pda: Pubkey,
@@ -227,14 +227,15 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_))
                         && let Some(new_inputs) = new_inputs
                     {
-                        #[cfg(feature = "metrics")]
-                        let (new_inputs, _creation_time) =
-                            (new_inputs.inputs, new_inputs.creation_time);
-
                         // The engine can provide several samples within one tick. Merge them
                         // instead of keeping only the first, which silently dropped the rest.
                         // Safe to mutate in place: this entry is not sent until the tick closes.
                         match self.inputs.get_mut(&self.local_tick) {
+                            // Merging keeps the existing entry's creation_time, so a tick
+                            // reports its first sample: the one that waited longest.
+                            #[cfg(feature = "metrics")]
+                            Some(existing) => existing.inputs.merge(&new_inputs.inputs),
+                            #[cfg(not(feature = "metrics"))]
                             Some(existing) => existing.merge(&new_inputs),
                             None => {
                                 self.inputs.insert(self.local_tick, new_inputs);
@@ -386,6 +387,13 @@ impl<F: DeformFocLogic> FocBackend<F> {
         for (player, inputs) in new_players_inputs.iter_mut() {
             *inputs = if *player == self.player {
                 if let Some(provided_inputs) = self.inputs.get(&current_tick) {
+                    #[cfg(feature = "metrics")]
+                    deform_metrics::plot!(
+                        "local_input_delay",
+                        provided_inputs.creation_time.elapsed().as_micros() as f64
+                    );
+                    #[cfg(feature = "metrics")]
+                    let provided_inputs = &provided_inputs.inputs;
                     provided_inputs.clone()
                 } else {
                     inputs.predict()
@@ -434,7 +442,11 @@ impl<F: DeformFocLogic> FocBackend<F> {
             .inputs
             .iter()
             .filter(|(tick, _)| **tick < self.local_tick)
-            .map(|(tick, inputs)| (*tick, inputs.clone()))
+            .map(|(tick, inputs)| {
+                #[cfg(feature = "metrics")]
+                let inputs = &inputs.inputs;
+                (*tick, inputs.clone())
+            })
             .collect();
 
         if pending.is_empty() {
