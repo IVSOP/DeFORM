@@ -55,6 +55,10 @@ pub struct CurrentInputs(pub ShooterInputs);
 #[derive(Resource)]
 pub struct LocalPlayer(pub Pubkey);
 
+/// When on, our inputs come from the offline bot instead of the keyboard and mouse.
+#[derive(Resource, Default)]
+pub struct BotEnabled(pub bool);
+
 #[derive(Resource)]
 #[repr(transparent)]
 pub struct MultiplayerClient(pub DeformClient<ShooterGame>);
@@ -106,6 +110,7 @@ pub fn run_game(wallet: Option<PathBuf>) {
         .init_resource::<NetStats>()
         .init_resource::<CameraOrientation>()
         .init_resource::<CurrentInputs>()
+        .init_resource::<BotEnabled>()
         .init_resource::<PlayerEntities>()
         .init_resource::<ProjectileEntities>()
         .add_systems(Startup, setup)
@@ -413,8 +418,9 @@ pub fn mouse_look(
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
     scene: Res<SceneAssets>,
     mut transforms: Query<&mut Transform>,
+    bot: Res<BotEnabled>,
 ) -> Result<()> {
-    if cursor.grab_mode == CursorGrabMode::None {
+    if bot.0 || cursor.grab_mode == CursorGrabMode::None {
         motion.clear();
         return Ok(());
     }
@@ -442,7 +448,18 @@ pub fn update_inputs(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     cursor: Single<&CursorOptions, With<PrimaryWindow>>,
-) {
+    bot: Res<BotEnabled>,
+    client: Res<MultiplayerClient>,
+    local: Res<LocalPlayer>,
+) -> Result<()> {
+    if bot.0 {
+        let state = client.0.read_state()?;
+        if let LobbyState::Ongoing(ongoing) = &state.lobby.state {
+            current.0 = shooter_bot(&ongoing.tick_info.game_state, &local.0, &current.0);
+        }
+        return Ok(());
+    }
+
     let grabbed = cursor.grab_mode != CursorGrabMode::None;
 
     let mut move_x: i8 = 0;
@@ -470,6 +487,7 @@ pub fn update_inputs(
         grabbed && (mouse.pressed(MouseButton::Left) || mouse.just_pressed(MouseButton::Left));
     current.0.jump = grabbed && (keys.pressed(KeyCode::Space) || keys.just_pressed(KeyCode::Space));
     current.0.set_look(orientation.yaw, orientation.pitch);
+    Ok(())
 }
 
 /// The frame's closing sample. Unconditional: a tick that receives nothing has its

@@ -45,6 +45,16 @@ pub struct PlayerAnimation {
     pub frame_count: usize,
 }
 
+/// Which pubkey is "me", so the bot can be driven from our own point of view.
+#[derive(Resource)]
+#[repr(transparent)]
+pub struct LocalPlayer(pub Pubkey);
+
+/// When on, our inputs come from the offline bot instead of the keyboard.
+#[derive(Resource, Default)]
+#[repr(transparent)]
+pub struct BotEnabled(pub bool);
+
 #[derive(Resource)]
 #[repr(transparent)]
 pub struct MultiplayerClient(pub DeformClient<SoccerGame>);
@@ -125,6 +135,7 @@ pub fn run_game(wallet: Option<PathBuf>) {
         .add_plugins(EguiToastsPlugin::default())
         .init_state::<AppState>()
         .init_resource::<NetStats>()
+        .init_resource::<BotEnabled>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -368,6 +379,7 @@ pub fn start_offline(
         cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
+    commands.insert_resource(LocalPlayer(main_player));
 
     player_entities.0.clear();
     for (pk, entity) in [(main_player, slots.left), (bot_player, slots.right)] {
@@ -427,6 +439,7 @@ pub fn start_online(
         cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
+    commands.insert_resource(LocalPlayer(main_player));
 
     player_entities.0.clear();
 
@@ -494,6 +507,9 @@ pub fn start_online_foc(
         cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
+    commands.insert_resource(LocalPlayer(Pubkey::new_from_array(
+        keypair.pubkey().to_bytes(),
+    )));
 
     player_entities.0.clear();
 
@@ -516,7 +532,23 @@ pub fn start_online_foc(
 
 // ─── Input / update systems ─────────────────────────────────────
 
-pub fn update_inputs(inputs: Single<&mut SoccerInputs>, kb_input: Res<ButtonInput<KeyCode>>) {
+pub fn update_inputs(
+    inputs: Single<&mut SoccerInputs>,
+    kb_input: Res<ButtonInput<KeyCode>>,
+    bot: Res<BotEnabled>,
+    client: Res<MultiplayerClient>,
+    local: Res<LocalPlayer>,
+) -> Result<()> {
+    if bot.0 {
+        let mut inputs = inputs.into_inner();
+        let state = client.0.read_state()?;
+        if let LobbyState::Ongoing(ongoing) = &state.lobby.state {
+            let bot_inputs = soccer_bot(&ongoing.tick_info.game_state, &local.0, &inputs);
+            *inputs = bot_inputs;
+        }
+        return Ok(());
+    }
+
     let mut horizontal: i8 = 0;
     if kb_input.pressed(KeyCode::KeyD) || kb_input.pressed(KeyCode::ArrowRight) {
         horizontal += 100;
@@ -532,6 +564,7 @@ pub fn update_inputs(inputs: Single<&mut SoccerInputs>, kb_input: Res<ButtonInpu
     let mut inputs = inputs.into_inner();
     inputs.horizontal = horizontal;
     inputs.jump = jump;
+    Ok(())
 }
 
 pub fn send_inputs(client: ResMut<MultiplayerClient>, inputs: Single<&SoccerInputs>) -> Result<()> {

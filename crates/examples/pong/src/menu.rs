@@ -29,7 +29,7 @@ use solana_sdk::{
 use crate::client::start_online_foc;
 use crate::{
     client::{
-        AppState, MultiplayerClient, NETWORK_PRESETS, NetStats, PaddleSlots, Player,
+        AppState, BotEnabled, MultiplayerClient, NETWORK_PRESETS, NetStats, PaddleSlots, Player,
         PlayerEntities, scan_json_files, start_offline, start_online,
     },
     send_and_confirm_tx,
@@ -60,6 +60,7 @@ pub struct MenuState {
 
 pub fn egui_in_menu(
     mut contexts: EguiContexts,
+    mut bot: ResMut<BotEnabled>,
     mut next_state: ResMut<NextState<AppState>>,
     mut menu: ResMut<MenuState>,
     mut toasts: ResMut<EguiToasts>,
@@ -72,6 +73,8 @@ pub fn egui_in_menu(
     let ctx = contexts.ctx_mut()?.clone();
     egui::Window::new("Pong").show(&ctx, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.checkbox(&mut bot.0, "bot");
+            ui.add_space(6.0);
             ui.heading("Pong");
             ui.add_space(10.0);
 
@@ -549,6 +552,7 @@ pub fn egui_in_menu(
 
 pub fn egui_in_game(
     mut contexts: EguiContexts,
+    mut bot: ResMut<BotEnabled>,
     client: Res<MultiplayerClient>,
     net_stats: Res<NetStats>,
 ) -> Result {
@@ -590,6 +594,8 @@ pub fn egui_in_game(
     };
 
     egui::Window::new("Scoreboard").show(contexts.ctx_mut()?, |ui| {
+        ui.checkbox(&mut bot.0, "bot");
+        ui.separator();
         ui.label(format!("Player 1 (Left): {}", creator_score));
         ui.label(format!("Player 2 (Right): {}", right_player_score));
         ui.separator();

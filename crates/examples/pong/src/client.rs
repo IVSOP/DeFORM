@@ -45,6 +45,7 @@ pub fn run_game(wallet: Option<PathBuf>) {
         .add_plugins(EguiToastsPlugin::default())
         .init_state::<AppState>()
         .init_resource::<NetStats>()
+        .init_resource::<BotEnabled>()
         .add_systems(Startup, setup)
         .add_systems(
             Update,
@@ -75,6 +76,16 @@ pub struct Ball;
 #[derive(Component)]
 #[repr(transparent)]
 pub struct Player(pub Pubkey);
+
+/// Which pubkey is "me", so the bot can be driven from our own point of view.
+#[derive(Resource)]
+#[repr(transparent)]
+pub struct LocalPlayer(pub Pubkey);
+
+/// When on, our inputs come from the offline bot instead of the keyboard.
+#[derive(Resource, Default)]
+#[repr(transparent)]
+pub struct BotEnabled(pub bool);
 
 #[derive(Resource)]
 #[repr(transparent)]
@@ -278,7 +289,7 @@ pub fn start_offline(
     let lobby = Lobby {
         metadata: LobbyMetadata {
             id: 0,
-            creator: Pubkey::default(),
+            creator: main_player,
             network: Network::Web2,
             bump: 0,
         },
@@ -296,6 +307,7 @@ pub fn start_offline(
         cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
+    commands.insert_resource(LocalPlayer(main_player));
 
     // Creator (main_player) is always on the left
     player_entities.0.clear();
@@ -357,6 +369,7 @@ pub fn start_online(
         cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
+    commands.insert_resource(LocalPlayer(main_player));
 
     player_entities.0.clear();
 
@@ -426,6 +439,9 @@ pub fn start_online_foc(
         cancellation_token,
     )?;
     commands.insert_resource(MultiplayerClient(client));
+    commands.insert_resource(LocalPlayer(Pubkey::new_from_array(
+        keypair.pubkey().to_bytes(),
+    )));
 
     player_entities.0.clear();
 
@@ -446,7 +462,24 @@ pub fn start_online_foc(
     Ok(())
 }
 
-pub fn update_inputs(inputs: Single<&mut PongInputs>, kb_input: Res<ButtonInput<KeyCode>>) {
+pub fn update_inputs(
+    inputs: Single<&mut PongInputs>,
+    kb_input: Res<ButtonInput<KeyCode>>,
+    bot: Res<BotEnabled>,
+    client: Res<MultiplayerClient>,
+    local: Res<LocalPlayer>,
+) -> Result<()> {
+    let mut inputs = inputs.into_inner();
+
+    if bot.0 {
+        let state = client.0.read_state()?;
+        if let LobbyState::Ongoing(ongoing) = &state.lobby.state {
+            let bot_inputs = pong_bot(&ongoing.tick_info.game_state, &local.0, &inputs);
+            *inputs = bot_inputs;
+        }
+        return Ok(());
+    }
+
     let mut new_direction: i8 = 0;
     if kb_input.pressed(KeyCode::KeyW) {
         new_direction += 100;
@@ -454,7 +487,8 @@ pub fn update_inputs(inputs: Single<&mut PongInputs>, kb_input: Res<ButtonInput<
     if kb_input.pressed(KeyCode::KeyS) {
         new_direction -= 100;
     }
-    inputs.into_inner().direction = new_direction;
+    inputs.direction = new_direction;
+    Ok(())
 }
 
 pub fn send_inputs(client: ResMut<MultiplayerClient>, inputs: Single<&PongInputs>) -> Result<()> {

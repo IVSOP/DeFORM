@@ -643,9 +643,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         // adding 10% worked well in the past
         // rtt_micros += 0.1 * rtt_micros;
 
-        // Full RTT is required, not RTT/2: remote_tick is already RTT/2 old when received,
-        // so inputs travel another RTT/2 before reaching the server, totalling one full RTT
-        // of server advancement since the observed state was sent. +1 absorbs commit-timer jitter.
+        // WARN: RTT here instead of RTT/2 is correct!
+        // we are basing ourselves on the remote tick
+        // while we take RTT/2 to send our inputs to the server, the new state also takes RTT/2 to get back to us!
+        // obviously this assumes the connection is roughly symmetrical
         self.min_ticks_ahead =
             (rtt_micros / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64).ceil() as u64
                 + 1;

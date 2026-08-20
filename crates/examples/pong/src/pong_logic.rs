@@ -318,14 +318,24 @@ pub use server_logic::PongFocLogic;
 pub use server_logic::{NoAuth, PongQuicLogic};
 
 pub fn pong_bot(state: &PongGameState, bot: &Pubkey, prev_inputs: &PongInputs) -> PongInputs {
-    if state.ball_vel.x <= 0.0 {
+    // Creator is always the left paddle, same as `advance_frame`.
+    let is_left = *bot == state.creator;
+    let paddle_x = if is_left { -PADDLE_X } else { PADDLE_X };
+
+    // Idle while the ball is heading away from us.
+    let incoming = if is_left {
+        state.ball_vel.x < 0.0
+    } else {
+        state.ball_vel.x > 0.0
+    };
+    if !incoming {
         return PongInputs::default();
     }
 
     let paddle_y = state.players.get(bot).map(|p| p.paddle_y).unwrap_or(0.0);
 
     // Predict where the ball will be when it reaches our paddle
-    let t = (PADDLE_X - state.ball_pos.x) / state.ball_vel.x;
+    let t = (paddle_x - state.ball_pos.x) / state.ball_vel.x;
     // Small deterministic offset so the bot doesn't always return the ball dead-center
     let offset = (state.ball_vel.y * 100.0).sin() * PADDLE_HALF_H * 0.4;
     let target_y = state.ball_pos.y + state.ball_vel.y * t + offset;

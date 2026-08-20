@@ -27,8 +27,8 @@ use solana_sdk::{
 
 use crate::{
     client::{
-        AppState, LocalPlayer, MultiplayerClient, NETWORK_PRESETS, NetStats, scan_json_files,
-        start_offline, start_online,
+        AppState, BotEnabled, LocalPlayer, MultiplayerClient, NETWORK_PRESETS, NetStats,
+        scan_json_files, start_offline, start_online,
     },
     send_and_confirm_tx,
 };
@@ -58,6 +58,7 @@ pub struct MenuState {
 
 pub fn egui_in_menu(
     mut contexts: EguiContexts,
+    mut bot: ResMut<BotEnabled>,
     mut next_state: ResMut<NextState<AppState>>,
     mut menu: ResMut<MenuState>,
     mut toasts: ResMut<EguiToasts>,
@@ -67,6 +68,8 @@ pub fn egui_in_menu(
     let ctx = contexts.ctx_mut()?.clone();
     egui::Window::new("Shooter").show(&ctx, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.checkbox(&mut bot.0, "bot");
+            ui.add_space(6.0);
             ui.heading("Shooter");
             ui.label(
                 "WASD to move, Space to jump, mouse to look, M1 to fire. Esc frees the cursor.",
@@ -390,6 +393,7 @@ fn visual_tick_micros(monitor_q: &Query<&Monitor>) -> u64 {
 
 pub fn egui_in_game(
     mut contexts: EguiContexts,
+    mut bot: ResMut<BotEnabled>,
     client: Res<MultiplayerClient>,
     local: Res<LocalPlayer>,
     net_stats: Res<NetStats>,
@@ -407,6 +411,8 @@ pub fn egui_in_game(
     let ctx = contexts.ctx_mut()?;
 
     egui::Window::new("Scoreboard").show(ctx, |ui| {
+        ui.checkbox(&mut bot.0, "bot");
+        ui.separator();
         for (pk, score) in &players {
             let you = if *pk == local.0 { " (you)" } else { "" };
             ui.label(format!("{}…{you}: {score}", &pk.to_string()[..8]));

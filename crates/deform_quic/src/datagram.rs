@@ -64,16 +64,16 @@ impl<Q: DeformQuicLogic> DatagramFragmentor<Q> {
         self.next_message_id += 1;
 
         let datagrams = Self::fragment(message_id, body, max_datagram_size)?;
-        // Fragmenting is meant to be rare. If this is printing every tick, the state
-        // encoding is too big for the path and that is the problem to fix, not this.
-        if datagrams.len() > 1 {
-            tracing::warn!(
-                body_bytes = body.len(),
-                fragments = datagrams.len(),
-                max_datagram_size,
-                "message did not fit one datagram"
-            );
-        }
+        // // Fragmenting is meant to be rare. If this is printing every tick, the state
+        // // encoding is too big for the path and that is the problem to fix, not this.
+        // if datagrams.len() > 1 {
+        //     tracing::warn!(
+        //         body_bytes = body.len(),
+        //         fragments = datagrams.len(),
+        //         max_datagram_size,
+        //         "message did not fit one datagram"
+        //     );
+        // }
 
         for datagram in datagrams {
             self.connection
