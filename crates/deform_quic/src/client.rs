@@ -56,8 +56,8 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub smoother: <Q::UserLogic as DeformUserLogic>::Smoother,
     pub visual_tick_micros: u64,
     pub last_sim_instant: Instant,
-    /// Duration of a tick. May be dilated.
-    pub tick_duration: Duration,
+    /// Measured duration of the last sim interval. Denominator for visual `t`.
+    pub last_tick_interval: Duration,
     /// Absolute deadline for the next simulation tick. Anchored to the previous deadline
     /// (not to `Instant::now()`), so time spent doing per-tick work and scheduling jitter
     /// do not accumulate as drift relative to the server's fixed-rate clock.
@@ -371,7 +371,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 smoother,
                                 visual_tick_micros,
                                 last_sim_instant: Instant::now(),
-                                tick_duration: Duration::from_micros(
+                                last_tick_interval: Duration::from_micros(
                                     <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
                                 ),
                                 // real value is set at the top of `tick_loop`
@@ -456,13 +456,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                     self.advance_local_simulation()?
                                     // finish is handled when server tells us, not here
                                 }
+                                // A burst has no interval to measure; hold the base rate.
+                                self.last_tick_interval = Duration::from_micros(
+                                    <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
+                                );
                                 self.last_sim_instant = Instant::now();
                             } else {
                                 let max_target_tick = ongoing.tick + self.max_ticks_ahead;
                                 if current_tick < max_target_tick {
                                     self.advance_local_simulation()?;
                                     // finish is handled when server tells us, not here
-                                    self.last_sim_instant = Instant::now();
+                                    self.close_sim_interval();
                                 }
                             }
 
@@ -483,8 +487,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     // Advance the anchored deadline by the (variable) dilated interval rather than
                     // sleeping from `now`, so the work done in this arm does not accumulate as drift.
                     // Dilation is preserved: `compute_dilated_tick_interval` still decides the step.
-                    self.tick_duration = self.compute_dilated_tick_interval(remote_tick);
-                    self.next_tick_deadline += self.tick_duration;
+                    let dilated = self.compute_dilated_tick_interval(remote_tick);
+                    self.next_tick_deadline += dilated;
                     // If a stall pushed us a full tick past the deadline, resync to `now` so we
                     // don't fire a burst of back-to-back catch-up ticks (manual MissedTickBehavior::Delay).
                     let now = tokio::time::Instant::now();
@@ -503,8 +507,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         self.info_per_tick.get(&self.local_tick),
                     ) {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                        let tick_duration = self.tick_duration.as_micros() as f32;
-                        let t = (elapsed / tick_duration).clamp(0.0, 1.0);
+                        let t = (elapsed / self.last_tick_interval.as_micros() as f32)
+                            .clamp(0.0, 1.0);
                         #[cfg(feature = "metrics")]
                         deform_metrics::plot!("visual_t", t as f64);
 
@@ -667,6 +671,17 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         }
 
         Ok(())
+    }
+
+    /// Measure the interval that just closed and re-anchor `last_sim_instant`.
+    /// Clamped to dilation's own range so a frozen tick can't stall interpolation.
+    fn close_sim_interval(&mut self) {
+        let now = Instant::now();
+        let base = Duration::from_micros(<Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
+        self.last_tick_interval = now
+            .duration_since(self.last_sim_instant)
+            .clamp(base / 2, base * 4);
+        self.last_sim_instant = now;
     }
 
     /// Change the time between frames according to how much we are ahead of the simulation.

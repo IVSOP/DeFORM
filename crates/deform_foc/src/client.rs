@@ -72,8 +72,8 @@ pub struct FocBackend<F: DeformFocLogic> {
     /// inclusion-latency floor folded into the ticks-ahead target.
     pub slot_time_micros: u64,
     pub last_sim_instant: Instant,
-    /// Duration of a tick. May be dilated.
-    pub tick_duration: Duration,
+    /// Measured duration of the last sim interval. Denominator for visual `t`.
+    pub last_tick_interval: Duration,
     /// Absolute deadline for the next simulation tick, anchored to the previous
     /// deadline so per-tick work and jitter don't accumulate as drift.
     pub next_tick_deadline: tokio::time::Instant,
@@ -132,12 +132,14 @@ impl<F: DeformFocLogic> FocBackend<F> {
                                 for _ in 0..delta_ticks {
                                     self.advance_local_simulation()?
                                 }
+                                // A burst has no interval to measure; hold the base rate.
+                                self.last_tick_interval = Duration::from_micros(tick_micros);
                                 self.last_sim_instant = Instant::now();
                             } else {
                                 let max_target_tick = ongoing.tick + self.max_ticks_ahead;
                                 if current_tick < max_target_tick {
                                     self.advance_local_simulation()?;
-                                    self.last_sim_instant = Instant::now();
+                                    self.close_sim_interval();
                                 }
                             }
 
@@ -168,8 +170,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         last_commit_at = tokio::time::Instant::now();
                     }
 
-                    self.tick_duration = self.compute_dilated_tick_interval(remote_tick);
-                    self.next_tick_deadline += self.tick_duration;
+                    let dilated = self.compute_dilated_tick_interval(remote_tick);
+                    self.next_tick_deadline += dilated;
                     let now = tokio::time::Instant::now();
                     if self.next_tick_deadline < now {
                         self.next_tick_deadline = now;
@@ -186,8 +188,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         self.info_per_tick.get(&self.local_tick),
                     ) {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                        let tick_duration = self.tick_duration.as_micros() as f32;
-                        let t = (elapsed / tick_duration).clamp(0.0, 1.0);
+                        let t = (elapsed / self.last_tick_interval.as_micros() as f32)
+                            .clamp(0.0, 1.0);
                         #[cfg(feature = "metrics")]
                         deform_metrics::plot!("visual_t", t as f64);
 
@@ -328,6 +330,17 @@ impl<F: DeformFocLogic> FocBackend<F> {
         }
 
         Ok(())
+    }
+
+    /// Measure the interval that just closed and re-anchor `last_sim_instant`.
+    /// Clamped to dilation's own range so a frozen tick can't stall interpolation.
+    fn close_sim_interval(&mut self) {
+        let now = Instant::now();
+        let base = Duration::from_micros(<F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
+        self.last_tick_interval = now
+            .duration_since(self.last_sim_instant)
+            .clamp(base / 2, base * 4);
+        self.last_sim_instant = now;
     }
 
     fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
