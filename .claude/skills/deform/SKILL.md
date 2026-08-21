@@ -1,6 +1,6 @@
 ---
 name: deform
-description: Build realtime multiplayer games with DeFORM (Decentralized Fully-Onchain Realtime Multiplayer) — rollback netcode in Rust with pluggable backends (offline, QUIC web2 server, fully-on-chain via MagicBlock ephemeral rollups) and a Solana/Anchor program template. Use when defining game state/inputs/logic types, wiring a DeformClient, writing a QUIC server, configuring interpolation, or deploying the on-chain game program.
+description: Build realtime multiplayer games with DeFORM (Deterministic Fully-Onchain Realtime Multiplayer) — rollback netcode in Rust with pluggable backends (offline, QUIC web2 server, fully-on-chain via MagicBlock ephemeral rollups) and a Solana/Anchor program template. Use when defining game state/inputs/logic types, wiring a DeformClient, writing a QUIC server, configuring interpolation, or deploying the on-chain game program.
 ---
 
 # DeFORM
