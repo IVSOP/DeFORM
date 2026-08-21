@@ -60,6 +60,11 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     /// server compiled with different values will fail to deserialize each other.
     const COMPRESSION: Option<i32> = Some(10);
 
+    /// Maximum time-dilation rate, as a fraction of the base tick rate.
+    /// 0.05 means the client runs at most 5% faster (to build its lead over the
+    /// server) or 5% slower (to shed excess lead).
+    const TIME_DILATION: f32 = 0.05;
+
     /// Maximum number of incomplete messages that we buffer
     const MAX_MESSAGE_BUFFER: u8 = 32;
 

@@ -43,6 +43,11 @@ const _: () = assert!(
 pub trait DeformFocLogic: Clone + Sized + Debug + Send + Sync + 'static {
     type UserLogic: DeformUserLogic;
     type ProgramClient: GameProgramClient<Self::UserLogic>;
+
+    /// Maximum time-dilation rate, as a fraction of the base tick rate.
+    /// 0.05 means the client runs at most 5% faster (to build its lead over the
+    /// chain) or 5% slower (to shed excess lead).
+    const TIME_DILATION: f32 = 0.05;
 }
 
 /// How often the latency probe samples RTT and the backend re-derives how far ahead

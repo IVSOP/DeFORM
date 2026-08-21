@@ -13,7 +13,6 @@ use deform_core::{
     accounts::lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
     error::{UserFacingError, UserFacingResult},
 };
-use glam::FloatExt;
 use quinn::crypto::rustls::QuicClientConfig;
 use tokio::{
     sync::{mpsc, oneshot},
@@ -64,7 +63,8 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub next_tick_deadline: tokio::time::Instant,
 
     pub avg_rtt: Duration,
-    /// If ticks are below this, simulation is fast forwarded. Also used to compute time dilation.
+    /// Ticks-ahead target derived from RTT. Below it the simulation ticks slightly
+    /// faster, above it slightly slower (see `compute_dilated_tick_interval`).
     pub min_ticks_ahead: u64,
     /// If ticks are above this, simulation is stopped; hard limit. It is always at least 5.
     pub max_ticks_ahead: u64,
@@ -443,17 +443,13 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         LobbyState::NotStarted(_) => break,
                         LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
-                            let min_target_tick = remote_tick + self.min_ticks_ahead;
-                            let current_tick = self.local_tick;
-
-                            if current_tick < min_target_tick {
-                                let delta_ticks = min_target_tick - current_tick;
-                                // #[cfg(feature = "log")]
-                                // tracing::warn!(
-                                //     "Ticking to catch up to remote slot - from {current_tick} to {min_target_tick}"
-                                // );
-                                for _ in 0..delta_ticks {
-                                    self.advance_local_simulation()?
+                            if self.local_tick == remote_tick {
+                                // No lead at all (match start, or right after a
+                                // fast-forward snap): every input would arrive late, so
+                                // snap the full lead back in one burst instead of
+                                // rebuilding it over seconds at TIME_DILATION speed.
+                                for _ in 0..self.min_ticks_ahead {
+                                    self.advance_local_simulation()?;
                                     // finish is handled when server tells us, not here
                                 }
                                 // A burst has no interval to measure; hold the base rate.
@@ -462,8 +458,13 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 );
                                 self.last_sim_instant = Instant::now();
                             } else {
-                                let max_target_tick = ongoing.tick + self.max_ticks_ahead;
-                                if current_tick < max_target_tick {
+                                // Every smaller correction, catching up or shedding
+                                // lead, is handled by time dilation (see
+                                // `compute_dilated_tick_interval`). The hard stop at
+                                // `max_ticks_ahead` stays as an edge-case safety net
+                                // for a stalled server.
+                                let max_target_tick = remote_tick + self.max_ticks_ahead;
+                                if self.local_tick < max_target_tick {
                                     self.advance_local_simulation()?;
                                     // finish is handled when server tells us, not here
                                     self.close_sim_interval();
@@ -684,41 +685,33 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         self.last_sim_instant = now;
     }
 
-    /// Change the time between frames according to how much we are ahead of the simulation.
-    /// The goal of this is to make it so that if we are way ahead of the server (server lagged etc),
-    /// then we start to slow down to let it catch up.
+    /// Change the time between ticks according to how far ahead of the server we are.
     ///
-    /// We have a `min_ticks_ahead` target that is computed based on the latency to the server. A % is taken using this value. For example, if the target is 10, and we are exactly 10 ticks ahead of the server, the % is 0. If we are 20 ticks ahead of the server, the % is 10. So, the percentage varies according to how much we expect to be ahead of the server.
+    /// Invariant: the client runs juuust far enough ahead that inputs reach the
+    /// server right in time to be used. `min_ticks_ahead` (derived from RTT) is that
+    /// target. Below it we tick `TIME_DILATION` faster to rebuild the lead; above it
+    /// we tick that much slower to shed it. This also covers missed server messages:
+    /// a frozen `remote_tick` only ever costs us the same gentle slowdown, never a
+    /// stall (until the `max_ticks_ahead` hard cap in the tick arm).
     fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
         #[cfg(feature = "metrics")]
         let _span = deform_metrics::span!("compute_dilated_tick_interval");
-        let base_sleep_ms: f32 =
-            <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32 / 1000.0;
-        let mid_sleep_ms: f32 = base_sleep_ms * 1.5;
-        let max_sleep_ms: f32 = base_sleep_ms * 4.0;
+        let base_micros = <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
 
         let ticks_ahead = self.local_tick.saturating_sub(remote_tick);
 
-        let ahead_over_min = ticks_ahead.saturating_sub(self.min_ticks_ahead) as f32;
-        let window = (self.max_ticks_ahead.saturating_sub(self.min_ticks_ahead)).max(1) as f32;
-        let ahead_percent = (ahead_over_min / window).max(0.0);
-
-        let sleep_ms = if ahead_percent <= 0.30 {
-            base_sleep_ms
-        } else if ahead_percent <= 0.60 {
-            let t = ((ahead_percent - 0.30) / 0.30).clamp(0.0, 1.0);
-            base_sleep_ms.lerp(mid_sleep_ms, t)
+        let micros = if ticks_ahead < self.min_ticks_ahead {
+            base_micros * (1.0 - Q::TIME_DILATION)
+        } else if ticks_ahead > self.min_ticks_ahead {
+            base_micros * (1.0 + Q::TIME_DILATION)
         } else {
-            let t = ((ahead_percent - 0.60) / 0.40).clamp(0.0, 1.0);
-            mid_sleep_ms.lerp(max_sleep_ms, t)
+            base_micros
         };
 
-        let micros = (sleep_ms * 1000.0) as u64;
-
         #[cfg(feature = "metrics")]
-        deform_metrics::plot!("sleep_time", sleep_ms as f64);
+        deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
 
-        Duration::from_micros(micros)
+        Duration::from_micros(micros as u64)
     }
 
     pub fn advance_local_simulation(&mut self) -> UserFacingResult<Q::UserLogic> {
