@@ -11,8 +11,9 @@ pub(crate) mod r#mainnet_region;
 pub(crate) mod r#network;
 pub(crate) mod r#player_score;
 pub(crate) mod r#validator_network;
+pub(crate) mod r#web2_server;
 
 pub use self::{
     r#devnet_region::*, r#local_region::*, r#mainnet_region::*, r#network::*, r#player_score::*,
-    r#validator_network::*,
+    r#validator_network::*, r#web2_server::*,
 };

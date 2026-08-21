@@ -189,6 +189,25 @@ impl LocalRegion {
     borsh(use_discriminant = true)
 )]
 #[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
+#[derive(Clone, Debug, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
+pub enum Web2Server {
+    /// The QUIC server from the localhost docker stack.
+    #[default]
+    Localhost = 0,
+    /// The deployed server. Its address is deliberately not in this repo, so it is
+    /// resolved at runtime -- see each example's `web2_server_addr`. The lobby only
+    /// records *which* server the match is on, exactly like `ValidatorNetwork` does
+    /// for the ephemeral rollup.
+    Remote = 1,
+}
+
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[cfg_attr(
+    feature = "anchor",
+    derive(anchor_lang::AnchorSerialize, anchor_lang::AnchorDeserialize),
+    borsh(use_discriminant = true)
+)]
+#[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
 #[derive(Clone, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 #[repr(u8)]
 pub enum ValidatorNetwork {
@@ -233,15 +252,22 @@ impl Default for ValidatorNetwork {
     borsh(use_discriminant = true)
 )]
 #[cfg_attr(feature = "egui-probe", derive(egui_probe::EguiProbe), egui_probe(tags combobox))]
-#[derive(Clone, Debug, Default, Eq, PartialEq, SchemaRead, SchemaWrite)]
+#[derive(Clone, Debug, Eq, PartialEq, SchemaRead, SchemaWrite)]
 #[repr(u8)]
 pub enum Network {
     // TODO: allow user to pass in a custom region??
     // adding a <N> here will make things messy in the lobby
     // maybe have it in DeformUserLogic or something
-    #[default]
-    Web2 = 0,
+    Web2(Web2Server) = 0,
     FullyOnChain(ValidatorNetwork) = 1,
+}
+
+// Same reason as `ValidatorNetwork` below: no unit variant left to put `#[default]`
+// on, and egui-probe needs a payload to construct when the picker switches variant.
+impl Default for Network {
+    fn default() -> Self {
+        Network::Web2(Web2Server::Localhost)
+    }
 }
 
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]

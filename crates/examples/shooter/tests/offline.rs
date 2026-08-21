@@ -7,7 +7,8 @@ use std::{collections::BTreeMap, time::Duration};
 use deform_core::{
     Pubkey,
     accounts::lobby::{
-        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, not_started::LobbyNotStarted,
+        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, Web2Server,
+        not_started::LobbyNotStarted,
     },
 };
 use deform_offline::new_offline_client;
@@ -27,7 +28,7 @@ fn offline_backend_runs_the_sim() {
         metadata: LobbyMetadata {
             id: 0,
             creator: me,
-            network: Network::Web2,
+            network: Network::Web2(Web2Server::Localhost),
             bump: 0,
         },
         state: LobbyState::NotStarted(LobbyNotStarted { player_status }),
@@ -97,7 +98,7 @@ fn visual_state_does_not_jump_backwards() {
         metadata: LobbyMetadata {
             id: 0,
             creator: me,
-            network: Network::Web2,
+            network: Network::Web2(Web2Server::Localhost),
             bump: 0,
         },
         state: LobbyState::NotStarted(LobbyNotStarted { player_status }),

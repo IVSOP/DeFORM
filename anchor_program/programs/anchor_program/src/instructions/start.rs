@@ -69,7 +69,7 @@ pub fn handler<'info>(ctx: Context<'info, StartGameAccounts<'info>>, id: u64) ->
     // lobby must be in web3 mode, and extract the iner network
     let web3_network = match lobby.metadata.network.clone() {
         Network::FullyOnChain(network) => network,
-        Network::Web2 => Err(GameProgramError::NotFullyOnChain)?,
+        Network::Web2(_) => Err(GameProgramError::NotFullyOnChain)?,
     };
     // every account (lobby + all inputs) is pinned to this validator so tick/crank
     // txs on the ER can touch them together.

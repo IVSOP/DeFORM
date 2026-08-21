@@ -45,7 +45,9 @@ enum CliCommand {
     Serve {
         #[arg(long, default_value = "4433", env = "PORT")]
         port: u16,
-        #[arg(long, default_value = "http://127.0.0.1:8899", env = "RPC_URL")]
+        // The server always talks to the devnet base layer; the localhost docker
+        // stack overrides this with RPC_URL=http://surfpool:8899.
+        #[arg(long, default_value = "https://api.devnet.solana.com", env = "RPC_URL")]
         rpc_url: String,
         #[arg(
             long,

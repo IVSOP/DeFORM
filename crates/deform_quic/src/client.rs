@@ -507,8 +507,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         self.info_per_tick.get(&self.local_tick),
                     ) {
                         let elapsed = self.last_sim_instant.elapsed().as_micros() as f32;
-                        let t = (elapsed / self.last_tick_interval.as_micros() as f32)
-                            .clamp(0.0, 1.0);
+                        let t =
+                            (elapsed / self.last_tick_interval.as_micros() as f32).clamp(0.0, 1.0);
                         #[cfg(feature = "metrics")]
                         deform_metrics::plot!("visual_t", t as f64);
 

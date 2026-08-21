@@ -7,10 +7,10 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
-use crate::generated::types::ValidatorNetwork;
+use crate::generated::types::{ValidatorNetwork, Web2Server};
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
 pub enum Network {
-    Web2,
+    Web2(Web2Server),
     FullyOnChain(ValidatorNetwork),
 }

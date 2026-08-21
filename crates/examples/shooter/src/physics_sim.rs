@@ -477,7 +477,9 @@ impl SimWorld {
 mod tests {
     use deform_core::{
         DeformUserLogic,
-        accounts::lobby::{LobbyMetadata, Network, PlayerStatus, not_started::LobbyNotStarted},
+        accounts::lobby::{
+            LobbyMetadata, Network, PlayerStatus, Web2Server, not_started::LobbyNotStarted,
+        },
     };
 
     use super::*;
@@ -491,7 +493,7 @@ mod tests {
         let metadata = LobbyMetadata {
             id: 0,
             creator: a,
-            network: Network::Web2,
+            network: Network::Web2(Web2Server::Localhost),
             bump: 0,
         };
         let not_started = LobbyNotStarted { player_status };

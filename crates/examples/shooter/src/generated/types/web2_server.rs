@@ -6,11 +6,21 @@
 //!
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use num_derive::FromPrimitive;
 
-use crate::generated::types::{ValidatorNetwork, Web2Server};
-
-#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
-pub enum Network {
-    Web2(Web2Server),
-    FullyOnChain(ValidatorNetwork),
+#[derive(
+    BorshSerialize,
+    BorshDeserialize,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Copy,
+    PartialOrd,
+    Hash,
+    FromPrimitive,
+)]
+pub enum Web2Server {
+    Localhost,
+    Remote,
 }

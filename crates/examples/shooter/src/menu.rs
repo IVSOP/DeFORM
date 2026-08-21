@@ -28,7 +28,7 @@ use solana_sdk::{
 use crate::{
     client::{
         AppState, BotEnabled, LocalPlayer, MultiplayerClient, NETWORK_PRESETS, NetStats,
-        scan_json_files, start_offline, start_online,
+        scan_json_files, start_offline, start_online, web2_server_addr,
     },
     send_and_confirm_tx,
 };
@@ -52,7 +52,6 @@ pub struct MenuState {
 
     pub lobby_data: Option<Lobby<ShooterGame>>,
 
-    pub server_addr: String,
     pub skip_cert_verify: bool,
 }
 
@@ -190,7 +189,7 @@ pub fn egui_in_menu(
             Probe::new(&mut menu.network)
                 .with_header("Network")
                 .show(ui);
-            if !matches!(menu.network, Network::Web2) {
+            if !matches!(menu.network, Network::Web2(_)) {
                 ui.colored_label(
                     egui::Color32::YELLOW,
                     "FullyOnChain lobbies can't be played by this example — \
@@ -285,7 +284,7 @@ pub fn egui_in_menu(
                         }
 
                         let args = match menu.network.clone() {
-                            Network::Web2 => ReadyArgs::Web2 {
+                            Network::Web2(_) => ReadyArgs::Web2 {
                                 user,
                                 lobby: lobby_pda,
                                 id: lobby_id,
@@ -337,22 +336,37 @@ pub fn egui_in_menu(
 
                 // --- Server / Play Online ---
                 ui.heading("Server");
-                ui.horizontal(|ui| {
-                    ui.label("Address:");
-                    ui.add(egui::TextEdit::singleline(&mut menu.server_addr).desired_width(200.0));
-                });
+                // *Which* server is part of the lobby's `Network` (the picker above);
+                // this only shows where that resolves to on this machine.
+                if let Network::Web2(server) = &menu.network {
+                    let addr = web2_server_addr(server);
+                    if addr.is_empty() {
+                        ui.label("Address: unknown; run deploy.sh");
+                    } else {
+                        ui.label(format!("Address: {addr}"));
+                    }
+                }
                 ui.checkbox(&mut menu.skip_cert_verify, "Skip TLS verification (dev)");
 
                 if menu.lobby_data.is_some() {
                     if ui.button("Play Online (web2)").clicked() {
                         let lobby = menu.lobby_data.clone().unwrap();
                         let visual_tick_micros = visual_tick_micros(&monitor_q);
+                        // Resolved here so the arm below stays a plain call: the lobby says
+                        // *which* server, this machine says where that one lives.
+                        let web2_addr = match &menu.network {
+                            Network::Web2(server) => web2_server_addr(server),
+                            Network::FullyOnChain(_) => String::new(),
+                        };
                         let result = match menu.network.clone() {
-                            Network::Web2 => start_online(
+                            Network::Web2(_) if web2_addr.is_empty() => {
+                                Err(anyhow!("remote server address unknown; run deploy.sh").into())
+                            }
+                            Network::Web2(_) => start_online(
                                 &mut commands,
                                 lobby,
                                 user,
-                                &menu.server_addr,
+                                &web2_addr,
                                 menu.skip_cert_verify,
                                 visual_tick_micros,
                             ),

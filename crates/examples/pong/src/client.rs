@@ -14,7 +14,7 @@ use deform_core::DeformUserLogic;
 use deform_core::{
     DeformClient, Pubkey,
     accounts::lobby::{
-        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, ValidatorNetwork,
+        Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, ValidatorNetwork, Web2Server,
         not_started::LobbyNotStarted,
     },
 };
@@ -121,6 +121,32 @@ pub struct NetworkPreset {
     /// to `rpc_url` (the base layer). Locally this is the docker-compose ER port 7799;
     /// on devnet/mainnet it's MagicBlock's public router.
     pub er_rpc_url: &'static str,
+}
+
+/// The QUIC server address a `Network::Web2` lobby plays on.
+///
+/// The lobby records only *which* server (`Web2Server`), the same way it records a
+/// region for the ephemeral rollup -- resolving that to an address is a client-side
+/// concern, so the deployed host never has to live in this repo:
+///
+/// 1. `$DEFORM_SERVER_ADDR`
+/// 2. `server.addr` in the working directory
+/// 3. `server.addr` next to this crate -- written by `deploy.sh` on every deploy
+///
+/// All three are gitignored. Empty means the remote is not configured on this
+/// machine, which the menu reports rather than silently dialing localhost.
+pub fn web2_server_addr(server: &Web2Server) -> String {
+    match server {
+        Web2Server::Localhost => "127.0.0.1:4433".to_string(),
+        Web2Server::Remote => std::env::var("DEFORM_SERVER_ADDR")
+            .ok()
+            .or_else(|| std::fs::read_to_string("server.addr").ok())
+            .or_else(|| {
+                std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/server.addr")).ok()
+            })
+            .map(|addr| addr.trim().to_string())
+            .unwrap_or_default(),
+    }
 }
 
 pub const NETWORK_PRESETS: &[NetworkPreset] = &[
@@ -239,7 +265,6 @@ pub fn setup(
         lobby_id: 0,
         lobby_id_text: "0".into(),
         lobby_data: None,
-        server_addr: "127.0.0.1:4433".into(),
         skip_cert_verify: true,
     });
 
@@ -290,7 +315,7 @@ pub fn start_offline(
         metadata: LobbyMetadata {
             id: 0,
             creator: main_player,
-            network: Network::Web2,
+            network: Network::Web2(Web2Server::Localhost),
             bump: 0,
         },
         state: LobbyState::NotStarted(LobbyNotStarted { player_status }),

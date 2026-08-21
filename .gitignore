@@ -1,2 +1,10 @@
 target/
 deform-metrics/
+
+# Per-example deploy scripts (test server credentials/hosts) and the bundles
+# package.sh stages for them.
+crates/examples/*/deploy.sh
+crates/examples/*/dist/
+# Address of the deployed Web2 server, written by deploy.sh and read by the client
+# (see `preset_server_addr`). Deliberately never in git.
+server.addr

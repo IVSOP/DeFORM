@@ -30,7 +30,7 @@ use crate::client::start_online_foc;
 use crate::{
     client::{
         AppState, BotEnabled, MultiplayerClient, NETWORK_PRESETS, NetStats, Player, PlayerEntities,
-        PlayerSlots, scan_json_files, start_offline, start_online,
+        PlayerSlots, scan_json_files, start_offline, start_online, web2_server_addr,
     },
     send_and_confirm_tx,
 };
@@ -53,7 +53,6 @@ pub struct MenuState {
 
     pub lobby_data: Option<Lobby<SoccerGame>>,
 
-    pub server_addr: String,
     pub skip_cert_verify: bool,
 }
 
@@ -285,7 +284,7 @@ pub fn egui_in_menu(
                         }
 
                         let args = match menu.network.clone() {
-                            Network::Web2 => ReadyArgs::Web2 {
+                            Network::Web2(_) => ReadyArgs::Web2 {
                                 user,
                                 lobby: lobby_pda,
                                 id: lobby_id,
@@ -453,15 +452,21 @@ pub fn egui_in_menu(
 
                 // --- Server / Play Online ---
                 ui.heading("Server");
-                ui.horizontal(|ui| {
-                    ui.label("Address:");
-                    ui.add(egui::TextEdit::singleline(&mut menu.server_addr).desired_width(200.0));
-                });
+                // *Which* server is part of the lobby's `Network` (the picker above);
+                // this only shows where that resolves to on this machine.
+                if let Network::Web2(server) = &menu.network {
+                    let addr = web2_server_addr(server);
+                    if addr.is_empty() {
+                        ui.label("Address: unknown; run deploy.sh");
+                    } else {
+                        ui.label(format!("Address: {addr}"));
+                    }
+                }
                 ui.checkbox(&mut menu.skip_cert_verify, "Skip TLS verification (dev)");
 
                 if menu.lobby_data.is_some() {
                     let play_label = match menu.network {
-                        Network::Web2 => "Play Online (web2)",
+                        Network::Web2(_) => "Play Online (web2)",
                         Network::FullyOnChain(_) => "Play Online (FoC)",
                     };
                     if ui.button(play_label).clicked() {
@@ -472,12 +477,21 @@ pub fn egui_in_menu(
                             .max()
                             .map(|mhz| 1_000_000_000 / mhz as u64)
                             .unwrap_or(SoccerGame::TICK_RATE_MICROS);
+                        // Resolved here so the arm below stays a plain call: the lobby says
+                        // *which* server, this machine says where that one lives.
+                        let web2_addr = match &menu.network {
+                            Network::Web2(server) => web2_server_addr(server),
+                            Network::FullyOnChain(_) => String::new(),
+                        };
                         let result = match menu.network.clone() {
-                            Network::Web2 => start_online(
+                            Network::Web2(_) if web2_addr.is_empty() => {
+                                Err(anyhow!("remote server address unknown; run deploy.sh").into())
+                            }
+                            Network::Web2(_) => start_online(
                                 &mut commands,
                                 lobby,
                                 user,
-                                &menu.server_addr,
+                                &web2_addr,
                                 menu.skip_cert_verify,
                                 &mut player_entities,
                                 &player_slots,

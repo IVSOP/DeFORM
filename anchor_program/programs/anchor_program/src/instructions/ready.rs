@@ -54,7 +54,7 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
     // set ready
     *player_status = PlayerStatus::Ready;
 
-    if lobby.metadata.network != Network::Web2 {
+    if !matches!(lobby.metadata.network, Network::Web2(_)) {
         // player inputs account
         let inputs_info = ctx
             .accounts

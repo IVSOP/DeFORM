@@ -6,7 +6,7 @@ use deform_core::{
         inputs::InputsAccount,
         lobby::{
             DevnetRegion, Lobby, LobbyFinished, LobbyMetadata, LobbyState, LocalRegion,
-            MainnetRegion, Network, ValidatorNetwork, not_started::LobbyNotStarted,
+            MainnetRegion, Network, ValidatorNetwork, Web2Server, not_started::LobbyNotStarted,
         },
     },
     game_program_client::{GameProgramClient, ReadyArgs},
@@ -271,7 +271,7 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
 impl From<Network> for crate::generated::types::Network {
     fn from(network: Network) -> Self {
         match network {
-            Network::Web2 => Self::Web2,
+            Network::Web2(s) => Self::Web2(s.into()),
             Network::FullyOnChain(v) => Self::FullyOnChain(v.into()),
         }
     }
@@ -283,6 +283,15 @@ impl From<ValidatorNetwork> for crate::generated::types::ValidatorNetwork {
             ValidatorNetwork::Mainnet(r) => Self::Mainnet(r.into()),
             ValidatorNetwork::Devnet(r) => Self::Devnet(r.into()),
             ValidatorNetwork::Localhost(r) => Self::Localhost(r.into()),
+        }
+    }
+}
+
+impl From<Web2Server> for crate::generated::types::Web2Server {
+    fn from(server: Web2Server) -> Self {
+        match server {
+            Web2Server::Localhost => Self::Localhost,
+            Web2Server::Remote => Self::Remote,
         }
     }
 }

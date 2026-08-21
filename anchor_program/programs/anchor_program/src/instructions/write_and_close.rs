@@ -30,7 +30,7 @@ pub fn handler(
 
     let lobby_account = deser_and_check_lobby(&lobby_info, id, *ctx.program_id)?;
 
-    if !matches!(lobby_account.metadata.network, Network::Web2) {
+    if !matches!(lobby_account.metadata.network, Network::Web2(_)) {
         Err(GameProgramError::NotWeb2)?;
     }
 
