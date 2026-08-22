@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use better_tokio_select::tokio_select;
 use deform_core::{DeformError, DeformUserLogic, Pubkey, error::UserFacingResult};
@@ -10,11 +10,11 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    DeformQuicLogic, ReliableMessage, UnreliableServerInstruction, datagram,
-    datagram::{DatagramDefragmentor, DatagramFragmentor},
+    DeformQuicLogic, ReliableMessage, UnreliableServerInstruction, UnreliableServerResponsePacket,
+    datagram::{self, DatagramDefragmentor, DatagramFragmentor},
     server::{
         DeformQuicServer,
-        matches::{InternalServerResponse, MatchMessage},
+        matches::{InternalServerBroadcast, MatchMessage},
     },
 };
 
@@ -25,7 +25,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
         match_sender: mpsc::Sender<MatchMessage<Q::UserLogic>>,
         connection: Connection,
         control_send: &mut quinn::SendStream,
-        mut state_receiver: broadcast::Receiver<InternalServerResponse<Q>>,
+        mut state_receiver: broadcast::Receiver<Arc<InternalServerBroadcast<Q>>>,
     ) -> UserFacingResult<Q::UserLogic> {
         match_sender
             .send(MatchMessage::PlayerJoined { pubkey })
@@ -39,13 +39,14 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
         loop {
             tokio_select!(match .. {
-                .. if let internal_response = state_receiver.recv() => {
-                    match internal_response {
-                        Ok(internal_response) => {
+                .. if let internal_broadcast = state_receiver.recv() => {
+                    match internal_broadcast {
+                        Ok(internal_broadcast) => {
                             let finished = Self::forward_to_client(
+                                pubkey,
                                 &connection,
                                 control_send,
-                                internal_response,
+                                &internal_broadcast,
                                 &mut fragmentor,
                             )
                             .await?;
@@ -101,18 +102,36 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
     /// Forwards both reliable and unreliable messages to the client, also checking if the match has finished (maybe move that out of here???)
     async fn forward_to_client(
+        pubkey: Pubkey,
         connection: &Connection,
         control_send: &mut quinn::SendStream,
-        internal_response: InternalServerResponse<Q>,
+        internal_broadcast: &InternalServerBroadcast<Q>,
         fragmentor: &mut DatagramFragmentor<Q>,
     ) -> UserFacingResult<Q::UserLogic, bool> {
         let mut finished = false;
 
-        match internal_response {
-            InternalServerResponse::SendDatagram(msg) => {
-                fragmentor.send(&msg.0)?;
+        match internal_broadcast {
+            InternalServerBroadcast::SendDatagrams {
+                serialized_compressed_response,
+                player_inputs_buffers_len,
+            } => {
+                let player_input_buffer_len = match player_inputs_buffers_len.get(&pubkey) {
+                    Some(player_input_buffer_len) => *player_input_buffer_len,
+                    // TODO: error out instead?
+                    None => 0,
+                };
+
+                let packet = UnreliableServerResponsePacket {
+                    unreliable_server_response: serialized_compressed_response.clone(),
+                    player_input_buffer_len,
+                };
+
+                let message_bytes = wincode::serialize(&packet)
+                    .map_err(|e| DeformError::Serialize(e.to_string()))?;
+
+                fragmentor.send(&message_bytes)?;
             }
-            InternalServerResponse::SendReliableMessage(msg) => {
+            InternalServerBroadcast::SendReliableMessage(msg) => {
                 msg.write(control_send).await?;
 
                 match msg {

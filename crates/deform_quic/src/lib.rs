@@ -61,9 +61,9 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     const COMPRESSION: Option<i32> = Some(10);
 
     /// Maximum time-dilation rate, as a fraction of the base tick rate.
-    /// 0.05 means the client runs at most 5% faster (to build its lead over the
-    /// server) or 5% slower (to shed excess lead).
-    const TIME_DILATION: f32 = 0.05;
+    /// 0.10 means the client runs at most 10% faster (to rebuild lead) or 10%
+    /// slower (to shed excess lead). Correction is proportional to the error.
+    const TIME_DILATION: f32 = 0.10;
 
     /// Maximum number of incomplete messages that we buffer
     const MAX_MESSAGE_BUFFER: u8 = 32;
@@ -188,11 +188,27 @@ pub enum UnreliableServerInstruction<I: DeformInputs> {
     BatchSetInputs(HashMap<u64, I>),
 }
 
-// FIX: change to Bytes that quinn uses?? or at least change to Arc??
-/// An [`UnreliableServerResponse`] serialized into bytes. NOTE: may be compressed.
+/// Type actually sent over the wire.
+///
+/// This is a bit messy but hear me out:
+/// - [`UnreliableServerResponse`] will contain a [`LobbyState`] which can get quite big
+/// - It needs to be both serialized and compressed
+/// - Doing this for every single client would get slow fast
+///
+/// So, I decided to abstract the data that is common to all clients like this.
+/// This way serialization and compression of the lobby only happens once.
+#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
+pub struct UnreliableServerResponsePacket {
+    // FIX: change to Bytes that quinn uses??
+    pub unreliable_server_response: CompressedSerializedUnreliableServerResponse,
+    /// Tells the user how many inputs are currently in its input buffer
+    pub player_input_buffer_len: u8,
+}
+
+/// This name is cursed but it is what it is
 #[repr(transparent)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct SerializedUnreliableServerResponse(pub Vec<u8>);
+pub struct CompressedSerializedUnreliableServerResponse(pub Vec<u8>);
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
 pub struct UnreliableServerResponse<T: DeformUserLogic> {

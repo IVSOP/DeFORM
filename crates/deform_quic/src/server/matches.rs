@@ -21,11 +21,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
-use wincode::{SchemaRead, SchemaWrite};
 
 use crate::{
-    DeformQuicLogic, ReliableMessage, SerializedUnreliableServerResponse, UnreliableServerResponse,
-    datagram::compress, server::DeformQuicServer,
+    CompressedSerializedUnreliableServerResponse, DeformQuicLogic, ReliableMessage,
+    UnreliableServerResponse, datagram::compress, server::DeformQuicServer,
 };
 
 // TODO: put this in the PlayerInputsAccount
@@ -41,10 +40,22 @@ pub enum MatchMessage<U: DeformUserLogic> {
     },
 }
 
-/// Messages sent internally from the match task to each client-handling task
-#[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub enum InternalServerResponse<Q: DeformQuicLogic> {
-    SendDatagram(SerializedUnreliableServerResponse),
+/// Messages sent internally from the match task to EVERY client-handling task (broadcast)
+// FIX: this is all just very cursed
+// I wanted to have the lobby be pre-compressed and serialized, which I think has to be done otherwise it gets too expensive
+// but this erases the types completely. I need to change it to a transparent struct
+// then I also use Arc<InternalServerBroadcast> but this doesn't end up helping much as I always need an owned Vec...
+#[derive(Clone, Debug)]
+pub enum InternalServerBroadcast<Q: DeformQuicLogic> {
+    /// This looks a bit cursed but we are using a broadcast which then needs to send per-client data.
+    /// The datagram also has shared data so we can avoid reserializing and recompressing for every client.
+    /// This is why this struct is usually sent with an Arc in the broadcast channels!
+    ///
+    /// Also see [`UnreliableServerResponsePacket`]
+    SendDatagrams {
+        serialized_compressed_response: CompressedSerializedUnreliableServerResponse,
+        player_inputs_buffers_len: HashMap<Pubkey, u8>,
+    },
     SendReliableMessage(ReliableMessage<Q>),
 }
 
@@ -64,7 +75,7 @@ pub enum MatchInfo<T: DeformQuicLogic> {
 #[derive(Clone)]
 pub struct Match<Q: DeformQuicLogic> {
     /// subscribe() this to read messages produced by the match task
-    pub state_sender: broadcast::Sender<InternalServerResponse<Q>>,
+    pub state_sender: broadcast::Sender<Arc<InternalServerBroadcast<Q>>>,
     /// use this to send messages to the match task
     pub match_sender: mpsc::Sender<MatchMessage<Q::UserLogic>>,
 
@@ -87,7 +98,7 @@ pub async fn match_loop<Q: DeformQuicLogic>(
     lobby_metadata: LobbyMetadata,
     not_started: LobbyNotStarted,
 
-    state_sender: broadcast::Sender<InternalServerResponse<Q>>,
+    state_sender: broadcast::Sender<Arc<InternalServerBroadcast<Q>>>,
 
     mut match_receiver: mpsc::Receiver<MatchMessage<Q::UserLogic>>,
 ) -> UserFacingResult<Q::UserLogic> {
@@ -202,6 +213,13 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         _ => unreachable!(),
     };
 
+    let mut player_inputs_buffers_len: HashMap<Pubkey, u8> =
+        HashMap::with_capacity(players_data.len());
+    // ensure every client gets the initial broadcasts even if they don't send any inputs
+    for player in players_data.keys() {
+        player_inputs_buffers_len.insert(*player, 0);
+    }
+
     loop {
         tokio_select!(match .. {
             .. if let _ = tick_timer.tick() => {
@@ -223,6 +241,9 @@ pub async fn match_loop<Q: DeformQuicLogic>(
 
                     // remove old inputs, including from current tick since they have already been copied
                     player_inputs.retain(|k, _| *k > current_tick);
+
+                    player_inputs_buffers_len
+                        .insert(*player, player_inputs.len().min(u8::MAX as usize) as u8);
                 }
 
                 match ongoing
@@ -254,9 +275,11 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                 if let Ok(serialized_message) = wincode::serialize(&message)
                     && let Ok(body) = compress(serialized_message, Q::COMPRESSION)
                 {
-                    let _ = state_sender.send(InternalServerResponse::SendDatagram(
-                        SerializedUnreliableServerResponse(body),
-                    ));
+                    let _ = state_sender.send(Arc::new(InternalServerBroadcast::SendDatagrams {
+                        serialized_compressed_response:
+                            CompressedSerializedUnreliableServerResponse(body),
+                        player_inputs_buffers_len: player_inputs_buffers_len.clone(),
+                    }));
                 }
 
                 if ongoing.tick_info.game_state.has_ended() {
@@ -316,9 +339,9 @@ pub async fn match_loop<Q: DeformQuicLogic>(
         )
         .await?;
 
-    let _ = state_sender.send(InternalServerResponse::SendReliableMessage(
+    let _ = state_sender.send(Arc::new(InternalServerBroadcast::SendReliableMessage(
         ReliableMessage::Finish(lobby.clone()),
-    ));
+    )));
     info!(lobby_id, "Match finished successfully");
 
     server.matches.write().await.remove(&lobby.metadata.id);

@@ -32,7 +32,7 @@ use crate::{
     DeformQuicLogic, ReliableMessage,
     server::{
         auth_config::{AuthConfig, build_tls_config},
-        matches::{InternalServerResponse, Match, MatchConfig, MatchInfo, MatchMessage},
+        matches::{InternalServerBroadcast, Match, MatchConfig, MatchInfo, MatchMessage},
     },
 };
 
@@ -383,7 +383,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 ReliableMessage::<Q>::Authorized.write(send_stream).await?;
 
                 let (state_sender, state_receiver) =
-                    broadcast::channel::<InternalServerResponse<Q>>(64);
+                    broadcast::channel::<Arc<InternalServerBroadcast<Q>>>(64);
                 let (match_sender, match_receiver) =
                     mpsc::channel::<MatchMessage<Q::UserLogic>>(256);
 
@@ -447,8 +447,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                 .await
                 {
                     error!(lobby_id, "Match ended with error: {e}");
-                    let _ = error_sender.send(InternalServerResponse::SendReliableMessage(
-                        ReliableMessage::Error(e),
+                    let _ = error_sender.send(Arc::new(
+                        InternalServerBroadcast::SendReliableMessage(ReliableMessage::Error(e)),
                     ));
                 }
             });

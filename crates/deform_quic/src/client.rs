@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     ALPN_PROTOCOL, DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
-    UnreliableServerResponse, UserIdentification, datagram,
+    UnreliableServerResponse, UnreliableServerResponsePacket, UserIdentification, datagram,
     datagram::{DatagramDefragmentor, DatagramFragmentor},
 };
 
@@ -569,11 +569,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 }
 
                 // instead of triggering every time a datagram is received, this waits for an entire message to be collected first
-                .. if let body = defragmentor.recv() => {
+                .. if let message = defragmentor.recv() => {
                     // One unusable datagram is not worth ending the match over. A
                     // connection error is critical and must exit.
-                    let body = match body {
-                        Ok(body) => body,
+                    let message = match message {
+                        Ok(message) => message,
                         Err(e @ DeformError::Connection(_)) => Err(e)?,
                         Err(e) => {
                             tracing::warn!("discarding datagram: {e}");
@@ -582,8 +582,29 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     };
 
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
-                        let body = datagram::decompress(body, Q::COMPRESSION)?;
-                        self.process_server_update(&body, &mut tick_sleep).await?;
+                        let packet: UnreliableServerResponsePacket = wincode::deserialize(&message)
+                            .map_err(|e| {
+                                DeformError::Deserialize(
+                                    "error deserializing packet: ".to_string() + &e.to_string(),
+                                )
+                            })?;
+
+                        let decompressed_unreliable_server_response = datagram::decompress(
+                            packet.unreliable_server_response.0,
+                            Q::COMPRESSION,
+                        )?;
+                        let unreliable_server_response: UnreliableServerResponse<Q::UserLogic> =
+                            wincode::deserialize(&decompressed_unreliable_server_response)
+                                .map_err(|e| {
+                                    DeformError::Deserialize(
+                                        "error deserializing packet: ".to_string() + &e.to_string(),
+                                    )
+                                })?;
+                        self.process_server_update(
+                            unreliable_server_response.lobby_state,
+                            &mut tick_sleep,
+                        )
+                        .await?;
                     }
                 }
 
@@ -685,28 +706,31 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         self.last_sim_instant = now;
     }
 
-    /// Change the time between ticks according to how far ahead of the server we are.
-    ///
-    /// Invariant: the client runs juuust far enough ahead that inputs reach the
-    /// server right in time to be used. `min_ticks_ahead` (derived from RTT) is that
-    /// target. Below it we tick `TIME_DILATION` faster to rebuild the lead; above it
-    /// we tick that much slower to shed it. This also covers missed server messages:
-    /// a frozen `remote_tick` only ever costs us the same gentle slowdown, never a
-    /// stall (until the `max_ticks_ahead` hard cap in the tick arm).
+    /// Proportional time dilation: tick interval scales with how far off-target
+    /// the lead is, clamped to ±`TIME_DILATION`. A ±1 tick dead zone avoids
+    /// chasing noise. Positive error (behind target) → shorter interval (faster);
+    /// negative error (ahead of target) → longer interval (slower).
     fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
         #[cfg(feature = "metrics")]
         let _span = deform_metrics::span!("compute_dilated_tick_interval");
         let base_micros = <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
 
-        let ticks_ahead = self.local_tick.saturating_sub(remote_tick);
+        let ticks_ahead = self.local_tick.saturating_sub(remote_tick) as f32;
+        let target = self.min_ticks_ahead as f32;
+        let error = target - ticks_ahead;
 
-        let micros = if ticks_ahead < self.min_ticks_ahead {
-            base_micros * (1.0 - Q::TIME_DILATION)
-        } else if ticks_ahead > self.min_ticks_ahead {
-            base_micros * (1.0 + Q::TIME_DILATION)
+        let k = Q::TIME_DILATION / target.max(1.0);
+        let dilation = if error > 0.0 {
+            // Behind target — speed up immediately, no dead zone.
+            (error * k).min(Q::TIME_DILATION)
+        } else if error < -1.0 {
+            // Ahead by more than 1 tick — slow down proportionally.
+            (error * k).max(-Q::TIME_DILATION)
         } else {
-            base_micros
+            0.0
         };
+
+        let micros = base_micros * (1.0 - dilation);
 
         #[cfg(feature = "metrics")]
         deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
@@ -846,16 +870,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
     pub async fn process_server_update(
         &mut self,
-        bytes: &[u8],
+        new_remote_state: LobbyState<Q::UserLogic>,
         tick_sleep: &mut Pin<Box<Sleep>>,
     ) -> UserFacingResult<Q::UserLogic> {
         #[cfg(feature = "metrics")]
         let _span = deform_metrics::span!("process_server_update");
-
-        let UnreliableServerResponse {
-            lobby_state: new_remote_state,
-        }: UnreliableServerResponse<Q::UserLogic> =
-            wincode::deserialize(bytes).map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
         // inneficient since the variant is checked below, but this is only used in dev
         #[cfg(feature = "metrics")]

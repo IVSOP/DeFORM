@@ -348,26 +348,29 @@ impl<F: DeformFocLogic> FocBackend<F> {
         self.last_sim_instant = now;
     }
 
-    /// Change the time between ticks according to how far ahead of the chain we are.
-    ///
-    /// Invariant: the client runs juuust far enough ahead that inputs reach the
-    /// chain right in time to be used. `min_ticks_ahead` (derived from RTT) is that
-    /// target. Below it we tick `TIME_DILATION` faster to rebuild the lead; above it
-    /// we tick that much slower to shed it. This also covers missed state updates:
-    /// a frozen `remote_tick` only ever costs us the same gentle slowdown, never a
-    /// stall (until the `max_ticks_ahead` hard cap in the tick arm).
+    /// Proportional time dilation: tick interval scales with how far off-target
+    /// the lead is, clamped to ±`TIME_DILATION`. A ±1 tick dead zone avoids
+    /// chasing noise. Positive error (behind target) → shorter interval (faster);
+    /// negative error (ahead of target) → longer interval (slower).
     fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
         let base_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
 
-        let ticks_ahead = self.local_tick.saturating_sub(remote_tick);
+        let ticks_ahead = self.local_tick.saturating_sub(remote_tick) as f32;
+        let target = self.min_ticks_ahead as f32;
+        let error = target - ticks_ahead;
 
-        let micros = if ticks_ahead < self.min_ticks_ahead {
-            base_micros * (1.0 - F::TIME_DILATION)
-        } else if ticks_ahead > self.min_ticks_ahead {
-            base_micros * (1.0 + F::TIME_DILATION)
+        let k = F::TIME_DILATION / target.max(1.0);
+        let dilation = if error > 0.0 {
+            // Behind target — speed up immediately, no dead zone.
+            (error * k).min(F::TIME_DILATION)
+        } else if error < -1.0 {
+            // Ahead by more than 1 tick — slow down proportionally.
+            (error * k).max(-F::TIME_DILATION)
         } else {
-            base_micros
+            0.0
         };
+
+        let micros = base_micros * (1.0 - dilation);
 
         #[cfg(feature = "metrics")]
         deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
