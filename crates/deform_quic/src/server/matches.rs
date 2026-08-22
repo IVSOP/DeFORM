@@ -22,10 +22,7 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use crate::{
-    CompressedSerializedUnreliableServerResponse, DeformQuicLogic, ReliableMessage,
-    UnreliableServerResponse, datagram::compress, server::DeformQuicServer,
-};
+use crate::{Compressed, DeformQuicLogic, ReliableMessage, server::DeformQuicServer};
 
 // TODO: put this in the PlayerInputsAccount
 pub const MAX_INPUTS: usize = 18;
@@ -41,19 +38,11 @@ pub enum MatchMessage<U: DeformUserLogic> {
 }
 
 /// Messages sent internally from the match task to EVERY client-handling task (broadcast)
-// FIX: this is all just very cursed
-// I wanted to have the lobby be pre-compressed and serialized, which I think has to be done otherwise it gets too expensive
-// but this erases the types completely. I need to change it to a transparent struct
-// then I also use Arc<InternalServerBroadcast> but this doesn't end up helping much as I always need an owned Vec...
 #[derive(Clone, Debug)]
 pub enum InternalServerBroadcast<Q: DeformQuicLogic> {
-    /// This looks a bit cursed but we are using a broadcast which then needs to send per-client data.
-    /// The datagram also has shared data so we can avoid reserializing and recompressing for every client.
-    /// This is why this struct is usually sent with an Arc in the broadcast channels!
-    ///
-    /// Also see [`UnreliableServerResponsePacket`]
     SendDatagrams {
-        serialized_compressed_response: CompressedSerializedUnreliableServerResponse,
+        /// A compressed [`LobbyState`]
+        lobby_state: Compressed,
         player_inputs_buffers_len: HashMap<Pubkey, u8>,
     },
     SendReliableMessage(ReliableMessage<Q>),
@@ -268,16 +257,14 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     }
                 }
 
-                let message = UnreliableServerResponse {
-                    lobby_state: LobbyState::Ongoing(ongoing.clone()),
-                };
                 // TODO: TREAT ERRORS
-                if let Ok(serialized_message) = wincode::serialize(&message)
-                    && let Ok(body) = compress(serialized_message, Q::COMPRESSION)
+                if let Ok(serialized_lobby_state) =
+                    wincode::serialize(&LobbyState::Ongoing(ongoing.clone()))
+                    && let Ok(compressed_lobby_state) =
+                        Compressed::compress(&serialized_lobby_state, Q::COMPRESSION)
                 {
                     let _ = state_sender.send(Arc::new(InternalServerBroadcast::SendDatagrams {
-                        serialized_compressed_response:
-                            CompressedSerializedUnreliableServerResponse(body),
+                        lobby_state: compressed_lobby_state,
                         player_inputs_buffers_len: player_inputs_buffers_len.clone(),
                     }));
                 }

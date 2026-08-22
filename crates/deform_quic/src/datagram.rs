@@ -276,45 +276,6 @@ impl<Q: DeformQuicLogic> DatagramDefragmentor<Q> {
     }
 }
 
-/// Compresses a serialized body, or hands it back untouched when the game opted out
-/// via [`crate::DeformQuicLogic::COMPRESSION`].
-pub fn compress(body: Vec<u8>, level: Option<i32>) -> DeformResult<Vec<u8>> {
-    let out = match level {
-        None => body,
-        Some(level) => {
-            // Fresh context per call. If this shows up in a profile, the knobs are
-            // reusing a `zstd::bulk::Compressor` and training a dictionary on captured
-            // snapshots — payloads this small are what dictionaries exist for.
-            let compressed = zstd::stream::encode_all(body.as_slice(), level)
-                .map_err(|e| DeformError::Serialize(format!("compress datagram: {e}")))?;
-
-            #[cfg(feature = "metrics")]
-            deform_metrics::plot!(
-                "compression_ratio",
-                compressed.len() as f64 / body.len().max(1) as f64
-            );
-
-            compressed
-        }
-    };
-
-    // What actually has to fit the MTU, so this is the number to watch alongside
-    // `datagram_fragments`.
-    #[cfg(feature = "metrics")]
-    deform_metrics::plot!("datagram_body_bytes", out.len() as f64);
-
-    Ok(out)
-}
-
-pub fn decompress(body: Vec<u8>, level: Option<i32>) -> DeformResult<Vec<u8>> {
-    if level.is_none() {
-        return Ok(body);
-    }
-
-    zstd::stream::decode_all(body.as_slice())
-        .map_err(|e| DeformError::Deserialize(format!("decompress datagram: {e}")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -367,20 +328,5 @@ mod tests {
         // An MTU with no room past the envelope must not divide by zero.
         assert!(split_into_datagrams(0, &[], ENVELOPE_OVERHEAD, MAX_FRAGMENTS).is_err());
         assert!(split_into_datagrams(0, &[1, 2, 3], ENVELOPE_OVERHEAD + 1, MAX_FRAGMENTS).is_ok());
-    }
-
-    #[test]
-    fn compression_roundtrips_and_is_a_noop_when_disabled() {
-        let body: Vec<u8> = (0..4000u32).map(|i| (i / 16) as u8).collect();
-
-        let compressed = compress(body.clone(), Some(3)).unwrap();
-        assert!(
-            compressed.len() < body.len(),
-            "repetitive data should shrink"
-        );
-        assert_eq!(decompress(compressed, Some(3)).unwrap(), body);
-
-        assert_eq!(compress(body.clone(), None).unwrap(), body);
-        assert_eq!(decompress(body.clone(), None).unwrap(), body);
     }
 }

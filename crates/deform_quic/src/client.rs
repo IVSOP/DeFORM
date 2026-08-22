@@ -21,8 +21,8 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    ALPN_PROTOCOL, DeformQuicLogic, ReliableMessage, UnreliableServerInstruction,
-    UnreliableServerResponse, UnreliableServerResponsePacket, UserIdentification, datagram,
+    ALPN_PROTOCOL, Compressed, DeformQuicLogic, ReliableMessage, ServerInstruction,
+    StateUpdatePacket, UserIdentification,
     datagram::{DatagramDefragmentor, DatagramFragmentor},
 };
 
@@ -582,29 +582,18 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     };
 
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
-                        let packet: UnreliableServerResponsePacket = wincode::deserialize(&message)
-                            .map_err(|e| {
+                        let packet: StateUpdatePacket =
+                            wincode::deserialize(&message).map_err(|e| {
                                 DeformError::Deserialize(
                                     "error deserializing packet: ".to_string() + &e.to_string(),
                                 )
                             })?;
 
-                        let decompressed_unreliable_server_response = datagram::decompress(
-                            packet.unreliable_server_response.0,
-                            Q::COMPRESSION,
-                        )?;
-                        let unreliable_server_response: UnreliableServerResponse<Q::UserLogic> =
-                            wincode::deserialize(&decompressed_unreliable_server_response)
-                                .map_err(|e| {
-                                    DeformError::Deserialize(
-                                        "error deserializing packet: ".to_string() + &e.to_string(),
-                                    )
-                                })?;
-                        self.process_server_update(
-                            unreliable_server_response.lobby_state,
-                            &mut tick_sleep,
-                        )
-                        .await?;
+                        let decompressed_lobby_state: LobbyState<Q::UserLogic> =
+                            wincode::deserialize(&packet.lobby_state.decompress()?)
+                                .map_err(|e| DeformError::Deserialize(e.to_string()))?;
+                        self.process_server_update(decompressed_lobby_state, &mut tick_sleep)
+                            .await?;
                     }
                 }
 
@@ -851,9 +840,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         #[cfg(feature = "metrics")]
         let newest = pending.keys().max().copied();
 
-        let ix = UnreliableServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(pending);
-        let body = datagram::compress(wincode::serialize(&ix)?, Q::COMPRESSION)?;
-        fragmentor.send(&body)?;
+        let ix =
+            ServerInstruction::<<Q::UserLogic as DeformUserLogic>::Inputs>::BatchSetInputs(pending);
+        let message = Compressed::compress(&wincode::serialize(&ix)?, Q::COMPRESSION)?;
+        fragmentor.send(&message.0)?;
 
         #[cfg(feature = "metrics")]
         if let Some(newest) = newest

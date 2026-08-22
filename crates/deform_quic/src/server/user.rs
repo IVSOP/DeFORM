@@ -10,8 +10,8 @@ use tokio::{
 use tracing::{info, warn};
 
 use crate::{
-    DeformQuicLogic, ReliableMessage, UnreliableServerInstruction, UnreliableServerResponsePacket,
-    datagram::{self, DatagramDefragmentor, DatagramFragmentor},
+    Compressed, DeformQuicLogic, ReliableMessage, ServerInstruction, StateUpdatePacket,
+    datagram::{DatagramDefragmentor, DatagramFragmentor},
     server::{
         DeformQuicServer,
         matches::{InternalServerBroadcast, MatchMessage},
@@ -68,10 +68,10 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     }
                 }
                 // instead of triggering every time a datagram is received, this waits for an entire message to be collected first
-                .. if let body = defragmentor.recv() => {
+                .. if let message = defragmentor.recv() => {
                     // A client is not trusted, so one datagram it malformed must not end its match
-                    let body = match body {
-                        Ok(body) => body,
+                    let message = match message {
+                        Ok(message) => message,
                         Err(e @ DeformError::Connection(_)) => Err(e)?,
                         Err(e) => {
                             warn!(player = %pubkey, "discarding datagram: {e}");
@@ -79,14 +79,14 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                         }
                     };
 
-                    let body = datagram::decompress(body, Q::COMPRESSION)?;
-                    let instruction: UnreliableServerInstruction<
-                        <Q::UserLogic as DeformUserLogic>::Inputs,
-                    > = wincode::deserialize(&body)
-                        .map_err(|e| DeformError::Deserialize(e.to_string()))?;
+                    let decompressed_message = Compressed(message).decompress()?;
+
+                    let instruction: ServerInstruction<<Q::UserLogic as DeformUserLogic>::Inputs> =
+                        wincode::deserialize(&decompressed_message)
+                            .map_err(|e| DeformError::Deserialize(e.to_string()))?;
 
                     match instruction {
-                        UnreliableServerInstruction::BatchSetInputs(inputs) => {
+                        ServerInstruction::BatchSetInputs(inputs) => {
                             // try_send here so we don't block if the channel is full
                             // FIX: use the error value to tell the client that the server is lagging??
                             let _ = match_sender.try_send(MatchMessage::Inputs { pubkey, inputs });
@@ -112,7 +112,7 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
 
         match internal_broadcast {
             InternalServerBroadcast::SendDatagrams {
-                serialized_compressed_response,
+                lobby_state,
                 player_inputs_buffers_len,
             } => {
                 let player_input_buffer_len = match player_inputs_buffers_len.get(&pubkey) {
@@ -121,8 +121,8 @@ impl<Q: DeformQuicLogic> DeformQuicServer<Q> {
                     None => 0,
                 };
 
-                let packet = UnreliableServerResponsePacket {
-                    unreliable_server_response: serialized_compressed_response.clone(),
+                let packet = StateUpdatePacket {
+                    lobby_state: lobby_state.clone(),
                     player_input_buffer_len,
                 };
 

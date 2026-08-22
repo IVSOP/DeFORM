@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Debug, future::Future, time::Duration};
 
 use deform_core::{
     DeformClient, DeformError, DeformInputs, DeformResult, DeformUserLogic, Pubkey,
-    accounts::lobby::{Lobby, LobbyState},
+    accounts::lobby::Lobby,
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
 };
@@ -53,12 +53,8 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     type UserLogic: DeformUserLogic;
     type ProgramClient: GameProgramClient<Self::UserLogic>;
 
-    /// zstd level for datagram bodies, or `None` to send them uncompressed.
-    ///
-    /// Symmetric by construction, since both peers are generic over the same logic
-    /// type, so nothing says so on the wire. Not checked across builds: a client and
-    /// server compiled with different values will fail to deserialize each other.
-    const COMPRESSION: Option<i32> = Some(10);
+    /// zstd level for datagram bodies
+    const COMPRESSION: i32 = 10;
 
     /// Maximum time-dilation rate, as a fraction of the base tick rate.
     /// 0.10 means the client runs at most 10% faster (to rebuild lead) or 10%
@@ -184,35 +180,48 @@ pub enum ReliableMessage<Q: DeformQuicLogic> {
 }
 
 #[derive(Clone, SchemaRead, SchemaWrite)]
-pub enum UnreliableServerInstruction<I: DeformInputs> {
+pub enum ServerInstruction<I: DeformInputs> {
     BatchSetInputs(HashMap<u64, I>),
 }
 
-/// Type actually sent over the wire.
-///
-/// This is a bit messy but hear me out:
-/// - [`UnreliableServerResponse`] will contain a [`LobbyState`] which can get quite big
-/// - It needs to be both serialized and compressed
-/// - Doing this for every single client would get slow fast
-///
-/// So, I decided to abstract the data that is common to all clients like this.
-/// This way serialization and compression of the lobby only happens once.
+/// Type actually sent over the wire. The entire packet is not compressed, only the state update.
+/// This is because that update will be common to all players so this saves compressing multiple times.
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct UnreliableServerResponsePacket {
+pub struct StateUpdatePacket {
     // FIX: change to Bytes that quinn uses??
-    pub unreliable_server_response: CompressedSerializedUnreliableServerResponse,
+    /// A compressed [`LobbyState`]
+    pub lobby_state: Compressed,
     /// Tells the user how many inputs are currently in its input buffer
     pub player_input_buffer_len: u8,
 }
 
-/// This name is cursed but it is what it is
-#[repr(transparent)]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
-pub struct CompressedSerializedUnreliableServerResponse(pub Vec<u8>);
+#[repr(transparent)]
+pub struct Compressed(pub Vec<u8>);
 
-#[derive(Clone, SchemaRead, SchemaWrite)]
-pub struct UnreliableServerResponse<T: DeformUserLogic> {
-    pub lobby_state: LobbyState<T>,
+impl Compressed {
+    pub fn compress(bytes: &[u8], level: i32) -> DeformResult<Self> {
+        let compressed = zstd::stream::encode_all(bytes, level)
+            .map_err(|e| DeformError::Serialize(format!("compress datagram: {e}")))?;
+
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!(
+            "compression_ratio",
+            compressed.len() as f64 / body.len().max(1) as f64
+        );
+
+        // What actually has to fit the MTU, so this is the number to watch alongside
+        // `datagram_fragments`.
+        #[cfg(feature = "metrics")]
+        deform_metrics::plot!("datagram_body_bytes", compressed.len() as f64);
+
+        Ok(Compressed(compressed))
+    }
+
+    pub fn decompress(&self) -> DeformResult<Vec<u8>> {
+        zstd::stream::decode_all(self.0.as_slice())
+            .map_err(|e| DeformError::Deserialize(format!("decompress datagram: {e}")))
+    }
 }
 
 const MAX_CONTROL_MSG_SIZE: usize = 4096;
