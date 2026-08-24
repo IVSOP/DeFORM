@@ -75,8 +75,8 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
 /// How often to publish the RTT into the stats, just so we don't do it constantly.
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
-/// How many inputs the server should have queued up ideally. If it has 0, it means it has starved
-const TARGET_BUFFER: f32 = 1.0;
+/// How many inputs the server should have queued up AFTER consuming the current tick's
+const TARGET_BUFFER: f32 = 0.0;
 /// Only after this deadzone do we start slowing the simulation down
 const SLOWDOWN_DEADZONE: f32 = 1.0;
 

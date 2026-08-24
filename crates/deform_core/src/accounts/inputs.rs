@@ -12,6 +12,16 @@ pub struct InputsAccount<T: DeformUserLogic> {
     pub lobby_id: u64,
     pub player: Pubkey,
     pub inputs: HashMap<u64, T::Inputs>,
+    pub last_op: LastOperation,
+}
+
+/// Marker in inputs account so we know if it being updated was due to a tick or due to us writing the inputs.
+// TODO: this may not be strictly necessary and there could be cleaner ways but I was out of brain
+#[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
+#[derive(Eq, PartialEq, Clone, Debug, SchemaRead, SchemaWrite)]
+pub enum LastOperation {
+    SetInputs,
+    Tick,
 }
 
 impl<T: DeformUserLogic> InputsAccount<T> {
@@ -21,6 +31,7 @@ impl<T: DeformUserLogic> InputsAccount<T> {
             lobby_id,
             player,
             inputs: HashMap::new(),
+            last_op: LastOperation::SetInputs,
         }
     }
 

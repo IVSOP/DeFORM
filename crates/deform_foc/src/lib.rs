@@ -40,7 +40,7 @@ pub trait DeformFocLogic: Clone + Sized + Debug + Send + Sync + 'static {
     const TIME_DILATION: f32 = 0.10;
 
     /// Extra inputs to keep queued on the server beyond the one it consumes each tick as margin for jitter
-    const JITTER_SLACK: f32 = 1.0;
+    const JITTER_SLACK: f32 = 2.0;
 }
 
 pub fn new_foc_client<F: DeformFocLogic>(

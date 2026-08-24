@@ -2,11 +2,9 @@ use std::collections::HashMap;
 
 use anchor_lang::prelude::*;
 use deform_core::{
-    accounts::{
-        lobby::{LobbyState, Network},
-        DeformAccount,
-    },
-    DeformUserLogic,
+    DeformUserLogic, accounts::{
+        DeformAccount, inputs::LastOperation, lobby::{LobbyState, Network}
+    }
 };
 
 use crate::{
@@ -76,6 +74,8 @@ pub fn handler<'info>(
 
         inputs_account.inputs.insert(*tick, inputs.clone());
     }
+
+    inputs_account.last_op = LastOperation::SetInputs;
 
     // serialize. account rent should be the same
     {

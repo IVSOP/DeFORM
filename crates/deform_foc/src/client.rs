@@ -14,6 +14,7 @@ use deform_core::{
     DeformUserLogic, Pubkey, Smooth, TickInfo,
     accounts::{
         DeformAccount,
+        inputs::LastOperation,
         lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
     },
     error::{UserFacingError, UserFacingResult},
@@ -35,8 +36,8 @@ use tracing::{debug, error, warn};
 
 use crate::DeformFocLogic;
 
-/// How many inputs the server should have queued up ideally. If it has 0, it means it has starved
-const TARGET_BUFFER: f32 = 1.0;
+/// How many inputs the server should have queued up AFTER consuming the current tick's
+const TARGET_BUFFER: f32 = 0.0;
 /// Only after this deadzone do we start slowing the simulation down
 const SLOWDOWN_DEADZONE: f32 = 1.0;
 
@@ -260,13 +261,18 @@ impl<F: DeformFocLogic> FocBackend<F> {
                                 self.process_new_state(lobby.state, &mut tick_sleep)?;
                             }
                             DeformAccount::Inputs(inputs) => {
-                                self.rollback_panic *= PANIC_DECAY;
+                                if inputs.last_op == LastOperation::Tick {
+                                    self.rollback_panic *= PANIC_DECAY;
 
-                                #[cfg(feature = "metrics")]
-                                deform_metrics::plot!("rollback_panic", self.rollback_panic as f64);
+                                    #[cfg(feature = "metrics")]
+                                    deform_metrics::plot!(
+                                        "rollback_panic",
+                                        self.rollback_panic as f64
+                                    );
 
-                                let buffered = inputs.inputs.len().min(u8::MAX as usize) as u8;
-                                self.process_buffer_len_update(buffered);
+                                    let buffered = inputs.inputs.len().min(u8::MAX as usize) as u8;
+                                    self.process_buffer_len_update(buffered);
+                                }
                             }
                         }
                     }

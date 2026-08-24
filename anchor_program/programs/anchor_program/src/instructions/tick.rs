@@ -2,12 +2,9 @@ use std::collections::BTreeMap;
 
 use anchor_lang::prelude::*;
 use deform_core::{
-    accounts::{
-        inputs::InputsAccount,
-        lobby::{ongoing::LobbyOngoing, LobbyFinished, LobbyState, Network},
-        DeformAccount,
-    },
-    DeformGameState, DeformInputs, DeformUserLogic,
+    DeformGameState, DeformInputs, DeformUserLogic, accounts::{
+        DeformAccount, inputs::{InputsAccount, LastOperation}, lobby::{LobbyFinished, LobbyState, Network, ongoing::LobbyOngoing}
+    }
 };
 
 use crate::{
@@ -102,10 +99,12 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
         // Order matches how `inputs_infos` was built: both `inputs_infos` (a BTreeMap
         // keyed by player) and `remaining_accounts` follow the sorted-pubkey order of
         // `tick_info.inputs`, so consuming the values realigns them with their accounts.
-        for (inputs_info, inputs_account) in inputs_infos
+        for (mut inputs_info, inputs_account) in inputs_infos
             .into_values()
             .zip(ctx.remaining_accounts.iter())
         {
+            inputs_info.last_op = LastOperation::Tick;
+
             {
                 let mut data = inputs_account.data.borrow_mut();
                 DeformAccount::Inputs(inputs_info)
