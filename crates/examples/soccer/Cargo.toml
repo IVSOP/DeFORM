@@ -10,7 +10,7 @@ name = "soccer"
 required-features = ["bin"]
 
 [features]
-default = ["client", "server", "anchor", "foc-getslot", "20hz"]
+default = ["client", "server", "anchor", "foc", "20hz"]
 bin = ["dep:clap", "deform_core/client", "dep:deform_offline", "dep:anyhow", "dep:solana-sdk", "dep:solana-client", "dep:solana-rpc-client", "dep:serde_json", "dep:deform_quic", "dep:tokio", "dep:tokio-util", "dep:tracing", "dep:tracing-subscriber", "dep:magicblock-magic-program-api"]
 server = ["bin"]
 client = ["bin", "dep:bevy", "dep:bevy_egui", "dep:bevy-egui-notify", "bevy/dynamic_linking", "dep:egui-probe", "deform_core/egui-probe"]
@@ -18,9 +18,6 @@ anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 metrics = ["dep:deform_metrics", "deform_core/metrics", "deform_quic?/metrics", "deform_foc?/metrics", "deform_offline?/metrics"]
 
 foc = ["dep:deform_foc", "client"]
-foc-getslot = ["foc", "deform_foc/rtt-getslot"]
-foc-ping = ["foc", "deform_foc/rtt-ping"]
-foc-inputs = ["foc", "deform_foc/rtt-inputs"]
 
 60hz = []
 20hz = []

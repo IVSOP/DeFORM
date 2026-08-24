@@ -74,73 +74,102 @@ from the slot delta. Wall-clock arrival is not observable on chain in any reprod
 
 ## 4. Running ahead
 
-The client simulates ahead so its inputs arrive before the server needs them.
+The client simulates ahead so its inputs arrive before the server needs them. It does not
+target a lead directly. It targets the **server's input buffer**: how many of this client's
+inputs are queued for ticks the server has not run yet.
+
+The server reports it on every state update. In QUIC that is
+`StateUpdatePacket::player_input_buffer_len`, measured in the match loop right after the
+tick consumed its input and dropped everything at or below it
+(`deform_quic/src/server/matches.rs:232`). In FoC it is the length of the player's inputs
+account, which the `tick` instruction drains one entry at a time.
+
+A buffer of 0 means the next server tick has nothing to apply and calls `predict()`, which
+costs a rollback. One is therefore the failure threshold, not an operating point:
 
 ```rust
-// deform_quic/src/client.rs:634-642, `recompute_ticks_ahead`
-rtt_micros += 3000.0;
-min_ticks_ahead = ceil(rtt_micros / TICK_RATE_MICROS) + 1;
-max_ticks_ahead = max(3 * min_ticks_ahead, 5);
+// deform_quic/src/client.rs, compute_dilated_tick_interval
+target = TARGET_BUFFER + JITTER_SLACK + rollback_panic;   // 1.0 + 0.5 + [0, 2]
 ```
 
-Recomputed on every RTT sample. QUIC uses quinn's estimate. FoC samples every 500 ms.
+`TARGET_BUFFER` is fixed by the server's consume-one-per-tick behaviour and is a private
+const. `JITTER_SLACK` is the margin on top, an associated const on `DeformQuicLogic` /
+`DeformFocLogic` so a game can raise it.
 
-### Why a full RTT, and why the `+1`
+Whatever lead this implies is whatever the network happens to need. Nothing measures RTT to
+derive it.
 
-The state you just received is already RTT/2 old. Your input needs another RTT/2 to get
-back. So the server advances a full RTT between the state you saw and the state your input
-lands in.
+### The withheld tick
 
-The `+1` is **not** a safety margin. `commit_inputs` only ships ticks strictly below
-`local_tick` (`client.rs:789`), because the server merges first-write-wins and a half-finished
-sample for the in-progress tick would be locked in while the client is still
-merging newer ones (`client.rs:780-785`).
+`commit_inputs` only ships ticks strictly below `local_tick`, because the server merges
+first-write-wins and a half-finished sample for the in-progress tick would be locked in
+while the client is still merging newer ones.
 
-So the newest input ever sent is for `local_tick - 1`. Deriving the requirement:
+So the newest input ever sent is for `local_tick - 1`. Under the old RTT-derived formula
+this had to be repaid explicitly with a `+1` term. The buffer controller absorbs it for
+free: a withheld tick simply shows up as one less input in the server's queue, and the
+target is expressed in that same unit.
 
-```
-committed tick          T = local_tick - 1
-server tick at arrival    = server_tick_at_send + RTT/tick
-requirement             T >= server tick at arrival
-=>          ticks_ahead >= RTT/tick + 1
-```
+At 20 Hz the withheld tick still costs 50 ms of prediction horizon. Removing it means
+changing the server's merge semantics for the current tick, not tuning a number.
 
-The formula is therefore minimal, not conservative. On localhost `RTT/tick` is near zero, so
-`min_ticks_ahead` is **2**: one tick for latency, one for the withheld tick.
+### What RTT is still for
 
-At 20 Hz that withheld tick costs 50 ms of prediction horizon. It is the largest single
-constant in the budget. Removing it means changing the server's merge semantics for the
-current tick, not tuning a number.
+Two things, neither of them pacing:
 
-The `+3000 µs` costs almost nothing. `ceil()` already rounds any partial tick up, so the
-margin only changes the result when it crosses an integer boundary.
+- the size of the catch-up burst at match start, before any buffer report exists
+- `stats.ping_ms`, for display
+
+QUIC reads quinn's estimate every `RTT_SAMPLE_INTERVAL_MS`. FoC times a commit from send to
+when it appears in the inputs account, which includes inclusion latency.
 
 ### The horizon in steady state
 
-`max_ticks_ahead` is a ceiling, not the operating point.
-
-The catch-up burst pulls the client back to `min_ticks_ahead`
-(`client.rs:432-451`). Dilation does not engage until 30 % into the `min..max` window
-(`client.rs:690`). So in steady state the client sits between `min` and
-`min + 0.3 * window`.
-
-Derived, for pong at 20 Hz on localhost: 2 to 3.2 ticks, or 100 to 160 ms. Not 6 ticks.
-`max_ticks_ahead` only matters during a hitch.
+The lead is an outcome rather than a target: it settles wherever keeping ~1.5 inputs queued
+requires. On localhost that is small; on a 100 ms link it is proportionally larger, without
+anything computing it. `MAX_PREDICTION_TICKS` is a ceiling that steady state never touches.
 
 This governs how wrong a remote entity can be. At `PADDLE_SPEED = 480`, three ticks of
 extrapolation is about 72 units on a 1000-unit field.
 
 ### Time dilation
 
-If the client drifts ahead, it stretches its tick interval rather than stopping
-(`client.rs:676-708`, `compute_dilated_tick_interval`).
+The tick interval is stretched or squeezed so the buffer estimate converges on the target
+(`compute_dilated_tick_interval`). Both flanks are `tanh`, so the correction saturates
+instead of overshooting:
 
-| Overshoot past `min` | Sleep |
-| --- | --- |
-| 0 % to 30 % | base |
-| 30 % to 60 % | lerp base to 1.5x base |
-| 60 % to 100 % | lerp 1.5x to 4x base |
-| past `max_ticks_ahead` | simulation stops until the server catches up |
+```
+behind = max(target - buffer_estimate, 0)
+ahead  = max(buffer_estimate - target - SLOWDOWN_DEADZONE, 0)
+rate   = 1 + TIME_DILATION * tanh(behind / SPEEDUP_SOFTNESS)
+           - TIME_DILATION * SLOWDOWN_RATIO * tanh(ahead / SLOWDOWN_SOFTNESS)
+interval = TICK_RATE_MICROS / rate
+```
+
+The two `max` clamps make the branches mutually exclusive, so between `target` and
+`target + SLOWDOWN_DEADZONE` both terms are zero and the interval is exactly the base rate.
+
+Everything is deliberately lopsided, because sitting too far ahead only costs input lag
+while falling behind costs rollbacks. Speedup is capped at twice the slowdown, reaches most
+of its range within one tick of error where slowdown takes three, and only the slowdown side
+has a dead zone.
+
+`buffer_estimate` is where the pessimism lives: an EWMA that falls fast (`BUFFER_FALL`,
+0.60) and rises slowly (`BUFFER_RISE`, 0.05), so it tracks the low end of the reports rather
+than their average. A dip means the server nearly starved; one high report proves nothing
+about the next tick. That asymmetry also absorbs variance on its own — an EWMA with unequal
+gains rests below the mean by an amount proportional to the spread — which is why the slack
+above it is a plain constant rather than a measured one.
+
+A rollback whose mismatching inputs were *ours* is direct evidence the buffer ran dry. It
+adds `ROLLBACK_KICK` to `rollback_panic` (capped at `PANIC_MAX`), raising the target — dead
+zone and all — then decays at `PANIC_DECAY` per update, so the extra lead is shed through
+the gentle slowdown flank instead of snapping back.
+
+Past `MAX_PREDICTION_TICKS` (30) the simulation stops entirely until the server catches up.
+Only reachable when the server goes quiet: with no reports arriving there is nothing for
+dilation to steer on, so the constant bounds both the eventual fast-forward and the memory
+held by `info_per_tick`.
 
 A lag spike therefore shows up as a brief slow-motion moment, not a freeze followed by a
 large rollback.
@@ -298,8 +327,8 @@ It offers no extrapolating alternative. Grepping that repository for `Extrapolat
 nothing. The difference is default and tick rate: lightyear makes frame interpolation opt-in
 and runs at 64 Hz, where one tick is 16 ms.
 
-`local_tick` still leads the server by `min_ticks_ahead` (2 or more), so the render remains
-ahead of the server even one tick back.
+`local_tick` still leads the server by whatever lead keeps the input buffer at its target, so
+the render remains ahead of the server even one tick back.
 
 ### Which fields get which treatment
 
@@ -318,7 +347,7 @@ Smoothing a velocity fights the integrator. Smoothing a score is meaningless.
 
 `last_sim_instant` anchors `t`, so it may only move when the simulation actually advanced.
 Assigning it unconditionally restarts `t` at 0 over an unchanged tick pair, and the render
-sweeps the same tick repeatedly while frozen at `max_ticks_ahead`.
+sweeps the same tick repeatedly while frozen at `MAX_PREDICTION_TICKS`.
 
 ---
 

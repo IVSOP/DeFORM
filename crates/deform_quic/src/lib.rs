@@ -57,9 +57,12 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     const COMPRESSION: i32 = 10;
 
     /// Maximum time-dilation rate, as a fraction of the base tick rate.
-    /// 0.10 means the client runs at most 10% faster (to rebuild lead) or 10%
-    /// slower (to shed excess lead). Correction is proportional to the error.
+    /// 0.10 means the client runs at most 10% faster to refill the server's input
+    /// buffer. Slowing down is capped at half of this since being early only costs lag and not a missprediction
     const TIME_DILATION: f32 = 0.10;
+
+    /// Extra inputs to keep queued on the server beyond the one it consumes each tick as margin for jitter
+    const JITTER_SLACK: f32 = 0.5;
 
     /// Maximum number of incomplete messages that we buffer
     const MAX_MESSAGE_BUFFER: u8 = 32;
@@ -207,7 +210,7 @@ impl Compressed {
         #[cfg(feature = "metrics")]
         deform_metrics::plot!(
             "compression_ratio",
-            compressed.len() as f64 / body.len().max(1) as f64
+            bytes.len() as f64 / compressed.len().max(1) as f64
         );
 
         // What actually has to fit the MTU, so this is the number to watch alongside

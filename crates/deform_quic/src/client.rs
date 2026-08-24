@@ -61,13 +61,11 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     /// (not to `Instant::now()`), so time spent doing per-tick work and scheduling jitter
     /// do not accumulate as drift relative to the server's fixed-rate clock.
     pub next_tick_deadline: tokio::time::Instant,
-
-    pub avg_rtt: Duration,
-    /// Ticks-ahead target derived from RTT. Below it the simulation ticks slightly
-    /// faster, above it slightly slower (see `compute_dilated_tick_interval`).
-    pub min_ticks_ahead: u64,
-    /// If ticks are above this, simulation is stopped; hard limit. It is always at least 5.
-    pub max_ticks_ahead: u64,
+    /// Pessimistic estimate of how many of our inputs the server holds for future ticks.
+    /// (we assume it has less than reality by being agressive when reducing and slow to increase)
+    pub buffer_estimate: f32,
+    /// Target bonus applied after a self-rollback, decaying on every server update.
+    pub rollback_panic: f32,
     // /// Cumulative count of datagrams inferred to have been dropped (gaps in received ticks).
     // pub dropped_datagrams: u64,
     // /// Cumulative count of stale/out-of-order datagrams (tick <= remote_tick).
@@ -87,6 +85,27 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
 /// 1s: works fine but will be slow to react to changes in the network
 /// 200ms: introduces a bit of jitter
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
+
+/// How many inputs the server should have queued up ideally. If it has 0, it means it has starved
+const TARGET_BUFFER: f32 = 1.0;
+/// Only after this deadzone do we start slowing the simulation down
+const SLOWDOWN_DEADZONE: f32 = 1.0;
+
+// coefficients for the math
+const SPEEDUP_SOFTNESS: f32 = 1.0;
+const SLOWDOWN_SOFTNESS: f32 = 3.0;
+const SLOWDOWN_RATIO: f32 = 0.5;
+// make the buffer estimate drop fast
+const BUFFER_FALL: f32 = 0.60;
+// make the buffer estimate climb slow
+const BUFFER_RISE: f32 = 0.05;
+/// When our own input is late this means we are either too slow or there was input loss, so instantly kick the tick target up
+const ROLLBACK_KICK: f32 = 1.0;
+/// Max value the tick target can be kicked by
+const PANIC_MAX: f32 = 3.0;
+const PANIC_DECAY: f32 = 0.955;
+/// Freeze if we get this many ticks ahead. Means reports stopped and either server died or we lost connection.
+const MAX_PREDICTION_TICKS: u64 = 30;
 
 impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
     pub fn init(
@@ -365,8 +384,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 set_inputs_receiver,
                                 backend_state: backend_state_clone.clone(),
                                 user_logic,
-                                min_ticks_ahead: 4,
-                                max_ticks_ahead: 3 * 4,
+                                buffer_estimate: TARGET_BUFFER,
+                                rollback_panic: 0.0,
 
                                 smoother,
                                 visual_tick_micros,
@@ -376,8 +395,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 ),
                                 // real value is set at the top of `tick_loop`
                                 next_tick_deadline: tokio::time::Instant::now(),
-
-                                avg_rtt: Duration::from_millis(50),
                             };
 
                             if let Err(e) = tick_info.tick_loop(starting_tick_info).await
@@ -434,7 +451,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             tokio_select!(match .. {
                 // Tick every ~16ms (or more, depending on time dilation)
                 .. if let _ = &mut tick_sleep => {
-                    let remote_tick = match &self.remote_lobby.state {
+                    match &self.remote_lobby.state {
                         LobbyState::Finished(_) => break,
                         // Grace period: the match has not started on the server, so there is no
                         // authoritative stream to reconcile against. Predicting here would just get
@@ -444,11 +461,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
                             if self.local_tick == remote_tick {
-                                // No lead at all (match start, or right after a
-                                // fast-forward snap): every input would arrive late, so
-                                // snap the full lead back in one burst instead of
-                                // rebuilding it over seconds at TIME_DILATION speed.
-                                for _ in 0..self.min_ticks_ahead {
+                                // at match start the data has not been populated, so just use the RTT to estimate
+                                // RTT + 3000ms + 1 tick
+                                // it should quickly converge as the match starts
+                                let fake_lead = (self.connection.rtt().as_micros() as u64 + 3000)
+                                    .div_ceil(<Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
+                                    + 1;
+
+                                for _ in 0..fake_lead {
                                     self.advance_local_simulation()?;
                                     // finish is handled when server tells us, not here
                                 }
@@ -457,23 +477,20 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                     <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
                                 );
                                 self.last_sim_instant = Instant::now();
+                                // The estimate describes the lead we just discarded.
+                                self.buffer_estimate = TARGET_BUFFER;
                             } else {
                                 // Every smaller correction, catching up or shedding
                                 // lead, is handled by time dilation (see
-                                // `compute_dilated_tick_interval`). The hard stop at
-                                // `max_ticks_ahead` stays as an edge-case safety net
-                                // for a stalled server.
-                                let max_target_tick = remote_tick + self.max_ticks_ahead;
-                                if self.local_tick < max_target_tick {
+                                // `compute_dilated_tick_interval`).
+                                if self.local_tick < remote_tick + MAX_PREDICTION_TICKS {
                                     self.advance_local_simulation()?;
                                     // finish is handled when server tells us, not here
                                     self.close_sim_interval();
                                 }
                             }
-
-                            remote_tick
                         }
-                    };
+                    }
 
                     // Commit right after the simulation step, so an input is transmitted as soon
                     // as its tick closes. Sending on an independent timer instead meant a sample
@@ -488,7 +505,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     // Advance the anchored deadline by the (variable) dilated interval rather than
                     // sleeping from `now`, so the work done in this arm does not accumulate as drift.
                     // Dilation is preserved: `compute_dilated_tick_interval` still decides the step.
-                    let dilated = self.compute_dilated_tick_interval(remote_tick);
+                    let dilated = self.compute_dilated_tick_interval();
                     self.next_tick_deadline += dilated;
                     // If a stall pushed us a full tick past the deadline, resync to `now` so we
                     // don't fire a burst of back-to-back catch-up ticks (manual MissedTickBehavior::Delay).
@@ -531,15 +548,20 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     }
                 }
 
-                // Sample RTT from quinn (already an EWMA internally)
+                // tick to plot the RTT once in a while and write it into the stats
+                // just so we don't do this constantly
                 .. if let _ = rtt_ticker.tick() => {
                     if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
-                        self.avg_rtt = self.connection.rtt();
+                        let rtt = self.connection.rtt();
 
                         #[cfg(feature = "metrics")]
-                        deform_metrics::plot!("RTT", self.avg_rtt.as_secs_f64() * 1000.0);
+                        deform_metrics::plot!("RTT", rtt.as_secs_f64() * 1000.0);
 
-                        self.update_ticks_ahead()?;
+                        let mut shared = self
+                            .backend_state
+                            .lock()
+                            .map_err(|_| DeformError::LockPoisoned)?;
+                        shared.stats.ping_ms = rtt.as_secs_f64() * 1_000.0;
                     }
                 }
 
@@ -592,6 +614,16 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                         let decompressed_lobby_state: LobbyState<Q::UserLogic> =
                             wincode::deserialize(&packet.lobby_state.decompress()?)
                                 .map_err(|e| DeformError::Deserialize(e.to_string()))?;
+
+                        self.rollback_panic *= PANIC_DECAY;
+
+                        #[cfg(feature = "metrics")]
+                        deform_metrics::plot!("rollback_panic", self.rollback_panic as f64);
+
+                        // Must run first since a rollback below recomputes the tick deadline from
+                        // `buffer_estimate`, so the estimate has to include this packet
+                        self.process_buffer_len_update(packet.player_input_buffer_len);
+
                         self.process_server_update(decompressed_lobby_state, &mut tick_sleep)
                             .await?;
                     }
@@ -646,44 +678,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         Ok(())
     }
 
-    /// Change our ticks ahead target based on the current RTT
-    pub fn update_ticks_ahead(&mut self) -> DeformResult {
-        #[cfg(feature = "metrics")]
-        let _span = deform_metrics::span!("update_ticks_ahead");
-
-        let rtt_secs = self.avg_rtt.as_secs_f64();
-        let mut rtt_micros = rtt_secs * 1_000_000.0;
-        // to be conservative, add 3ns to make it so that values are slightly pushed over the edge
-        rtt_micros += 3000.0;
-        // adding 10% worked well in the past
-        // rtt_micros += 0.1 * rtt_micros;
-
-        // WARN: RTT here instead of RTT/2 is correct!
-        // we are basing ourselves on the remote tick
-        // while we take RTT/2 to send our inputs to the server, the new state also takes RTT/2 to get back to us!
-        // obviously this assumes the connection is roughly symmetrical
-        self.min_ticks_ahead =
-            (rtt_micros / <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64).ceil() as u64
-                + 1;
-        self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
-
-        #[cfg(feature = "metrics")]
-        {
-            deform_metrics::plot!("min ticks ahead", self.min_ticks_ahead as f64);
-            deform_metrics::plot!("max ticks ahead", self.max_ticks_ahead as f64);
-        }
-
-        {
-            let mut shared = self
-                .backend_state
-                .lock()
-                .map_err(|_| DeformError::LockPoisoned)?;
-            shared.stats.ping_ms = rtt_secs * 1_000.0;
-        }
-
-        Ok(())
-    }
-
     /// Measure the interval that just closed and re-anchor `last_sim_instant`.
     /// Clamped to dilation's own range so a frozen tick can't stall interpolation.
     fn close_sim_interval(&mut self) {
@@ -695,34 +689,50 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         self.last_sim_instant = now;
     }
 
-    /// Proportional time dilation: tick interval scales with how far off-target
-    /// the lead is, clamped to ±`TIME_DILATION`. A ±1 tick dead zone avoids
-    /// chasing noise. Positive error (behind target) → shorter interval (faster);
-    /// negative error (ahead of target) → longer interval (slower).
-    fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
+    /// Updates values according to a newly received buffered_inputs_len value
+    ///
+    /// - buffer_estimate: pessimistic EWMA (fast down, slow up)
+    fn process_buffer_len_update(&mut self, buffered: u8) {
+        let buffered = buffered as f32;
+        let alpha = if buffered < self.buffer_estimate {
+            BUFFER_FALL
+        } else {
+            BUFFER_RISE
+        };
+        self.buffer_estimate += alpha * (buffered - self.buffer_estimate);
+
+        #[cfg(feature = "metrics")]
+        {
+            deform_metrics::plot!("input_buffer", buffered as f64);
+            deform_metrics::plot!("input_buffer_est", self.buffer_estimate as f64);
+        }
+    }
+
+    /// Time dilation steered by how many of our inputs the server has queued up.
+    ///
+    /// Time speeds up (shorter ticks) when we are behind our target, or when self-rollbacks happen.
+    ///
+    /// Time slows down (longer ticks) when we are ahead of our target.
+    fn compute_dilated_tick_interval(&self) -> Duration {
         #[cfg(feature = "metrics")]
         let _span = deform_metrics::span!("compute_dilated_tick_interval");
         let base_micros = <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
 
-        let ticks_ahead = self.local_tick.saturating_sub(remote_tick) as f32;
-        let target = self.min_ticks_ahead as f32;
-        let error = target - ticks_ahead;
+        let target = TARGET_BUFFER + Q::JITTER_SLACK + self.rollback_panic;
 
-        let k = Q::TIME_DILATION / target.max(1.0);
-        let dilation = if error > 0.0 {
-            // Behind target — speed up immediately, no dead zone.
-            (error * k).min(Q::TIME_DILATION)
-        } else if error < -1.0 {
-            // Ahead by more than 1 tick — slow down proportionally.
-            (error * k).max(-Q::TIME_DILATION)
-        } else {
-            0.0
-        };
+        let behind = (target - self.buffer_estimate).max(0.0);
+        let ahead = (self.buffer_estimate - target - SLOWDOWN_DEADZONE).max(0.0);
 
-        let micros = base_micros * (1.0 - dilation);
+        let rate = 1.0 + Q::TIME_DILATION * (behind / SPEEDUP_SOFTNESS).tanh()
+            - Q::TIME_DILATION * SLOWDOWN_RATIO * (ahead / SLOWDOWN_SOFTNESS).tanh();
+
+        let micros = base_micros / rate;
 
         #[cfg(feature = "metrics")]
-        deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
+        {
+            deform_metrics::plot!("input_buffer_target", target as f64);
+            deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
+        }
 
         Duration::from_micros(micros as u64)
     }
@@ -814,7 +824,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         // The server commits first-write-wins, so a non-final value would be locked in
         // there while we keep changing ours, guaranteeing a mismatch and a rollback.
         // Normally this filters nothing, since the caller has just advanced past that
-        // tick, but the simulation does not advance while frozen at `max_ticks_ahead`.
+        // tick, but the simulation does not advance while frozen at `MAX_PREDICTION_TICKS`.
         // NOTE: this may add 1 tick of delay to committing inputs!!!
         // TODO: this is important in FOC mode as users could change their inputs last second to gain an advantage.
         // However, in QUIC mode, we could allow the server to overwrite/merge inputs instead of having first-write-wins,
@@ -973,7 +983,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             .on_rollback(pre_rollback_info, post_rollback_info)
             .map_err(|e| UserFacingError::User(e))?;
 
-        let dilated = self.compute_dilated_tick_interval(conflicting_tick);
+        let dilated = self.compute_dilated_tick_interval();
         let new_deadline = tokio::time::Instant::now() + dilated;
         // keep the anchored deadline, but never push the next tick further out than it already was
         self.next_tick_deadline = new_deadline.min(self.next_tick_deadline);
@@ -1017,7 +1027,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             /// `new_remote > old_remote + 1`
             Gap,
             /// The predicted inputs do not match the received ones, so we must roll back the simulation.
-            Rollback,
+            Rollback { self_mismatch: bool },
             /// The default, expected scenario, were the remote state advanced by +1
             /// and we are still ahead of it, and the inputs match the prediction.
             Default,
@@ -1048,7 +1058,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             let remote_inputs = &new_tick_info.inputs;
 
             // compare inputs from all players, and check if they match the ones the server sent
+            // a mismatch on our own player is singled out: it means our inputs reached the
+            // server after it needed them, which is what the pacing has to react to.
             let mut mismatch = false;
+            let mut self_mismatch = false;
             for (player, predicted_input) in predicted_inputs.iter() {
                 let remote_input = remote_inputs.get(player).ok_or(DeformError::InvalidState(
                     "player not found in remote inputs".into(),
@@ -1056,7 +1069,10 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 if remote_input != predicted_input {
                     mismatch = true;
-                    break;
+                    if *player == self.player {
+                        self_mismatch = true;
+                        break;
+                    }
                 }
             }
 
@@ -1073,7 +1089,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             // }
 
             if mismatch {
-                ReceivedScenario::Rollback
+                ReceivedScenario::Rollback { self_mismatch }
             } else {
                 ReceivedScenario::Default
             }
@@ -1192,7 +1208,14 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 // this also inserts the new state etc
                 self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
             }
-            ReceivedScenario::Rollback => {
+            ReceivedScenario::Rollback { self_mismatch } => {
+                if self_mismatch {
+                    self.rollback_panic = (self.rollback_panic + ROLLBACK_KICK).min(PANIC_MAX);
+
+                    #[cfg(feature = "metrics")]
+                    deform_metrics::event!("self_rollback", panic = self.rollback_panic);
+                }
+
                 // manually_emit_events(
                 //     predicted_state,
                 //     &new_lobby_state.game_state,

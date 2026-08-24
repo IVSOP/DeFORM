@@ -1,18 +1,18 @@
 use std::{
     collections::{BTreeMap, HashMap},
     pin::Pin,
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
-    },
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use better_tokio_select::tokio_select;
 use deform_core::{
-    ChannelInputs, DeformClient, DeformError, DeformInputs, DeformResult, DeformSharedBackendState,
+    ChannelInputs, DeformClient, DeformError, DeformInputs, DeformSharedBackendState,
     DeformUserLogic, Pubkey, Smooth, TickInfo,
-    accounts::lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
+    accounts::{
+        DeformAccount,
+        lobby::{Lobby, LobbyFinished, LobbyState, ongoing::LobbyOngoing},
+    },
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
 };
@@ -30,7 +30,28 @@ use tokio::{
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, warn};
 
-use crate::{DeformFocLogic, RTT_SAMPLE_INTERVAL_MS};
+use crate::DeformFocLogic;
+
+/// How many inputs the server should have queued up ideally. If it has 0, it means it has starved
+const TARGET_BUFFER: f32 = 1.0;
+/// Only after this deadzone do we start slowing the simulation down
+const SLOWDOWN_DEADZONE: f32 = 1.0;
+
+// coefficients for the math
+const SPEEDUP_SOFTNESS: f32 = 1.0;
+const SLOWDOWN_SOFTNESS: f32 = 3.0;
+const SLOWDOWN_RATIO: f32 = 0.5;
+// make the buffer estimate drop fast
+const BUFFER_FALL: f32 = 0.60;
+// make the buffer estimate climb slow
+const BUFFER_RISE: f32 = 0.05;
+/// When our own input is late this means we are either too slow or there was input loss, so instantly kick the tick target up
+const ROLLBACK_KICK: f32 = 1.0;
+/// Max value the tick target can be kicked by
+const PANIC_MAX: f32 = 3.0;
+const PANIC_DECAY: f32 = 0.955;
+/// Freeze if we get this many ticks ahead. Means reports stopped and either server died or we lost connection.
+const MAX_PREDICTION_TICKS: u64 = 30;
 
 pub struct FocBackend<F: DeformFocLogic> {
     pub local_tick: u64,
@@ -49,15 +70,9 @@ pub struct FocBackend<F: DeformFocLogic> {
     /// the RPC send path. The channel is bounded, so a slow commit task backpressures
     /// the sim loop rather than piling up unbounded work.
     pub commit_tx: mpsc::Sender<Instruction>,
-    /// Per-commit send times (batch max tick -> send instant), read by the
-    /// inputs-account RTT probe to measure true end-to-end latency.
-    #[cfg(feature = "rtt-inputs")]
-    pub commit_times: Arc<Mutex<BTreeMap<u64, Instant>>>,
 
-    /// Authoritative lobby states decoded from `accountSubscribe`.
-    pub state_rx: mpsc::UnboundedReceiver<LobbyState<F::UserLogic>>,
-    /// Latest WebSocket ping RTT, in microseconds, published by the WS task.
-    pub rtt_micros: Arc<AtomicU64>,
+    /// Lobby and inputs accounts, both decoded from `accountSubscribe`.
+    pub account_update_rx: mpsc::UnboundedReceiver<DeformAccount<F::UserLogic>>,
 
     pub cancellation_token: CancellationToken,
     pub set_inputs_receiver: mpsc::UnboundedReceiver<ChannelInputs<F::UserLogic>>,
@@ -77,19 +92,17 @@ pub struct FocBackend<F: DeformFocLogic> {
     /// deadline so per-tick work and jitter don't accumulate as drift.
     pub next_tick_deadline: tokio::time::Instant,
 
-    pub avg_rtt: Duration,
-    /// Ticks-ahead target derived from RTT. Below it the simulation ticks slightly
-    /// faster, above it slightly slower (see `compute_dilated_tick_interval`).
-    pub min_ticks_ahead: u64,
-    /// If ticks are above this, the simulation stops; hard limit, always at least 5.
-    pub max_ticks_ahead: u64,
+    /// Pessimistic estimate of how many of our inputs the chain holds for future ticks.
+    /// (we assume it has less than reality by being agressive when reducing and slow to increase)
+    pub buffer_estimate: f32,
+    /// Target bonus applied after a self-rollback, decaying on every inputs update.
+    pub rollback_panic: f32,
 }
 
 impl<F: DeformFocLogic> FocBackend<F> {
     /// How many game ticks are batched into a single `set_inputs` transaction: as many
     /// as fit in one ER slot, at least one. Committing every tick is not viable here,
-    /// so this is also the worst-case wait an input can sit through before being sent,
-    /// which is why [`Self::update_ticks_ahead`] folds it into the ticks-ahead target.
+    /// so this is also the worst-case wait an input can sit through before being sent.
     fn commit_interval_ticks(&self) -> u64 {
         self.slot_time_micros
             .div_ceil(<F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
@@ -112,45 +125,42 @@ impl<F: DeformFocLogic> FocBackend<F> {
         let commit_interval_ticks = self.commit_interval_ticks();
         let mut last_commit_tick = self.local_tick;
         let mut last_commit_at = tokio::time::Instant::now();
-        let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         loop {
             tokio_select!(match .. {
                 // Simulation tick, possibly dilated to let the chain catch up.
                 .. if let _ = &mut tick_sleep => {
-                    let remote_tick = match &self.remote_lobby.state {
+                    match &self.remote_lobby.state {
                         LobbyState::Finished(_) => break,
                         // No authoritative stream to reconcile against yet; hold.
                         LobbyState::NotStarted(_) => break,
                         LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
                             if self.local_tick == remote_tick {
-                                // No lead at all (match start, or right after a
-                                // fast-forward snap): every input would arrive late, so
-                                // snap the full lead back in one burst instead of
-                                // rebuilding it over seconds at TIME_DILATION speed.
-                                for _ in 0..self.min_ticks_ahead {
+                                // at match start the data has not been populated, so estimate an RTT of 250ms
+                                let fake_lead = (Duration::from_millis(250).as_micros() as u64
+                                    + 3000)
+                                    .div_ceil(tick_micros)
+                                    + 1;
+
+                                for _ in 0..fake_lead {
                                     self.advance_local_simulation()?;
                                 }
                                 // A burst has no interval to measure; hold the base rate.
                                 self.last_tick_interval = Duration::from_micros(tick_micros);
                                 self.last_sim_instant = Instant::now();
+                                self.buffer_estimate = TARGET_BUFFER;
                             } else {
                                 // Every smaller correction, catching up or shedding
                                 // lead, is handled by time dilation (see
-                                // `compute_dilated_tick_interval`). The hard stop at
-                                // `max_ticks_ahead` stays as an edge-case safety net
-                                // for a stalled chain.
-                                let max_target_tick = remote_tick + self.max_ticks_ahead;
-                                if self.local_tick < max_target_tick {
+                                // `compute_dilated_tick_interval`).
+                                if self.local_tick < remote_tick + MAX_PREDICTION_TICKS {
                                     self.advance_local_simulation()?;
                                     self.close_sim_interval();
                                 }
                             }
-
-                            remote_tick
                         }
-                    };
+                    }
 
                     // Commit once enough new input ticks have piled up, rather than on a
                     // wall-clock timer. Inputs are produced by ticks, so counting ticks keeps
@@ -158,7 +168,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     // with little new to send and pay for a near-empty transaction.
                     //
                     // The elapsed check is only a backstop: the simulation stops advancing
-                    // while frozen at `max_ticks_ahead`, and the tick count alone would then
+                    // while frozen at `MAX_PREDICTION_TICKS`, and the tick count alone would then
                     // never reach the threshold again.
                     let ticks_since_commit = self.local_tick.saturating_sub(last_commit_tick);
                     let commit_stalled = last_commit_at.elapsed()
@@ -175,7 +185,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         last_commit_at = tokio::time::Instant::now();
                     }
 
-                    let dilated = self.compute_dilated_tick_interval(remote_tick);
+                    let dilated = self.compute_dilated_tick_interval();
                     self.next_tick_deadline += dilated;
                     let now = tokio::time::Instant::now();
                     if self.next_tick_deadline < now {
@@ -215,19 +225,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     }
                 }
 
-                // Refresh the latency estimate and re-derive the ticks-ahead target.
-                .. if let _ = rtt_ticker.tick() => {
-                    if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
-                        self.avg_rtt =
-                            Duration::from_micros(self.rtt_micros.load(Ordering::Relaxed));
-
-                        #[cfg(feature = "metrics")]
-                        deform_metrics::plot!("RTT", self.avg_rtt.as_secs_f64() * 1000.0);
-
-                        self.update_ticks_ahead()?;
-                    }
-                }
-
                 // New inputs from the game engine.
                 .. if let new_inputs = self.set_inputs_receiver.recv() => {
                     if new_inputs.is_none() {
@@ -253,13 +250,24 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     }
                 }
 
-                // Authoritative state from the ER (accountSubscribe on the lobby).
-                .. if let state = self.state_rx.recv() => {
-                    match state {
-                        None => break,
-                        Some(state) => {
-                            if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
-                                self.process_new_state(state, &mut tick_sleep)?;
+                // Account updates from the ER: the lobby is the authoritative state, our
+                // inputs account is how deep the chain's queue of our inputs is.
+                .. if let account = self.account_update_rx.recv() => {
+                    let Some(account) = account else { break };
+
+                    if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
+                        match account {
+                            DeformAccount::Lobby(lobby) => {
+                                self.process_new_state(lobby.state, &mut tick_sleep)?;
+                            }
+                            DeformAccount::Inputs(inputs) => {
+                                self.rollback_panic *= PANIC_DECAY;
+
+                                #[cfg(feature = "metrics")]
+                                deform_metrics::plot!("rollback_panic", self.rollback_panic as f64);
+
+                                let buffered = inputs.inputs.len().min(u8::MAX as usize) as u8;
+                                self.process_buffer_len_update(buffered);
                             }
                         }
                     }
@@ -293,50 +301,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
         Ok(())
     }
 
-    pub fn update_ticks_ahead(&mut self) -> DeformResult {
-        let rtt_secs = self.avg_rtt.as_secs_f64();
-        // // getSlot/ping measure network RTT only, so add one ER slot of inclusion. The
-        // // inputs-account probe already includes inclusion, so it adds nothing on top.
-        // #[cfg(any(feature = "rtt-getslot", feature = "rtt-ping"))]
-        // let latency_micros = rtt_secs * 1_000_000.0 + self.slot_time_micros as f64 + 3000.0;
-        // #[cfg(feature = "rtt-inputs")]
-        // let latency_micros = rtt_secs * 1_000_000.0 + 3000.0;
-        //
-        // // Inputs are batched, so one for a tick that just missed a commit waits out the
-        // // rest of the interval before it is even sent. The lead has to cover that wait,
-        // // not just the network latency, or we fall behind and start fast-forwarding.
-        // self.min_ticks_ahead = (latency_micros
-        //     / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64)
-        //     .ceil() as u64
-        //     + self.commit_interval_ticks();
-        // self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
-
-        // Testing: use the same formula as the QUIC backend
-        let mut rtt_micros = rtt_secs * 1_000_000.0;
-        rtt_micros += 3000.0;
-        self.min_ticks_ahead =
-            (rtt_micros / <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f64).ceil() as u64
-                + 1;
-        self.max_ticks_ahead = (3 * self.min_ticks_ahead).max(5);
-
-        #[cfg(feature = "metrics")]
-        {
-            deform_metrics::plot!("min ticks ahead", self.min_ticks_ahead as f64);
-            deform_metrics::plot!("max ticks ahead", self.max_ticks_ahead as f64);
-        }
-
-        {
-            let mut shared = self
-                .backend_state
-                .lock()
-                .map_err(|_| DeformError::LockPoisoned)?;
-            // Report the network ping (not the inclusion-inflated target).
-            shared.stats.ping_ms = rtt_secs * 1_000.0;
-        }
-
-        Ok(())
-    }
-
     /// Measure the interval that just closed and re-anchor `last_sim_instant`.
     /// Clamped to dilation's own range so a frozen tick can't stall interpolation.
     fn close_sim_interval(&mut self) {
@@ -348,32 +312,48 @@ impl<F: DeformFocLogic> FocBackend<F> {
         self.last_sim_instant = now;
     }
 
-    /// Proportional time dilation: tick interval scales with how far off-target
-    /// the lead is, clamped to ±`TIME_DILATION`. A ±1 tick dead zone avoids
-    /// chasing noise. Positive error (behind target) → shorter interval (faster);
-    /// negative error (ahead of target) → longer interval (slower).
-    fn compute_dilated_tick_interval(&self, remote_tick: u64) -> Duration {
-        let base_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
-
-        let ticks_ahead = self.local_tick.saturating_sub(remote_tick) as f32;
-        let target = self.min_ticks_ahead as f32;
-        let error = target - ticks_ahead;
-
-        let k = F::TIME_DILATION / target.max(1.0);
-        let dilation = if error > 0.0 {
-            // Behind target — speed up immediately, no dead zone.
-            (error * k).min(F::TIME_DILATION)
-        } else if error < -1.0 {
-            // Ahead by more than 1 tick — slow down proportionally.
-            (error * k).max(-F::TIME_DILATION)
+    /// Updates values according to a newly received buffered_inputs_len value
+    ///
+    /// - buffer_estimate: pessimistic EWMA (fast down, slow up)
+    fn process_buffer_len_update(&mut self, buffered: u8) {
+        let sample = buffered as f32;
+        let alpha = if sample < self.buffer_estimate {
+            BUFFER_FALL
         } else {
-            0.0
+            BUFFER_RISE
         };
-
-        let micros = base_micros * (1.0 - dilation);
+        self.buffer_estimate += alpha * (sample - self.buffer_estimate);
 
         #[cfg(feature = "metrics")]
-        deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
+        {
+            deform_metrics::plot!("input_buffer", sample as f64);
+            deform_metrics::plot!("input_buffer_est", self.buffer_estimate as f64);
+        }
+    }
+
+    /// Time dilation steered by how many of our inputs the server has queued up.
+    ///
+    /// Time speeds up (shorter ticks) when we are behind our target, or when self-rollbacks happen.
+    ///
+    /// Time slows down (longer ticks) when we are ahead of our target.
+    fn compute_dilated_tick_interval(&self) -> Duration {
+        let base_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS as f32;
+
+        let target = TARGET_BUFFER + F::JITTER_SLACK + self.rollback_panic;
+
+        let behind = (target - self.buffer_estimate).max(0.0);
+        let ahead = (self.buffer_estimate - target - SLOWDOWN_DEADZONE).max(0.0);
+
+        let rate = 1.0 + F::TIME_DILATION * (behind / SPEEDUP_SOFTNESS).tanh()
+            - F::TIME_DILATION * SLOWDOWN_RATIO * (ahead / SLOWDOWN_SOFTNESS).tanh();
+
+        let micros = base_micros / rate;
+
+        #[cfg(feature = "metrics")]
+        {
+            deform_metrics::plot!("input_buffer_target", target as f64);
+            deform_metrics::plot!("sleep_time", micros as f64 / 1000.0);
+        }
 
         Duration::from_micros(micros as u64)
     }
@@ -503,22 +483,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
             data: ix.data,
         };
 
-        #[allow(unused)]
-        let max_tick = pending.keys().max();
-
-        // Record when this batch (identified by its max tick) was sent, so the
-        // inputs-account RTT probe can time when it lands.
-        #[cfg(feature = "rtt-inputs")]
-        if let Some(&max_tick) = max_tick {
-            if let Ok(mut times) = self.commit_times.lock() {
-                times.insert(max_tick, Instant::now());
-                // bound memory if the probe stalls (drop oldest)
-                while times.len() > 256 {
-                    let oldest = *times.keys().next().unwrap();
-                    times.remove(&oldest);
-                }
-            }
-        }
+        #[cfg(feature = "metrics")]
+        let max_tick = pending.keys().max().copied();
 
         // Bounded channel: this awaits — backpressuring the sim loop — if the commit
         // task has fallen behind. A closed channel just means we're shutting down.
@@ -526,7 +492,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
         #[cfg(feature = "metrics")]
         if let Some(newest) = max_tick
-            && let Some(entry) = self.inputs.get(newest)
+            && let Some(entry) = self.inputs.get(&newest)
         {
             deform_metrics::plot!(
                 "input_to_commit",
@@ -619,7 +585,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
             .on_rollback(pre_rollback_info, post_rollback_info)
             .map_err(UserFacingError::User)?;
 
-        let dilated = self.compute_dilated_tick_interval(conflicting_tick);
+        let dilated = self.compute_dilated_tick_interval();
         let new_deadline = tokio::time::Instant::now() + dilated;
         self.next_tick_deadline = new_deadline.min(self.next_tick_deadline);
         tick_sleep.as_mut().reset(self.next_tick_deadline);
@@ -649,7 +615,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
             OldOrRepeated,
             FastForward,
             Gap,
-            Rollback,
+            Rollback { self_mismatch: bool },
             Default,
         }
 
@@ -670,7 +636,10 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
             let remote_inputs = &new_tick_info.inputs;
 
+            // a mismatch on our own player is singled out: it means our inputs reached
+            // the chain after it needed them, which is what the pacing has to react to.
             let mut mismatch = false;
+            let mut self_mismatch = false;
             for (player, predicted_input) in predicted_inputs.iter() {
                 let remote_input = remote_inputs.get(player).ok_or(DeformError::InvalidState(
                     "player not found in remote inputs".into(),
@@ -678,12 +647,15 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
                 if remote_input != predicted_input {
                     mismatch = true;
-                    break;
+                    if *player == self.player {
+                        self_mismatch = true;
+                        break;
+                    }
                 }
             }
 
             if mismatch {
-                ReceivedScenario::Rollback
+                ReceivedScenario::Rollback { self_mismatch }
             } else {
                 ReceivedScenario::Default
             }
@@ -759,7 +731,16 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
                 self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
             }
-            ReceivedScenario::Rollback => {
+            ReceivedScenario::Rollback { self_mismatch } => {
+                // Direct evidence that the buffer ran dry, which no report can show as
+                // sharply: raise the target and let it decay back down.
+                if self_mismatch {
+                    self.rollback_panic = (self.rollback_panic + ROLLBACK_KICK).min(PANIC_MAX);
+
+                    #[cfg(feature = "metrics")]
+                    deform_metrics::event!("self_rollback", panic = self.rollback_panic);
+                }
+
                 self.handle_rollback(new_tick_info, new_remote_tick, tick_sleep)?;
             }
             ReceivedScenario::Default => {}

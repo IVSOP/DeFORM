@@ -29,41 +29,26 @@ Plus a commit timer that ships accumulated inputs to the authority (a QUIC datag
 The client deliberately simulates **ahead** of the authority, so that by the time its inputs
 arrive, the authority is at the tick those inputs were meant for.
 
-```rust
-min_ticks_ahead = ceil((rtt_micros + 3000) / TICK_RATE_MICROS) + 1
-max_ticks_ahead = max(3 * min_ticks_ahead, 5)
-```
+The lead is not targeted directly. What the client steers is the authority's **input
+buffer**: how many of the client's inputs are queued for ticks the authority has not run
+yet. Every state update reports it — explicitly in the QUIC packet
+(`player_input_buffer_len`), and in FoC as the length of the player's inputs account,
+which the `tick` instruction drains one entry at a time.
 
-A **full** RTT, not half: the authoritative state you just received is already RTT/2 old, and
-your inputs need another RTT/2 to get back — so the authority advances a full RTT between the
-state you saw and the state your input lands in. Recomputed on every RTT sample (500 ms for
-FoC; QUIC uses quinn's own RTT estimate).
+A buffer of 0 means the next authoritative tick has nothing to apply and will `predict()`,
+which costs a rollback. So the setpoint is **1, plus `JITTER_SLACK`** — one is the failure
+threshold, not a place to sit. Whatever lead that setpoint implies is whatever the network
+happens to need; nothing measures RTT to derive it.
 
-The `+1` is **not** a safety margin — it repays a tick the commit path withholds.
-`commit_inputs` only ships ticks strictly below `local_tick`, because the authority merges
-first-write-wins and a half-finished sample for the in-progress tick would be locked in while
-you are still merging newer ones. So the newest input you ever send is for `local_tick - 1`,
-and the requirement works out to `ticks_ahead ≥ RTT/tick + 1`. That makes the formula minimal,
-not conservative: on localhost `RTT/tick ≈ 0`, so you sit at **2 ticks ahead**, one for
-latency and one for the withheld tick. At 20 Hz that withheld tick costs 50 ms of prediction
-horizon — the largest single constant in the budget. Getting to 1 means changing the
-authority's merge semantics for the current tick, not tuning a number.
+The client never sends an input for the tick still in progress: `commit_inputs` ships only
+ticks strictly below `local_tick`, because the authority merges first-write-wins and a
+half-finished sample would be locked in while newer ones are still being merged. The newest
+input in flight is always for `local_tick - 1`, and the buffer controller absorbs that
+automatically rather than needing a `+1` in a formula.
 
-The `+3000 µs` is nearly free: `ceil()` already rounds any partial tick up, so the margin only
-changes the result when it crosses an integer boundary.
-
-### What the horizon actually is
-
-`max_ticks_ahead` is a *ceiling*, not the operating point. The catch-up burst pulls you back
-to `min_ticks_ahead`, and dilation does not engage until 30 % into the `min..max` window, so
-in steady state you sit between `min` and `min + 0.3 × window`. On localhost at 20 Hz that is
-~2–3.2 ticks (100–160 ms), not 6. `max_ticks_ahead` only matters during a hitch.
-
-This is the number that governs how wrong a remote entity can be: at `PADDLE_SPEED = 480`,
-3 ticks of extrapolation is ~72 units on a 1000-unit field.
-
-For FoC there is an extra floor: transaction inclusion can't beat the slot time, so the slot
-duration is folded into the target.
+RTT is still measured, but only for two things: the size of the catch-up burst at match
+start (dilation can hold a lead, not create one), and `stats.ping_ms`. QUIC reads quinn's estimate; FoC times a commit from send to when it
+appears in the inputs account.
 
 ## Prediction
 
@@ -133,13 +118,48 @@ be safely ignored.
 
 ## Time dilation
 
-If the client drifts too far ahead of the authority (the server hitched, the ER fell behind),
-it doesn't hard-stop — it *stretches* its tick interval so the authority catches up smoothly.
+The tick interval is stretched or squeezed so the buffer converges on its setpoint. Both
+flanks of the response are `tanh`, so the correction saturates instead of overshooting:
 
-The percentage overshoot past `min_ticks_ahead` scales the sleep between ticks. Example: with
-a target of 10 ticks ahead, being at 10 is 0 % dilation, being at 20 is a full step of
-dilation. Past `max_ticks_ahead` (3× the target, minimum 5) the simulation stops entirely
-until the authority catches up. Below the target it fast-forwards.
+```
+target = TARGET_BUFFER + JITTER_SLACK + rollback_panic     // 1.0 + 0.5 + [0, 2]
+behind = max(target - buffer_estimate, 0)
+ahead  = max(buffer_estimate - target - 1, 0)
+rate   = 1 + TIME_DILATION * tanh(behind / 1)
+           - TIME_DILATION * 0.5 * tanh(ahead / 3)
+interval = TICK_RATE_MICROS / rate
+```
+
+`TARGET_BUFFER` is fixed by how the authority consumes inputs, so it is a private const.
+`JITTER_SLACK` is the margin on top and is an associated const on `DeformQuicLogic` /
+`DeformFocLogic`, overridable per game.
+
+Everything about it is deliberately lopsided, because sitting too far ahead only costs input
+lag while falling behind costs rollbacks: speedup is capped at twice the slowdown, it reaches
+most of its range within a single tick of error where slowdown takes three, and only the
+slowdown side has a dead zone.
+
+`buffer_estimate` is where the pessimism lives. It is an EWMA that falls fast (0.60) and
+rises slowly (0.05), so it tracks the low end of the reports rather than their average — a dip
+means the authority nearly starved, while one high report proves nothing about the next tick.
+
+That asymmetry also handles variance on its own, which is why the slack above it is a plain
+constant. An EWMA with unequal gains settles where the pull from each side balances
+(`0.05 * E[above] = 0.60 * E[below]`), and that resting point sits below the mean by an amount
+proportional to the spread: a noisier link drags the estimate further down without anything
+having to measure the noise. An earlier version added a second, jitter-derived slack on top
+and was double-counting.
+
+A rollback caused by *our own* inputs mismatching is direct evidence the buffer ran dry, more
+sharply than any report shows. It adds 1 to `rollback_panic` (capped at 2), which raises the
+target — dead zone and all — and decays with a half-life of ~15 updates, about as long as a
+10 % speedup needs to win back a tick of buffer. The extra lead is then shed gently through
+the slowdown flank instead of snapping back.
+
+Past `MAX_PREDICTION_TICKS` the simulation stops entirely until the authority catches up.
+That is not part of the control loop and is only reachable when updates dry up altogether:
+with no reports arriving, dilation is steering on a frozen estimate, so the constant bounds
+both the eventual fast-forward and the memory held by `info_per_tick`.
 
 The result is that a lag spike shows up as a slightly slow-motion moment rather than a freeze
 followed by a huge rollback.

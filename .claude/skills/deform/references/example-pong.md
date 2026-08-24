@@ -70,12 +70,12 @@ lobby isn't `Ongoing`), clones the lobby, and drops the guard.
 ## Cargo features
 
 ```
-default = ["client", "server", "anchor", "foc-getslot", "20hz"]
+default = ["client", "server", "anchor", "foc", "20hz"]
 bin     — CLI + tokio + solana client deps
 client  — bevy + egui (pulls `bin`)
 server  — the QUIC server (pulls `bin`)
 anchor  — borsh/Anchor derives on the shared types; needed by the on-chain program
-foc / foc-getslot / foc-ping / foc-inputs — FoC backend + exactly one RTT strategy
+foc     — the fully-on-chain backend (pulls `client`)
 20hz / 60hz — sets TICK_RATE_MICROS (50_000 / 16_667)
 metrics — deform_metrics spans/plots/events across all crates (Tracy + on-disk run dir)
 ```
@@ -106,9 +106,6 @@ Manual variants:
 ```sh
 # offline only — no docker, no chain
 cargo run -p pong -- run --wallet ../../CLi1*.json
-
-# FoC with a different RTT strategy
-cargo run -p pong --no-default-features --features "client,anchor,foc-ping,20hz" -- run
 
 # server on its own
 cargo run -p pong --no-default-features --features "server,anchor,20hz" -- serve --port 4433

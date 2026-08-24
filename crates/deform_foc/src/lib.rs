@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
-    sync::{Arc, atomic::AtomicU64},
+    sync::Arc,
     thread,
     time::{Duration, Instant},
 };
@@ -10,6 +10,7 @@ use deform_core::{
     DeformClient, DeformError, DeformResult, DeformSharedBackendState, DeformUserLogic, Pubkey,
     Smooth,
     accounts::{
+        DeformAccount,
         inputs::InputsAccount,
         lobby::{Lobby, LobbyState, ongoing::LobbyOngoing},
     },
@@ -21,21 +22,10 @@ use solana_sdk::{message::Instruction, signature::Keypair, signer::Signer};
 use tokio::sync::{mpsc, oneshot};
 
 mod client;
-mod rtt;
 mod ws;
 
 use client::FocBackend;
 use tokio_util::sync::CancellationToken;
-
-// Exactly one latency strategy must be enabled (rtt-getslot is the default).
-const _: () = assert!(
-    cfg!(feature = "rtt-getslot") as u8
-        + cfg!(feature = "rtt-ping") as u8
-        + cfg!(feature = "rtt-inputs") as u8
-        == 1,
-    "deform_foc: enable exactly one latency feature (rtt-getslot, rtt-ping, or rtt-inputs); \
-     to switch off the default rtt-getslot, disable default features",
-);
 
 /// Ties a game's [`DeformUserLogic`] to the [`GameProgramClient`] that builds its
 /// on-chain instructions. The FoC analogue of `DeformQuicLogic`, minus the Web2
@@ -45,24 +35,13 @@ pub trait DeformFocLogic: Clone + Sized + Debug + Send + Sync + 'static {
     type ProgramClient: GameProgramClient<Self::UserLogic>;
 
     /// Maximum time-dilation rate, as a fraction of the base tick rate.
-    /// 0.10 means the client runs at most 10% faster (to rebuild lead) or 10%
-    /// slower (to shed excess lead). Correction is proportional to the error.
+    /// 0.10 means the client runs at most 10% faster to refill the server's input
+    /// buffer. Slowing down is capped at half of this since being early only costs lag and not a missprediction
     const TIME_DILATION: f32 = 0.10;
+
+    /// Extra inputs to keep queued on the server beyond the one it consumes each tick as margin for jitter
+    const JITTER_SLACK: f32 = 1.0;
 }
-
-/// How often the latency probe samples RTT and the backend re-derives how far ahead
-/// of the on-chain tick the local simulation should run.
-pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
-
-/// The latency probe compiled in, for labelling a metrics run.
-#[cfg(feature = "rtt-getslot")]
-pub const RTT_PROBE: &str = "getslot";
-/// The latency probe compiled in, for labelling a metrics run.
-#[cfg(feature = "rtt-ping")]
-pub const RTT_PROBE: &str = "ping";
-/// The latency probe compiled in, for labelling a metrics run.
-#[cfg(feature = "rtt-inputs")]
-pub const RTT_PROBE: &str = "inputs";
 
 pub fn new_foc_client<F: DeformFocLogic>(
     rpc_url: String,
@@ -153,8 +132,6 @@ pub fn new_foc_client<F: DeformFocLogic>(
         extra: vec![
             ("rpc_url".into(), rpc_url.clone()),
             ("slot_time_micros".into(), slot_time_micros.to_string()),
-            // Which probe fed `min_ticks_ahead` changes what the RTT plot means.
-            ("rtt_probe".into(), RTT_PROBE.into()),
         ],
     });
 
@@ -183,14 +160,15 @@ pub fn new_foc_client<F: DeformFocLogic>(
 
             // WebSocket: decoded lobby states flow in on `state_rx`. If the
             // subscription can't be established, fail setup.
-            let (state_tx, state_rx) = mpsc::unbounded_channel::<LobbyState<F::UserLogic>>();
-            let rtt_micros = Arc::new(AtomicU64::new(Duration::from_millis(50).as_micros() as u64));
+            let (account_update_tx, account_update_rx) =
+                mpsc::unbounded_channel::<DeformAccount<F::UserLogic>>();
 
             let (ws_ready_tx, ws_ready_rx) = oneshot::channel::<DeformResult>();
             tokio::spawn(ws::ws_task::<F::UserLogic>(
                 ws_url.clone(),
                 lobby_pda,
-                state_tx,
+                inputs_pda,
+                account_update_tx,
                 ws_ready_tx,
                 cancellation_token.clone(),
             ));
@@ -207,33 +185,6 @@ pub fn new_foc_client<F: DeformFocLogic>(
                     return;
                 }
             }
-
-            // --- latency probe: exactly one, selected by feature ---
-            #[cfg(feature = "rtt-getslot")]
-            tokio::spawn(rtt::getslot_task(
-                rpc.clone(),
-                rtt_micros.clone(),
-                cancellation_token.clone(),
-            ));
-
-            #[cfg(feature = "rtt-ping")]
-            tokio::spawn(rtt::ping_task(
-                ws_url.clone(),
-                rtt_micros.clone(),
-                cancellation_token.clone(),
-            ));
-
-            // The end-to-end probe reads the sim's per-commit send times.
-            #[cfg(feature = "rtt-inputs")]
-            let commit_times = Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new()));
-            #[cfg(feature = "rtt-inputs")]
-            tokio::spawn(rtt::inputs_rtt_task::<F::UserLogic>(
-                ws_url.clone(),
-                inputs_pda,
-                commit_times.clone(),
-                rtt_micros.clone(),
-                cancellation_token.clone(),
-            ));
 
             // The commit task owns the RPC send path; the bounded channel backpressures
             // the sim loop if sends fall behind.
@@ -270,11 +221,8 @@ pub fn new_foc_client<F: DeformFocLogic>(
 
                 program_client,
                 commit_tx,
-                #[cfg(feature = "rtt-inputs")]
-                commit_times,
 
-                state_rx,
-                rtt_micros,
+                account_update_rx,
 
                 set_inputs_receiver,
                 backend_state: backend_state_clone.clone(),
@@ -287,9 +235,8 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 last_tick_interval: Duration::from_micros(F::UserLogic::TICK_RATE_MICROS),
                 next_tick_deadline: tokio::time::Instant::now(),
 
-                avg_rtt: Duration::from_millis(50),
-                min_ticks_ahead: 4,
-                max_ticks_ahead: 12,
+                buffer_estimate: 1.0,
+                rollback_panic: 0.0,
 
                 cancellation_token,
             };

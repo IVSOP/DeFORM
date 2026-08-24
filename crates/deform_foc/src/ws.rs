@@ -1,36 +1,31 @@
-//! The WebSocket half of the FoC backend: `accountSubscribe` on the lobby PDA.
-//! Decoded lobby states are forwarded to the simulation loop. Latency is measured
-//! separately over HTTP (`getSlot`, see [`crate`]), so this task doesn't do RTT
-//! ping/pong — it only keepalive-pings and answers server pings so the socket stays
-//! open even while the lobby is idle.
-
 use std::time::Duration;
 
 use base64::Engine as _;
-use deform_core::{
-    DeformError, DeformResult, DeformUserLogic, Pubkey,
-    accounts::{DeformAccount, lobby::LobbyState},
-};
+use deform_core::{DeformError, DeformResult, DeformUserLogic, Pubkey, accounts::DeformAccount};
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-/// How often to send a keepalive ping while the lobby account is otherwise idle.
+/// How often to send a keepalive ping while the subscribed account is otherwise idle.
 const KEEPALIVE_SECS: u64 = 20;
 
 /// Subscribe to `lobby_pda` and pump decoded [`LobbyState`]s into `state_tx`. Signals
 /// `ready` once the subscription is confirmed (or fails). Runs until `terminate`
 /// fires or the socket closes.
+///
+// TODO: implement retry logic, as sometimes websockets close for no reason
+// TODO: better error handling
 pub async fn ws_task<U: DeformUserLogic>(
     ws_url: String,
     lobby_pda: Pubkey,
-    state_tx: mpsc::UnboundedSender<LobbyState<U>>,
+    inputs_pda: Pubkey,
+    account_update_tx: mpsc::UnboundedSender<DeformAccount<U>>,
     ready: oneshot::Sender<DeformResult>,
     cancellation_token: CancellationToken,
 ) {
-    let stream = match tokio_tungstenite::connect_async(ws_url.as_str()).await {
+    let lobby_stream = match tokio_tungstenite::connect_async(ws_url.as_str()).await {
         Ok((stream, _resp)) => stream,
         Err(e) => {
             let _ = ready.send(Err(DeformError::Connection(format!(
@@ -39,7 +34,17 @@ pub async fn ws_task<U: DeformUserLogic>(
             return;
         }
     };
-    let (mut write, mut read) = stream.split();
+    let inputs_stream = match tokio_tungstenite::connect_async(ws_url.as_str()).await {
+        Ok((stream, _resp)) => stream,
+        Err(e) => {
+            let _ = ready.send(Err(DeformError::Connection(format!(
+                "websocket connect to {ws_url}: {e}"
+            ))));
+            return;
+        }
+    };
+    let (mut lobby_write, mut lobby_read) = lobby_stream.split();
+    let (mut inputs_write, mut inputs_read) = inputs_stream.split();
 
     // accountSubscribe with the lowest-latency commitment; the ER is a single
     // validator so `processed` is effectively final.
@@ -53,8 +58,24 @@ pub async fn ws_task<U: DeformUserLogic>(
         ]
     })
     .to_string();
+    if let Err(e) = lobby_write.send(Message::Text(sub.into())).await {
+        let _ = ready.send(Err(DeformError::Connection(format!(
+            "websocket send subscribe: {e}"
+        ))));
+        return;
+    }
 
-    if let Err(e) = write.send(Message::Text(sub.into())).await {
+    let sub = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "accountSubscribe",
+        "params": [
+            inputs_pda.to_string(),
+            { "encoding": "base64", "commitment": "processed" }
+        ]
+    })
+    .to_string();
+    if let Err(e) = inputs_write.send(Message::Text(sub.into())).await {
         let _ = ready.send(Err(DeformError::Connection(format!(
             "websocket send subscribe: {e}"
         ))));
@@ -70,14 +91,18 @@ pub async fn ws_task<U: DeformUserLogic>(
             _ = cancellation_token.cancelled() => break,
 
             _ = keepalive.tick() => {
-                if let Err(e) = write.send(Message::Ping(Vec::new().into())).await {
+                if let Err(e) = lobby_write.send(Message::Ping(Vec::new().into())).await {
+                    warn!("foc ws keepalive ping failed: {e}");
+                    break;
+                }
+                if let Err(e) = inputs_write.send(Message::Ping(Vec::new().into())).await {
                     warn!("foc ws keepalive ping failed: {e}");
                     break;
                 }
             }
 
-            msg = read.next() => {
-                let Some(msg) = msg else { break };
+            lobby_update_msg = lobby_read.next() => {
+                let Some(msg) = lobby_update_msg else { break };
                 let msg = match msg {
                     Ok(m) => m,
                     Err(e) => {
@@ -91,15 +116,24 @@ pub async fn ws_task<U: DeformUserLogic>(
 
                 match msg {
                     Message::Text(text) => {
-                        match handle_text::<U>(&text) {
+                        match handle_text(&text) {
                             TextOutcome::Subscribed => {
                                 if let Some(tx) = ready.take() {
                                     let _ = tx.send(Ok(()));
                                 }
                             }
-                            TextOutcome::State(state) => {
-                                // receiver gone => simulation loop ended; stop.
-                                if state_tx.send(state).is_err() {
+                            // FIX: this is repeated exactly for the inputs account
+                            // need to have some sort of utility that receives N addresses and listens on them all cleanly
+                            TextOutcome::State(bytes) => {
+                                let account = match DeformAccount::<U>::from_bytes(&bytes) {
+                                    Ok(account) => account,
+                                    Err(e) => {
+                                        warn!("foc ws: lobby decode failed: {e}");
+                                        continue;
+                                    }
+                                };
+
+                                if account_update_tx.send(account).is_err() {
                                     break;
                                 }
                             }
@@ -108,7 +142,57 @@ pub async fn ws_task<U: DeformUserLogic>(
                     }
                     // Some servers ping us for keepalive; answer so we aren't dropped.
                     Message::Ping(payload) => {
-                        if write.send(Message::Pong(payload)).await.is_err() {
+                        if lobby_write.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                    }
+                    // Pong from our own keepalive ping; nothing to do.
+                    Message::Pong(_) => {}
+                    Message::Close(_) => break,
+                    _ => {}
+                }
+            }
+
+            inputs_update_msg = inputs_read.next() => {
+                let Some(msg) = inputs_update_msg else { break };
+                let msg = match msg {
+                    Ok(m) => m,
+                    Err(e) => {
+                        if let Some(tx) = ready.take() {
+                            let _ = tx.send(Err(DeformError::Connection(format!("websocket: {e}"))));
+                        }
+                        warn!("foc ws recv error: {e}");
+                        break;
+                    }
+                };
+
+                match msg {
+                    Message::Text(text) => {
+                        match handle_text(&text) {
+                            TextOutcome::Subscribed => {
+                                if let Some(tx) = ready.take() {
+                                    let _ = tx.send(Ok(()));
+                                }
+                            }
+                            TextOutcome::State(bytes) => {
+                                let account = match DeformAccount::<U>::from_bytes(&bytes) {
+                                    Ok(account) => account,
+                                    Err(e) => {
+                                        warn!("foc ws: inputs decode failed: {e}");
+                                        continue;
+                                    }
+                                };
+
+                                if account_update_tx.send(account).is_err() {
+                                    break;
+                                }
+                            }
+                            TextOutcome::Ignored => {}
+                        }
+                    }
+                    // Some servers ping us for keepalive; answer so we aren't dropped.
+                    Message::Ping(payload) => {
+                        if lobby_write.send(Message::Pong(payload)).await.is_err() {
                             break;
                         }
                     }
@@ -130,17 +214,17 @@ pub async fn ws_task<U: DeformUserLogic>(
     debug!("foc ws task exiting");
 }
 
-enum TextOutcome<U: DeformUserLogic> {
+enum TextOutcome {
     /// The `accountSubscribe` request was acknowledged.
     Subscribed,
-    /// An `accountNotification` we successfully decoded into a lobby state.
-    State(LobbyState<U>),
+    /// Account update
+    State(Vec<u8>),
     /// Anything we don't care about (or couldn't decode).
     Ignored,
 }
 
-// FIX: this is cursed, is it even being used??
-fn handle_text<U: DeformUserLogic>(text: &str) -> TextOutcome<U> {
+// FIX: stop using TextOutcome::Ignored for errors, just use a regular result
+fn handle_text(text: &str) -> TextOutcome {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
         return TextOutcome::Ignored;
     };
@@ -167,12 +251,5 @@ fn handle_text<U: DeformUserLogic>(text: &str) -> TextOutcome<U> {
         return TextOutcome::Ignored;
     };
 
-    match DeformAccount::<U>::from_bytes(&bytes) {
-        Ok(DeformAccount::Lobby(lobby)) => TextOutcome::State(lobby.state),
-        Ok(_) => TextOutcome::Ignored,
-        Err(e) => {
-            warn!("foc ws: lobby decode failed: {e}");
-            TextOutcome::Ignored
-        }
-    }
+    TextOutcome::State(bytes)
 }

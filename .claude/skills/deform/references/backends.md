@@ -200,21 +200,16 @@ returns `DeformError::TickRateMissmatch`. On-chain the game runs at the validato
 so there is no freedom here — pick a tick rate that divides the slot time (20 Hz / 50 000 µs
 is the working default).
 
-### Latency strategy (compile-time feature, pick exactly one)
+### Pacing signal
 
-`deform_foc` `const`-asserts that exactly one is enabled.
-
-| Feature | How it measures RTT | When to use |
-| --- | --- | --- |
-| `rtt-getslot` (default) | times an HTTP `getSlot` round trip | works everywhere |
-| `rtt-ping` | WebSocket control-frame ping/pong | only if the ER answers pings; cheapest |
-| `rtt-inputs` | true end-to-end: `set_inputs` sent → inputs account reflects it | most accurate, most expensive |
-
-To switch, disable default features:
-`cargo run -p pong --no-default-features --features "client,anchor,foc-ping"`.
-
-RTT is sampled every `RTT_SAMPLE_INTERVAL_MS` (500 ms) and feeds the ticks-ahead target
+Two `accountSubscribe` sockets: one on the lobby PDA for authoritative states, one on the
+player's own inputs PDA. The `tick` instruction removes each input as it consumes it, so
+the inputs account's length is how much the chain still has queued for ticks it has not
+run — the same signal the QUIC server reports explicitly, and what drives time dilation
 (`references/netcode.md`).
+
+Latency falls out of the same subscription: a commit is timed from when it was sent to
+when it appears in the account, which feeds the match-start burst and `stats.ping_ms`.
 
 ## Writing another backend
 

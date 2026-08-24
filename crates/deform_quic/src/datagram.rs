@@ -20,7 +20,7 @@ pub struct DeformDatagram {
     /// ever compares one against the other.
     ///
     /// Deliberately not the tick, which repeats while a client is frozen at
-    /// `max_ticks_ahead` and would let two different messages share an id.
+    /// `MAX_PREDICTION_TICKS` and would let two different messages share an id.
     message_id: u64,
     fragment_id: u8,
     total_fragments: u8,

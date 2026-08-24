@@ -127,8 +127,6 @@ a networked backend to exercise.)
   DeFORM sends is built by *your* impl, so the on-chain program's account layout, extra
   instructions, fees, and even framework (Anchor → Pinocchio) are yours to change.
 - **Interpolation**: tune `#[smooth(...)]` per struct, or write your own `Smooth<G>` impl.
-- **Latency estimation** (FoC): pick one of `rtt-getslot` / `rtt-ping` / `rtt-inputs` at
-  compile time.
 
 Feature surface is still small. When something isn't configurable, the escape hatch is
 almost always "implement the trait yourself" rather than a config knob.
@@ -355,7 +353,7 @@ server settles the result via `write_and_close` when the match ends.
 | --- | --- |
 | `references/core-api.md` | Every trait bound, `TickInfo`, `Lobby`/`LobbyState`, `DeformClient`, errors, wincode requirements |
 | `references/backends.md` | Choosing a backend; offline/QUIC/FoC constructors; `DeformQuicLogic` + running a server |
-| `references/netcode.md` | Prediction, rollback, gaps, fast-forward, time dilation, ticks-ahead targeting |
+| `references/netcode.md` | Prediction, rollback, gaps, fast-forward, time dilation, input-buffer targeting |
 | `references/smoothing.md` | `#[derive(Smooth)]` attributes, `SmoothableField`, custom smoothers |
 | `references/onchain.md` | Program template, lobby lifecycle, ER delegation, the crank, codama client generation, deployment |
 | `references/example-pong.md` | Guided tour of `crates/examples/pong` + how to run it locally |
