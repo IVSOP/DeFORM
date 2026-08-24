@@ -12,7 +12,7 @@ use deform_core::{
     accounts::{
         DeformAccount,
         inputs::InputsAccount,
-        lobby::{Lobby, LobbyState, ongoing::LobbyOngoing},
+        lobby::{Lobby, LobbyState},
     },
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
@@ -26,6 +26,8 @@ mod ws;
 
 use client::FocBackend;
 use tokio_util::sync::CancellationToken;
+
+use crate::client::TARGET_BUFFER;
 
 /// Ties a game's [`DeformUserLogic`] to the [`GameProgramClient`] that builds its
 /// on-chain instructions. The FoC analogue of `DeformQuicLogic`, minus the Web2
@@ -97,12 +99,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
             (
                 Lobby {
                     metadata: lobby.metadata.clone(),
-                    state: LobbyState::Ongoing(LobbyOngoing {
-                        slot: None,
-                        tick: 0,
-                        tick_info: tick_info.clone(),
-                        user_logic: user_logic.clone(),
-                    }),
+                    state: LobbyState::NotStarted(not_started.clone()),
                 },
                 user_logic,
                 tick_info,
@@ -238,7 +235,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 next_tick_deadline: tokio::time::Instant::now(),
 
                 rtt_micros,
-                buffer_estimate: 1.0,
+                buffer_estimate: TARGET_BUFFER + F::JITTER_SLACK,
                 rollback_panic: 0.0,
 
                 cancellation_token,

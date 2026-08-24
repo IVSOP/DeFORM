@@ -148,12 +148,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 (
                     Lobby {
                         metadata: lobby.metadata.clone(),
-                        state: LobbyState::Ongoing(LobbyOngoing {
-                            slot: None,
-                            tick: 0,
-                            tick_info: tick_info.clone(),
-                            user_logic: user_logic.clone(),
-                        }),
+                        state: LobbyState::NotStarted(not_started.clone()),
                     },
                     user_logic,
                     tick_info,
@@ -373,7 +368,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 set_inputs_receiver,
                                 backend_state: backend_state_clone.clone(),
                                 user_logic,
-                                buffer_estimate: TARGET_BUFFER,
+                                buffer_estimate: TARGET_BUFFER + Q::JITTER_SLACK,
                                 rollback_panic: 0.0,
 
                                 smoother,
@@ -442,11 +437,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 .. if let _ = &mut tick_sleep => {
                     match &self.remote_lobby.state {
                         LobbyState::Finished(_) => break,
-                        // Grace period: the match has not started on the server, so there is no
-                        // authoritative stream to reconcile against. Predicting here would just get
-                        // rolled back the moment the match goes live, so we hold at the initial state.
-                        // The first `Started` datagram bootstraps us via the FastForward path.
-                        LobbyState::NotStarted(_) => break,
+                        LobbyState::NotStarted(_) => continue,
                         LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
                             if self.local_tick == remote_tick {
@@ -1009,6 +1000,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         let new_remote_tick = remote_ongoing.tick;
         let old_remote_tick = match &self.remote_lobby.state {
             LobbyState::Ongoing(old_ongoing) => old_ongoing.tick,
+            LobbyState::NotStarted(_) => 0,
             _ => Err(DeformError::InvalidState(
                 "Previous lobby was not Ongoing".into(),
             ))?,

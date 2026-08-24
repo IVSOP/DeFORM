@@ -37,7 +37,7 @@ use tracing::{debug, error, warn};
 use crate::DeformFocLogic;
 
 /// How many inputs the server should have queued up AFTER consuming the current tick's
-const TARGET_BUFFER: f32 = 0.0;
+pub const TARGET_BUFFER: f32 = 0.0;
 /// Only after this deadzone do we start slowing the simulation down
 const SLOWDOWN_DEADZONE: f32 = 1.0;
 
@@ -130,7 +130,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     match &self.remote_lobby.state {
                         LobbyState::Finished(_) => break,
                         // No authoritative stream to reconcile against yet; hold.
-                        LobbyState::NotStarted(_) => break,
+                        LobbyState::NotStarted(_) => continue,
                         LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
                             if self.local_tick == remote_tick {
@@ -622,6 +622,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
         let new_remote_tick = remote_ongoing.tick;
         let old_remote_tick = match &self.remote_lobby.state {
             LobbyState::Ongoing(old_ongoing) => old_ongoing.tick,
+            LobbyState::NotStarted(_) => 0,
             _ => Err(DeformError::InvalidState(
                 "Previous lobby was not Ongoing".into(),
             ))?,
