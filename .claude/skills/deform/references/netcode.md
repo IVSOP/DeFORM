@@ -151,7 +151,7 @@ having to measure the noise. An earlier version added a second, jitter-derived s
 and was double-counting.
 
 A rollback caused by *our own* inputs mismatching is direct evidence the buffer ran dry, more
-sharply than any report shows. It adds 1 to `rollback_panic` (capped at 2), which raises the
+sharply than any report shows. It adds 1 to `rollback_panic` (capped at 3), which raises the
 target — dead zone and all — and decays with a half-life of ~15 updates, about as long as a
 10 % speedup needs to win back a tick of buffer. The extra lead is then shed gently through
 the slowdown flank instead of snapping back.

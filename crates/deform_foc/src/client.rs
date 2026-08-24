@@ -1,7 +1,10 @@
 use std::{
     collections::{BTreeMap, HashMap},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -52,6 +55,8 @@ const PANIC_MAX: f32 = 3.0;
 const PANIC_DECAY: f32 = 0.955;
 /// Freeze if we get this many ticks ahead. Means reports stopped and either server died or we lost connection.
 const MAX_PREDICTION_TICKS: u64 = 30;
+/// How often to publish the RTT into the stats, just so we don't do it constantly.
+const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
 pub struct FocBackend<F: DeformFocLogic> {
     pub local_tick: u64,
@@ -82,8 +87,7 @@ pub struct FocBackend<F: DeformFocLogic> {
     pub smoother: <F::UserLogic as DeformUserLogic>::Smoother,
     pub visual_tick_micros: u64,
     /// The ER's slot/block time in micros, provided by the caller (matching on-chain
-    /// `get_micros_per_slot`). Drives the commit cadence (~one tx per slot) and is the
-    /// inclusion-latency floor folded into the ticks-ahead target.
+    /// `get_micros_per_slot`). Drives the commit cadence (~one tx per slot).
     pub slot_time_micros: u64,
     pub last_sim_instant: Instant,
     /// Measured duration of the last sim interval. Denominator for visual `t`.
@@ -92,6 +96,8 @@ pub struct FocBackend<F: DeformFocLogic> {
     /// deadline so per-tick work and jitter don't accumulate as drift.
     pub next_tick_deadline: tokio::time::Instant,
 
+    /// Round trip to the ER, measured by the ws task's ping/pong.
+    pub rtt_micros: Arc<AtomicU64>,
     /// Pessimistic estimate of how many of our inputs the chain holds for future ticks.
     /// (we assume it has less than reality by being agressive when reducing and slow to increase)
     pub buffer_estimate: f32,
@@ -125,6 +131,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
         let commit_interval_ticks = self.commit_interval_ticks();
         let mut last_commit_tick = self.local_tick;
         let mut last_commit_at = tokio::time::Instant::now();
+        let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         loop {
             tokio_select!(match .. {
@@ -222,6 +229,23 @@ impl<F: DeformFocLogic> FocBackend<F> {
                                 ongoing.tick_info = visual_state;
                             }
                         }
+                    }
+                }
+
+                // tick to plot the RTT once in a while and write it into the stats
+                // just so we don't do this constantly
+                .. if let _ = rtt_ticker.tick() => {
+                    if !matches!(self.remote_lobby.state, LobbyState::Finished(_)) {
+                        let rtt_ms = self.rtt_micros.load(Ordering::Relaxed) as f64 / 1000.0;
+
+                        #[cfg(feature = "metrics")]
+                        deform_metrics::plot!("RTT", rtt_ms);
+
+                        let mut shared = self
+                            .backend_state
+                            .lock()
+                            .map_err(|_| DeformError::LockPoisoned)?;
+                        shared.stats.ping_ms = rtt_ms;
                     }
                 }
 

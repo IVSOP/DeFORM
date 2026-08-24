@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::Debug,
-    sync::Arc,
+    sync::{Arc, atomic::AtomicU64},
     thread,
     time::{Duration, Instant},
 };
@@ -162,6 +162,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
             // subscription can't be established, fail setup.
             let (account_update_tx, account_update_rx) =
                 mpsc::unbounded_channel::<DeformAccount<F::UserLogic>>();
+            let rtt_micros = Arc::new(AtomicU64::new(Duration::from_millis(50).as_micros() as u64));
 
             let (ws_ready_tx, ws_ready_rx) = oneshot::channel::<DeformResult>();
             tokio::spawn(ws::ws_task::<F::UserLogic>(
@@ -169,6 +170,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 lobby_pda,
                 inputs_pda,
                 account_update_tx,
+                rtt_micros.clone(),
                 ws_ready_tx,
                 cancellation_token.clone(),
             ));
@@ -235,6 +237,7 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 last_tick_interval: Duration::from_micros(F::UserLogic::TICK_RATE_MICROS),
                 next_tick_deadline: tokio::time::Instant::now(),
 
+                rtt_micros,
                 buffer_estimate: 1.0,
                 rollback_panic: 0.0,
 

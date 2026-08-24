@@ -72,18 +72,7 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     // pub stale_datagrams: u64,
 }
 
-/// How long to wait before using the RTT value to update how far ahead the simulation is.
-///
-/// High value:
-///     - simulation is stable, more likely to be a constant number of ticks ahead. even if it changes, it will change less frequently
-///     - slow to react to changing network conditions, both positive and negative
-///     - low compute overhead
-///
-/// Low value is the exact opposite.
-///
-/// From my experimentation:
-/// 1s: works fine but will be slow to react to changes in the network
-/// 200ms: introduces a bit of jitter
+/// How often to publish the RTT into the stats, just so we don't do it constantly.
 pub const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
 /// How many inputs the server should have queued up ideally. If it has 0, it means it has starved
@@ -477,8 +466,9 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                     <Q::UserLogic as DeformUserLogic>::TICK_RATE_MICROS,
                                 );
                                 self.last_sim_instant = Instant::now();
-                                // The estimate describes the lead we just discarded.
-                                self.buffer_estimate = TARGET_BUFFER;
+                                // The estimate describes the lead we just discarded, so
+                                // restart it neutral rather than below target.
+                                self.buffer_estimate = TARGET_BUFFER + Q::JITTER_SLACK;
                             } else {
                                 // Every smaller correction, catching up or shedding
                                 // lead, is handled by time dilation (see

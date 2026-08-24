@@ -1,4 +1,10 @@
-use std::time::Duration;
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::{Duration, Instant},
+};
 
 use base64::Engine as _;
 use deform_core::{DeformError, DeformResult, DeformUserLogic, Pubkey, accounts::DeformAccount};
@@ -10,6 +16,8 @@ use tracing::{debug, warn};
 
 /// How often to send a keepalive ping while the subscribed account is otherwise idle.
 const KEEPALIVE_SECS: u64 = 20;
+/// How often to time a ping/pong round trip on the lobby socket.
+const PING_INTERVAL_MS: u64 = 250;
 
 /// Subscribe to `lobby_pda` and pump decoded [`LobbyState`]s into `state_tx`. Signals
 /// `ready` once the subscription is confirmed (or fails). Runs until `terminate`
@@ -22,6 +30,7 @@ pub async fn ws_task<U: DeformUserLogic>(
     lobby_pda: Pubkey,
     inputs_pda: Pubkey,
     account_update_tx: mpsc::UnboundedSender<DeformAccount<U>>,
+    rtt_micros: Arc<AtomicU64>,
     ready: oneshot::Sender<DeformResult>,
     cancellation_token: CancellationToken,
 ) {
@@ -85,18 +94,28 @@ pub async fn ws_task<U: DeformUserLogic>(
     let mut ready = Some(ready);
     let mut keepalive = tokio::time::interval(Duration::from_secs(KEEPALIVE_SECS));
     keepalive.reset();
+    // The ER echoes ping payloads verbatim, so a timestamp in the payload comes back
+    // and gives us a true round trip without any RPC call.
+    let mut rtt_ping = tokio::time::interval(Duration::from_millis(PING_INTERVAL_MS));
+    rtt_ping.reset();
+    let started = Instant::now();
 
     loop {
         tokio::select! {
             _ = cancellation_token.cancelled() => break,
 
             _ = keepalive.tick() => {
-                if let Err(e) = lobby_write.send(Message::Ping(Vec::new().into())).await {
+                if let Err(e) = inputs_write.send(Message::Ping(Vec::new().into())).await {
                     warn!("foc ws keepalive ping failed: {e}");
                     break;
                 }
-                if let Err(e) = inputs_write.send(Message::Ping(Vec::new().into())).await {
-                    warn!("foc ws keepalive ping failed: {e}");
+            }
+
+            // Doubles as the lobby socket's keepalive, so it needs no separate ping.
+            _ = rtt_ping.tick() => {
+                let now = started.elapsed().as_micros() as u64;
+                if let Err(e) = lobby_write.send(Message::Ping(now.to_le_bytes().to_vec().into())).await {
+                    warn!("foc ws rtt ping failed: {e}");
                     break;
                 }
             }
@@ -146,8 +165,13 @@ pub async fn ws_task<U: DeformUserLogic>(
                             break;
                         }
                     }
-                    // Pong from our own keepalive ping; nothing to do.
-                    Message::Pong(_) => {}
+                    Message::Pong(payload) => {
+                        if let Ok(sent) = <[u8; 8]>::try_from(payload.as_ref()) {
+                            let sent = u64::from_le_bytes(sent);
+                            let now = started.elapsed().as_micros() as u64;
+                            rtt_micros.store(now.saturating_sub(sent), Ordering::Relaxed);
+                        }
+                    }
                     Message::Close(_) => break,
                     _ => {}
                 }
@@ -192,7 +216,7 @@ pub async fn ws_task<U: DeformUserLogic>(
                     }
                     // Some servers ping us for keepalive; answer so we aren't dropped.
                     Message::Ping(payload) => {
-                        if lobby_write.send(Message::Pong(payload)).await.is_err() {
+                        if inputs_write.send(Message::Pong(payload)).await.is_err() {
                             break;
                         }
                     }
