@@ -106,15 +106,6 @@ pub struct FocBackend<F: DeformFocLogic> {
 }
 
 impl<F: DeformFocLogic> FocBackend<F> {
-    /// How many game ticks are batched into a single `set_inputs` transaction: as many
-    /// as fit in one ER slot, at least one. Committing every tick is not viable here,
-    /// so this is also the worst-case wait an input can sit through before being sent.
-    fn commit_interval_ticks(&self) -> u64 {
-        self.slot_time_micros
-            .div_ceil(<F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
-            .max(1)
-    }
-
     pub async fn tick_loop(
         mut self,
         starting_tick_info: TickInfo<F::UserLogic>,
@@ -125,12 +116,10 @@ impl<F: DeformFocLogic> FocBackend<F> {
             + Duration::from_micros(<F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS);
         let mut tick_sleep = Box::pin(sleep_until(self.next_tick_deadline));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
-        // Each commit carries the full accumulated input batch, so committing less
-        // often loses no inputs, it only adds a little commit latency.
         let tick_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS;
-        let commit_interval_ticks = self.commit_interval_ticks();
-        let mut last_commit_tick = self.local_tick;
-        let mut last_commit_at = tokio::time::Instant::now();
+        // One transaction per slot. Each commit carries the full accumulated batch, so a
+        // commit with nothing new to say costs a tx but loses no inputs.
+        let mut commit_ticker = interval(Duration::from_micros(self.slot_time_micros));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         loop {
@@ -156,7 +145,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
                                 // A burst has no interval to measure; hold the base rate.
                                 self.last_tick_interval = Duration::from_micros(tick_micros);
                                 self.last_sim_instant = Instant::now();
-                                self.buffer_estimate = TARGET_BUFFER;
+                                self.buffer_estimate = TARGET_BUFFER + F::JITTER_SLACK;
                             } else {
                                 // Every smaller correction, catching up or shedding
                                 // lead, is handled by time dilation (see
@@ -169,29 +158,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         }
                     }
 
-                    // Commit once enough new input ticks have piled up, rather than on a
-                    // wall-clock timer. Inputs are produced by ticks, so counting ticks keeps
-                    // the batch size constant under time dilation; a timer would instead fire
-                    // with little new to send and pay for a near-empty transaction.
-                    //
-                    // The elapsed check is only a backstop: the simulation stops advancing
-                    // while frozen at `MAX_PREDICTION_TICKS`, and the tick count alone would then
-                    // never reach the threshold again.
-                    let ticks_since_commit = self.local_tick.saturating_sub(last_commit_tick);
-                    let commit_stalled = last_commit_at.elapsed()
-                        > Duration::from_micros(2 * commit_interval_ticks * tick_micros);
-
-                    if ticks_since_commit >= commit_interval_ticks || commit_stalled {
-                        #[cfg(feature = "metrics")]
-                        if let Some(max_input) = self.inputs.keys().max() {
-                            deform_metrics::plot!("commit_inputs", *max_input as f64);
-                        }
-
-                        self.commit_inputs().await?;
-                        last_commit_tick = self.local_tick;
-                        last_commit_at = tokio::time::Instant::now();
-                    }
-
                     let dilated = self.compute_dilated_tick_interval();
                     self.next_tick_deadline += dilated;
                     let now = tokio::time::Instant::now();
@@ -199,6 +165,15 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         self.next_tick_deadline = now;
                     }
                     tick_sleep.as_mut().reset(self.next_tick_deadline);
+                }
+
+                .. if let _ = commit_ticker.tick() => {
+                    #[cfg(feature = "metrics")]
+                    if let Some(max_input) = self.inputs.keys().max() {
+                        deform_metrics::plot!("commit_inputs", *max_input as f64);
+                    }
+
+                    self.commit_inputs().await?;
                 }
 
                 // Visual: interpolate between previous and current sim state.
@@ -422,7 +397,21 @@ impl<F: DeformFocLogic> FocBackend<F> {
                     let provided_inputs = &provided_inputs.inputs;
                     provided_inputs.clone()
                 } else {
-                    inputs.predict()
+                    let predicted = inputs.predict();
+
+                    // when predicting inputs, add them to the inputs buffer so we don't starve the server
+                    #[cfg(feature = "metrics")]
+                    self.inputs.insert(
+                        current_tick,
+                        deform_core::StampedInputs {
+                            inputs: predicted.clone(),
+                            creation_time: Instant::now(),
+                        },
+                    );
+                    #[cfg(not(feature = "metrics"))]
+                    self.inputs.insert(current_tick, predicted.clone());
+
+                    predicted
                 }
             } else {
                 inputs.predict()
@@ -475,6 +464,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
             })
             .collect();
 
+        // WARN: sending message when nothing is there will do absolutely nothing
+        // our goal is to never enter this branch
         if pending.is_empty() {
             return Ok(());
         }

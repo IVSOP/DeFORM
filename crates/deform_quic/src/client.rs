@@ -761,7 +761,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
         for (player, inputs) in new_players_inputs.iter_mut() {
             *inputs = if *player == self.player {
-                // for our own player: try to get from the map. else, copy previous value, pruning it
+                // for our own player: try to get from the map. else, predict from the
+                // previous value and remember it below
                 if let Some(provided_inputs) = self.inputs.get(&current_tick) {
                     #[cfg(feature = "metrics")]
                     deform_metrics::plot!(
@@ -772,7 +773,21 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                     let provided_inputs = &provided_inputs.inputs;
                     provided_inputs.clone()
                 } else {
-                    inputs.predict()
+                    let predicted = inputs.predict();
+
+                    // when predicting inputs, add them to the inputs buffer so we don't starve the server
+                    #[cfg(feature = "metrics")]
+                    self.inputs.insert(
+                        current_tick,
+                        deform_core::StampedInputs {
+                            inputs: predicted.clone(),
+                            creation_time: Instant::now(),
+                        },
+                    );
+                    #[cfg(not(feature = "metrics"))]
+                    self.inputs.insert(current_tick, predicted.clone());
+
+                    predicted
                 }
             } else {
                 inputs.predict()
@@ -830,6 +845,8 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
             })
             .collect();
 
+        // WARN: sending message when nothing is there will do absolutely nothing
+        // our goal is to never enter this branch
         if pending.is_empty() {
             return Ok(());
         }
