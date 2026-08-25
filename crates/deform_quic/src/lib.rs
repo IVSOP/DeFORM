@@ -62,7 +62,7 @@ pub trait DeformQuicLogic: Clone + Sized + Debug + Send + Sync + 'static {
     const TIME_DILATION: f32 = 0.10;
 
     /// Extra inputs to keep queued on the server beyond the one it consumes each tick as margin for jitter
-    const JITTER_SLACK: f32 = 1.5;
+    const JITTER_SLACK: f32 = 0.5;
 
     /// Maximum number of incomplete messages that we buffer
     const MAX_MESSAGE_BUFFER: u8 = 32;

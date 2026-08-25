@@ -437,7 +437,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                 .. if let _ = &mut tick_sleep => {
                     match &self.remote_lobby.state {
                         LobbyState::Finished(_) => break,
-                        LobbyState::NotStarted(_) => continue,
+                        LobbyState::NotStarted(_) => {}
                         LobbyState::Ongoing(ongoing) => {
                             let remote_tick = ongoing.tick;
                             if self.local_tick == remote_tick {
@@ -521,7 +521,6 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 .lock()
                                 .map_err(|_| DeformError::LockPoisoned)?;
 
-                            // TODO: cleaner way of doing this? I can only set the new state if the game is ongoing (or finished, but whatever)
                             if let LobbyState::Ongoing(ongoing) = &mut shared.lobby.state {
                                 ongoing.tick_info = visual_state;
                             }
@@ -909,7 +908,18 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
 
                 Ok(())
             }
-            LobbyState::Ongoing(ongoing) => self.handle_new_ongoing(ongoing, tick_sleep),
+            LobbyState::Ongoing(ongoing) => {
+                if matches!(self.remote_lobby.state, LobbyState::NotStarted(_)) {
+                    // first authoritative state of the match, populate local copy
+                    let mut shared = self
+                        .backend_state
+                        .lock()
+                        .map_err(|_| DeformError::LockPoisoned)?;
+                    shared.lobby.state = LobbyState::Ongoing(ongoing.clone());
+                }
+
+                self.handle_new_ongoing(ongoing, tick_sleep)
+            }
             LobbyState::NotStarted(_) => Ok(()),
         }
     }

@@ -288,13 +288,13 @@ pub async fn match_loop<Q: DeformQuicLogic>(
                     if let Some(player_inputs) = players_data.get_mut(&pubkey) {
                         for (tick, new_input) in inputs.iter() {
                             if tick < &ongoing.tick {
-                                warn!(
-                                    lobby_id,
-                                    player = %pubkey,
-                                    input_tick = tick,
-                                    current_tick = ongoing.tick,
-                                    "Inputs ignored: tick is in the past"
-                                );
+                                // warn!(
+                                //     lobby_id,
+                                //     player = %pubkey,
+                                //     input_tick = tick,
+                                //     current_tick = ongoing.tick,
+                                //     "Inputs ignored: tick is in the past"
+                                // );
                             } else if player_inputs.len() > MAX_INPUTS {
                                 warn!(lobby_id, player = %pubkey, "Too many pending inputs");
                                 break;

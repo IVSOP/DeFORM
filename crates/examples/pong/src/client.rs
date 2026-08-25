@@ -539,7 +539,7 @@ pub fn update_state(
 
     // FIX: do something if game has ended!
     let ongoing = match lobby.state {
-        LobbyState::NotStarted(_) => Err(anyhow!("Lobby has not started yet"))?, // FIX: just return Ok instead??
+        LobbyState::NotStarted(_) => return Ok(()),
         LobbyState::Finished(_) => Err(anyhow!("Lobby has finished!!"))?,
         LobbyState::Ongoing(ongoing) => ongoing,
     };
