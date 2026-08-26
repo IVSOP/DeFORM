@@ -12,7 +12,7 @@ pub const UNDELEGATE_DISCRIMINATOR: [u8; 8] = [131, 148, 180, 198, 91, 104, 42, 
 /// Accounts.
 #[derive(Debug)]
 pub struct Undelegate {
-    pub payer: solana_address::Address,
+    pub admin: solana_address::Address,
 
     pub lobby: solana_address::Address,
 
@@ -33,7 +33,7 @@ impl Undelegate {
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
         let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(self.payer, true));
+        accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
         accounts.push(solana_instruction::AccountMeta::new(self.lobby, false));
         accounts.push(solana_instruction::AccountMeta::new(
             self.magic_context,
@@ -94,13 +94,13 @@ impl UndelegateInstructionArgs {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable, signer]` payer
+///   0. `[writable, signer, optional]` admin (default to `AdmiapAjgTDNTKHUAs7FWztVWSGPNU5zHv2YKSN5GiMg`)
 ///   1. `[writable]` lobby
 ///   2. `[writable, optional]` magic_context (default to `MagicContext1111111111111111111111111111111`)
 ///   3. `[optional]` magic_program (default to `Magic11111111111111111111111111111111111111`)
 #[derive(Clone, Debug, Default)]
 pub struct UndelegateBuilder {
-    payer: Option<solana_address::Address>,
+    admin: Option<solana_address::Address>,
     lobby: Option<solana_address::Address>,
     magic_context: Option<solana_address::Address>,
     magic_program: Option<solana_address::Address>,
@@ -112,9 +112,10 @@ impl UndelegateBuilder {
     pub fn new() -> Self {
         Self::default()
     }
+    /// `[optional account, default to 'AdmiapAjgTDNTKHUAs7FWztVWSGPNU5zHv2YKSN5GiMg']`
     #[inline(always)]
-    pub fn payer(&mut self, payer: solana_address::Address) -> &mut Self {
-        self.payer = Some(payer);
+    pub fn admin(&mut self, admin: solana_address::Address) -> &mut Self {
+        self.admin = Some(admin);
         self
     }
     #[inline(always)]
@@ -157,7 +158,9 @@ impl UndelegateBuilder {
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
         let accounts = Undelegate {
-            payer: self.payer.expect("payer is not set"),
+            admin: self.admin.unwrap_or(solana_address::address!(
+                "AdmiapAjgTDNTKHUAs7FWztVWSGPNU5zHv2YKSN5GiMg"
+            )),
             lobby: self.lobby.expect("lobby is not set"),
             magic_context: self.magic_context.unwrap_or(solana_address::address!(
                 "MagicContext1111111111111111111111111111111"
@@ -176,7 +179,7 @@ impl UndelegateBuilder {
 
 /// `undelegate` CPI accounts.
 pub struct UndelegateCpiAccounts<'a, 'b> {
-    pub payer: &'b solana_account_info::AccountInfo<'a>,
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
 
@@ -190,7 +193,7 @@ pub struct UndelegateCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
-    pub payer: &'b solana_account_info::AccountInfo<'a>,
+    pub admin: &'b solana_account_info::AccountInfo<'a>,
 
     pub lobby: &'b solana_account_info::AccountInfo<'a>,
 
@@ -209,7 +212,7 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
     ) -> Self {
         Self {
             __program: program,
-            payer: accounts.payer,
+            admin: accounts.admin,
             lobby: accounts.lobby,
             magic_context: accounts.magic_context,
             magic_program: accounts.magic_program,
@@ -240,7 +243,7 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
         let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
-        accounts.push(solana_instruction::AccountMeta::new(*self.payer.key, true));
+        accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
         accounts.push(solana_instruction::AccountMeta::new(*self.lobby.key, false));
         accounts.push(solana_instruction::AccountMeta::new(
             *self.magic_context.key,
@@ -268,7 +271,7 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
         };
         let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
-        account_infos.push(self.payer.clone());
+        account_infos.push(self.admin.clone());
         account_infos.push(self.lobby.clone());
         account_infos.push(self.magic_context.clone());
         account_infos.push(self.magic_program.clone());
@@ -288,7 +291,7 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
 ///
 /// ### Accounts:
 ///
-///   0. `[writable, signer]` payer
+///   0. `[writable, signer]` admin
 ///   1. `[writable]` lobby
 ///   2. `[writable]` magic_context
 ///   3. `[]` magic_program
@@ -301,7 +304,7 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
         let instruction = Box::new(UndelegateCpiBuilderInstruction {
             __program: program,
-            payer: None,
+            admin: None,
             lobby: None,
             magic_context: None,
             magic_program: None,
@@ -311,8 +314,8 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
         Self { instruction }
     }
     #[inline(always)]
-    pub fn payer(&mut self, payer: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.payer = Some(payer);
+    pub fn admin(&mut self, admin: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.admin = Some(admin);
         self
     }
     #[inline(always)]
@@ -381,7 +384,7 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
         let instruction = UndelegateCpi {
             __program: self.instruction.__program,
 
-            payer: self.instruction.payer.expect("payer is not set"),
+            admin: self.instruction.admin.expect("admin is not set"),
 
             lobby: self.instruction.lobby.expect("lobby is not set"),
 
@@ -406,7 +409,7 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
 #[derive(Clone, Debug)]
 struct UndelegateCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
-    payer: Option<&'b solana_account_info::AccountInfo<'a>>,
+    admin: Option<&'b solana_account_info::AccountInfo<'a>>,
     lobby: Option<&'b solana_account_info::AccountInfo<'a>>,
     magic_context: Option<&'b solana_account_info::AccountInfo<'a>>,
     magic_program: Option<&'b solana_account_info::AccountInfo<'a>>,

@@ -32,8 +32,8 @@ pub mod anchor_program {
         ready::handler(ctx, id)
     }
 
-    pub fn write_and_close(
-        ctx: Context<WriteAndCloseAccounts>,
+    pub fn write_and_close<'info>(
+        ctx: Context<'info, WriteAndCloseAccounts<'info>>,
         id: u64,
         scores: Vec<PlayerScore>,
     ) -> Result<()> {
