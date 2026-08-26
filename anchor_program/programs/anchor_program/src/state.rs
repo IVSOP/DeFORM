@@ -11,12 +11,10 @@ compile_error!("enable exactly one game feature: `pong`, `shooter`, or `soccer`"
 pub use pong::pong_logic::{
     PongGame as UserLogic, PongGameState as GameState, PongInputs as Inputs,
 };
-
 #[cfg(feature = "shooter")]
 pub use shooter::shooter_logic::{
     ShooterGame as UserLogic, ShooterGameState as GameState, ShooterInputs as Inputs,
 };
-
 #[cfg(feature = "soccer")]
 pub use soccer::soccer_logic::{
     SoccerGame as UserLogic, SoccerGameState as GameState, SoccerInputs as Inputs,

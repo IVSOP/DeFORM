@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use deform_core::accounts::lobby::{LobbyFinished, LobbyState};
+use deform_core::accounts::lobby::{LobbyFinished, LobbyState, Network};
 use ephemeral_rollups_sdk::{
     consts::{MAGIC_CONTEXT_ID, MAGIC_PROGRAM_ID},
     cpi::undelegate_account,
@@ -9,6 +9,7 @@ use ephemeral_rollups_sdk::{
 use crate::{
     error::GameProgramError,
     util::{deser_and_check_inputs, deser_and_check_lobby},
+    ADMIN,
 };
 
 /// ER-side trigger. Runs on the ephemeral rollup: commits the final state of the
@@ -19,8 +20,8 @@ use crate::{
 /// back into [`process_undelegation`] (once per account).
 #[derive(Accounts)]
 pub struct UndelegateAccounts<'info> {
-    #[account(mut)]
-    pub payer: Signer<'info>,
+    #[account(mut, address = ADMIN @ GameProgramError::Unauthorized)]
+    pub admin: Signer<'info>,
     /// CHECK: delegated PDA; ownership/seeds are enforced by the delegation program.
     #[account(mut)]
     pub lobby: UncheckedAccount<'info>,
@@ -35,6 +36,10 @@ pub struct UndelegateAccounts<'info> {
 
 pub fn handler<'info>(ctx: Context<'info, UndelegateAccounts<'info>>, id: u64) -> Result<()> {
     let lobby_info = deser_and_check_lobby(&ctx.accounts.lobby, id, *ctx.program_id)?;
+
+    if !matches!(lobby_info.metadata.network, Network::FullyOnChain(_)) {
+        Err(GameProgramError::NotFullyOnChain)?;
+    }
 
     let players: Vec<Pubkey> = match lobby_info.state {
         LobbyState::NotStarted(not_started) => not_started.player_status.keys().copied().collect(),
@@ -53,7 +58,7 @@ pub fn handler<'info>(ctx: Context<'info, UndelegateAccounts<'info>>, id: u64) -
     committed.extend(ctx.remaining_accounts.iter().cloned());
 
     MagicIntentBundleBuilder::new(
-        ctx.accounts.payer.to_account_info(),
+        ctx.accounts.admin.to_account_info(),
         ctx.accounts.magic_context.to_account_info(),
         ctx.accounts.magic_program.to_account_info(),
     )

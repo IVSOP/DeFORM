@@ -2,9 +2,12 @@ use std::collections::BTreeMap;
 
 use anchor_lang::prelude::*;
 use deform_core::{
-    DeformGameState, DeformInputs, DeformUserLogic, accounts::{
-        DeformAccount, inputs::{InputsAccount, LastOperation}, lobby::{LobbyFinished, LobbyState, Network, ongoing::LobbyOngoing}
-    }
+    accounts::{
+        inputs::{InputsAccount, LastOperation},
+        lobby::{ongoing::LobbyOngoing, LobbyFinished, LobbyState, Network},
+        DeformAccount,
+    },
+    DeformGameState, DeformInputs, DeformUserLogic,
 };
 
 use crate::{

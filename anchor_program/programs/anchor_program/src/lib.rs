@@ -67,8 +67,7 @@ pub mod anchor_program {
         undelegate::handler(ctx, id)
     }
 
-    /// Delegation-program callback. Do not call directly and do not rename — the
-    /// name determines the discriminator the delegation program CPIs into.
+    /// WARN: DO NOT RENAME! Called by another program from magicblock.
     pub fn process_undelegation(
         ctx: Context<InitializeAfterUndelegation>,
         account_seeds: Vec<Vec<u8>>,

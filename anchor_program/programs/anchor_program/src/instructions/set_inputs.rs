@@ -2,9 +2,12 @@ use std::collections::HashMap;
 
 use anchor_lang::prelude::*;
 use deform_core::{
-    DeformUserLogic, accounts::{
-        DeformAccount, inputs::LastOperation, lobby::{LobbyState, Network}
-    }
+    accounts::{
+        inputs::LastOperation,
+        lobby::{LobbyState, Network},
+        DeformAccount,
+    },
+    DeformUserLogic,
 };
 
 use crate::{
