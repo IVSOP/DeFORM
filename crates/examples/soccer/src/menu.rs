@@ -71,6 +71,11 @@ pub fn egui_in_menu(
     let ctx = contexts.ctx_mut()?.clone();
     egui::Window::new("Soccer").show(&ctx, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            if cfg!(feature = "metrics") {
+                ui.colored_label(egui::Color32::LIGHT_GREEN, "Metrics enabled");
+            } else {
+                ui.colored_label(egui::Color32::GRAY, "Metrics disabled");
+            }
             ui.checkbox(&mut bot.0, "bot");
             ui.add_space(6.0);
             ui.heading("Eggy League");
