@@ -19,7 +19,7 @@ use deform_core::{
 };
 use solana_rpc_client::nonblocking::rpc_client::RpcClient;
 use solana_sdk::{message::Instruction, signature::Keypair, signer::Signer};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 
 mod client;
 mod ws;
@@ -185,10 +185,11 @@ pub fn new_foc_client<F: DeformFocLogic>(
                 }
             }
 
-            // The commit task owns the RPC send path; the bounded channel backpressures
-            // the sim loop if sends fall behind.
-            // TODO: do not hardcode 64 here
-            let (commit_tx, commit_rx) = mpsc::channel::<Instruction>(64);
+            // The commit task owns the RPC send path. A `watch` is a one-slot mailbox, not
+            // a queue: a commit written while the task is still sending replaces the one
+            // waiting instead of lining up behind it, so the task always picks up the
+            // freshest batch and the sim loop never blocks handing it over.
+            let (commit_tx, commit_rx) = watch::channel::<Option<Instruction>>(None);
             tokio::spawn(FocBackend::<F>::commit_task_wrapper(
                 rpc,
                 keypair,
@@ -229,7 +230,6 @@ pub fn new_foc_client<F: DeformFocLogic>(
 
                 smoother,
                 visual_tick_micros,
-                slot_time_micros,
                 last_sim_instant: Instant::now(),
                 last_tick_interval: Duration::from_micros(F::UserLogic::TICK_RATE_MICROS),
                 next_tick_deadline: tokio::time::Instant::now(),

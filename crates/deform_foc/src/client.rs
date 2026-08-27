@@ -20,7 +20,9 @@ use deform_core::{
     error::{UserFacingError, UserFacingResult},
     game_program_client::GameProgramClient,
 };
-use solana_rpc_client::nonblocking::rpc_client::RpcClient;
+use solana_rpc_client::{
+    api::config::RpcSendTransactionConfig, nonblocking::rpc_client::RpcClient,
+};
 use solana_sdk::{
     message::{AccountMeta, Instruction, Message},
     signature::Keypair,
@@ -28,7 +30,7 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use tokio::{
-    sync::mpsc,
+    sync::{mpsc, watch},
     time::{Sleep, interval, sleep_until},
 };
 use tokio_util::sync::CancellationToken;
@@ -59,6 +61,16 @@ const MAX_PREDICTION_TICKS: u64 = 30;
 /// How often to publish the RTT into the stats, just so we don't do it constantly.
 const RTT_SAMPLE_INTERVAL_MS: u64 = 500;
 
+/// Inputs txs are fire-and-forget: nothing downstream waits on a confirmation, so the
+/// node's preflight simulation and retry loop are pure added latency.
+const SEND_CONFIG: RpcSendTransactionConfig = RpcSendTransactionConfig {
+    skip_preflight: true,
+    preflight_commitment: None,
+    encoding: None,
+    max_retries: Some(0),
+    min_context_slot: None,
+};
+
 pub struct FocBackend<F: DeformFocLogic> {
     pub local_tick: u64,
     pub info_per_tick: HashMap<u64, TickInfo<F::UserLogic>>,
@@ -73,9 +85,12 @@ pub struct FocBackend<F: DeformFocLogic> {
 
     pub program_client: F::ProgramClient,
     /// Built `set_inputs` instructions are handed to the [`commit_task`], which owns
-    /// the RPC send path. The channel is bounded, so a slow commit task backpressures
-    /// the sim loop rather than piling up unbounded work.
-    pub commit_tx: mpsc::Sender<Instruction>,
+    /// the RPC send path. This is a one-slot mailbox rather than a queue: writing while
+    /// the task is mid-send overwrites the waiting commit instead of queueing behind it.
+    /// Safe because every batch is a superset of the last, so the overwritten one carried
+    /// nothing the new one lacks. Writing never blocks, so a slow send cannot stall the
+    /// sim loop the way awaiting a full bounded channel did.
+    pub commit_tx: watch::Sender<Option<Instruction>>,
 
     /// Lobby and inputs accounts, both decoded from `accountSubscribe`.
     pub account_update_rx: mpsc::UnboundedReceiver<DeformAccount<F::UserLogic>>,
@@ -87,9 +102,6 @@ pub struct FocBackend<F: DeformFocLogic> {
 
     pub smoother: <F::UserLogic as DeformUserLogic>::Smoother,
     pub visual_tick_micros: u64,
-    /// The ER's slot/block time in micros, provided by the caller (matching on-chain
-    /// `get_micros_per_slot`). Drives the commit cadence (~one tx per slot).
-    pub slot_time_micros: u64,
     pub last_sim_instant: Instant,
     /// Measured duration of the last sim interval. Denominator for visual `t`.
     pub last_tick_interval: Duration,
@@ -118,9 +130,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
         let mut tick_sleep = Box::pin(sleep_until(self.next_tick_deadline));
         let mut visual_ticker = interval(Duration::from_micros(self.visual_tick_micros));
         let tick_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS;
-        // One transaction per slot. Each commit carries the full accumulated batch, so a
-        // commit with nothing new to say costs a tx but loses no inputs.
-        let mut commit_ticker = interval(Duration::from_micros(self.slot_time_micros));
         let mut rtt_ticker = interval(Duration::from_millis(RTT_SAMPLE_INTERVAL_MS));
 
         loop {
@@ -158,6 +167,14 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         }
                     }
 
+                    // Commit right after the simulation step, so an input is handed over as soon as its tick closes
+                    #[cfg(feature = "metrics")]
+                    if let Some(max_input) = self.inputs.keys().max() {
+                        deform_metrics::plot!("commit_inputs", *max_input as f64);
+                    }
+
+                    self.commit_inputs()?;
+
                     let dilated = self.compute_dilated_tick_interval();
                     self.next_tick_deadline += dilated;
                     let now = tokio::time::Instant::now();
@@ -165,15 +182,6 @@ impl<F: DeformFocLogic> FocBackend<F> {
                         self.next_tick_deadline = now;
                     }
                     tick_sleep.as_mut().reset(self.next_tick_deadline);
-                }
-
-                .. if let _ = commit_ticker.tick() => {
-                    #[cfg(feature = "metrics")]
-                    if let Some(max_input) = self.inputs.keys().max() {
-                        deform_metrics::plot!("commit_inputs", *max_input as f64);
-                    }
-
-                    self.commit_inputs().await?;
                 }
 
                 // Visual: interpolate between previous and current sim state.
@@ -450,11 +458,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
         Ok(())
     }
 
-    /// Build the `set_inputs` instruction for our accumulated inputs and hand it to
-    /// the [`commit_task`]. Only the (cheap) instruction build happens on the sim
-    /// loop; the network send is the task's job. An ix-build error is surfaced
-    /// synchronously.
-    pub async fn commit_inputs(&self) -> UserFacingResult<F::UserLogic> {
+    pub fn commit_inputs(&self) -> UserFacingResult<F::UserLogic> {
         // Never send the tick still in progress: samples are still being merged into it,
         // and the program commits first-write-wins, so a non-final value would be locked
         // in on-chain while we keep changing ours, guaranteeing a mismatch and a rollback.
@@ -506,9 +510,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
         #[cfg(feature = "metrics")]
         let max_tick = pending.keys().max().copied();
 
-        // Bounded channel: this awaits — backpressuring the sim loop — if the commit
-        // task has fallen behind. A closed channel just means we're shutting down.
-        let _ = self.commit_tx.send(sdk_ix).await;
+        // never block on a send. instead just replace.
+        let _ = self.commit_tx.send_replace(Some(sdk_ix));
 
         #[cfg(feature = "metrics")]
         if let Some(newest) = max_tick
@@ -789,7 +792,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
     pub async fn commit_task_wrapper(
         rpc: Arc<RpcClient>,
         keypair: Arc<Keypair>,
-        rx: mpsc::Receiver<Instruction>,
+        rx: watch::Receiver<Option<Instruction>>,
         slot_time_micros: u64,
         client: DeformClient<F::UserLogic>,
     ) {
@@ -820,7 +823,7 @@ impl<F: DeformFocLogic> FocBackend<F> {
 pub async fn commit_task(
     rpc: Arc<RpcClient>,
     keypair: Arc<Keypair>,
-    mut rx: mpsc::Receiver<Instruction>,
+    mut rx: watch::Receiver<Option<Instruction>>,
     slot_time_micros: u64,
     cancellation_token: CancellationToken,
 ) -> anyhow::Result<()> {
@@ -833,31 +836,25 @@ pub async fn commit_task(
     loop {
         tokio_select!(match .. {
             .. if let _ = blockhash_refresh_interval.tick() => {
-                // A transient RPC blip must not end the match. Blockhashes stay valid for
-                // ~2 minutes, so keeping the current one until the next refresh is fine.
                 match rpc.get_latest_blockhash().await {
                     Ok(new_blockhash) => blockhash = new_blockhash,
                     Err(e) => warn!("blockhash refresh failed, keeping the previous one: {e}"),
                 }
             }
-            .. if let ix = rx.recv() => {
+            .. if let changed = rx.changed() => {
+                if changed.is_err() {
+                    debug!("foc commit task: sim loop closed the channel");
+                    break;
+                }
+                // Clone out so the borrow guard is gone before the await below.
+                let ix = rx.borrow_and_update().clone();
                 match ix {
-                    None => {
-                        // The sim loop dropped its sender, so it has already exited. This is
-                        // ordinary shutdown, not a failure: treating it as one used to report
-                        // a spurious commit error that masked whatever really ended the loop.
-                        debug!("foc commit task: sim loop closed the channel");
-                        break;
-                    }
+                    None => {}
                     Some(ix) => {
                         let msg = Message::new(&[ix], Some(&pubkey));
                         let mut tx = Transaction::new_unsigned(msg);
                         tx.sign(&[keypair.as_ref()], blockhash);
-                        // fire-and-forget: skip confirmation for the lowest possible latency.
-                        // A failed send is not fatal either: every commit carries the whole
-                        // pending input batch, so the next one re-sends whatever this tx
-                        // would have carried. Killing the match over one dropped tx is worse.
-                        if let Err(e) = rpc.send_transaction(&tx).await {
+                        if let Err(e) = rpc.send_transaction_with_config(&tx, SEND_CONFIG).await {
                             warn!("set_inputs tx send failed, retrying on next commit: {e}");
                         }
                     }
