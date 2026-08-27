@@ -1,16 +1,34 @@
-#[cfg(feature = "client")]
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use deform_core::accounts::{DeformAccount, DeformAccountType};
-use soccer::{soccer_logic::SoccerGame, solana::anchor_client::GAME_PROGRAM};
+use deform_core::{
+    Pubkey,
+    accounts::{
+        DeformAccount, DeformAccountType,
+        inputs::InputsAccount,
+        lobby::{Lobby, LobbyFinished, LobbyState, Network},
+    },
+    game_program_client::GameProgramClient,
+};
+use soccer::{
+    soccer_logic::SoccerGame,
+    solana::anchor_client::{GAME_PROGRAM, SoccerAnchorClient},
+};
 use solana_address::Address;
 use solana_client::{
     rpc_client::RpcClient,
-    rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, UiAccountEncoding},
+    rpc_config::{
+        RpcAccountInfoConfig, RpcProgramAccountsConfig, UiAccountEncoding, UiDataSliceConfig,
+    },
     rpc_filter::{Memcmp, RpcFilterType},
 };
-use solana_sdk::{message::Message, signature::Keypair, signer::Signer, transaction::Transaction};
+use solana_instruction::AccountMeta;
+use solana_sdk::{
+    message::Message,
+    signature::{Keypair, Signature, read_keypair_file},
+    signer::Signer,
+    transaction::Transaction,
+};
 use tracing::info;
 
 #[cfg(feature = "client")]
@@ -23,6 +41,13 @@ pub mod server;
 #[derive(Parser)]
 #[command(name = "soccer")]
 struct Cli {
+    #[arg(
+        long,
+        global = true,
+        default_value = "http://127.0.0.1:8899",
+        env = "RPC_URL"
+    )]
+    rpc_url: String,
     #[command(subcommand)]
     command: CliCommand,
 }
@@ -36,19 +61,38 @@ enum CliCommand {
         wallet: Option<PathBuf>,
     },
     #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
-    FetchLobbies {
-        #[arg(long, default_value = "https://127.0.0.1:8899", env = "RPC_URL")]
-        rpc_url: String,
+    FetchLobbies,
+    #[command(about = "Print the address of every account owned by the game program")]
+    FetchAccounts,
+    #[command(about = "Write the final scores of a lobby on-chain and close its accounts")]
+    CloseLobby {
+        #[arg(long)]
+        id: u64,
+        #[arg(
+            long,
+            default_value = "../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json",
+            env = "KEYPAIR_PATH"
+        )]
+        admin: PathBuf,
+    },
+    #[command(
+        about = "Close any account owned by the game program, refunding its rent to the admin, with no checks at all"
+    )]
+    ForceClose {
+        #[arg(long)]
+        account: String,
+        #[arg(
+            long,
+            default_value = "../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json",
+            env = "KEYPAIR_PATH"
+        )]
+        admin: PathBuf,
     },
     #[cfg(feature = "server")]
     #[command(about = "Run the QUIC game server")]
     Serve {
         #[arg(long, default_value = "4433", env = "PORT")]
         port: u16,
-        // The server always talks to the devnet base layer; the localhost docker
-        // stack overrides this with RPC_URL=http://surfpool:8899.
-        #[arg(long, default_value = "https://api.devnet.solana.com", env = "RPC_URL")]
-        rpc_url: String,
         #[arg(
             long,
             default_value = "../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json",
@@ -60,16 +104,33 @@ enum CliCommand {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // bevy's LogPlugin installs its own global subscriber, so the game client has to
+    // be the one command we leave alone; everything else logs through tracing here.
+    let bevy_owns_logging = match &cli.command {
+        #[cfg(feature = "client")]
+        CliCommand::Run { .. } => true,
+        _ => false,
+    };
+    if !bevy_owns_logging {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
+
+    let rpc_url = cli.rpc_url;
     match cli.command {
         #[cfg(feature = "client")]
         CliCommand::Run { wallet } => crate::client::run_game(wallet),
-        CliCommand::FetchLobbies { rpc_url } => fetch_lobbies(&rpc_url)?,
+        CliCommand::FetchLobbies => fetch_lobbies(&rpc_url)?,
+        CliCommand::FetchAccounts => fetch_accounts(&rpc_url)?,
+        CliCommand::CloseLobby { id, admin } => close_lobby(id, &admin, &rpc_url)?,
+        CliCommand::ForceClose { account, admin } => force_close(&account, &admin, &rpc_url)?,
         #[cfg(feature = "server")]
-        CliCommand::Serve {
-            port,
-            rpc_url,
-            keypair,
-        } => crate::server::serve(port, &rpc_url, &keypair)?,
+        CliCommand::Serve { port, keypair } => crate::server::serve(port, &rpc_url, &keypair)?,
     }
     Ok(())
 }
@@ -127,6 +188,106 @@ fn fetch_lobbies(rpc_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn fetch_accounts(rpc_url: &str) -> anyhow::Result<()> {
+    let rpc_client = RpcClient::new(rpc_url.to_string());
+
+    let config = RpcProgramAccountsConfig {
+        filters: None,
+        account_config: RpcAccountInfoConfig {
+            encoding: Some(UiAccountEncoding::Base64),
+            // we only want the addresses, so skip pulling the data down
+            data_slice: Some(UiDataSliceConfig {
+                offset: 0,
+                length: 0,
+            }),
+            commitment: None,
+            min_context_slot: None,
+        },
+        with_context: None,
+        sort_results: None,
+    };
+
+    let accounts = rpc_client.get_program_ui_accounts_with_config(&GAME_PROGRAM, config)?;
+
+    for (pubkey, _) in accounts.iter() {
+        println!("{pubkey}");
+    }
+    Ok(())
+}
+
+fn close_lobby(id: u64, admin_path: &std::path::Path, rpc_url: &str) -> anyhow::Result<()> {
+    let rpc_client = RpcClient::new(rpc_url.to_string());
+    let admin = read_keypair_file(admin_path).map_err(|e| {
+        anyhow::anyhow!("failed to read admin keypair {}: {e}", admin_path.display())
+    })?;
+    let admin_pubkey = Pubkey::from(admin.pubkey().to_bytes());
+
+    let (lobby_pda, _) = Lobby::<SoccerGame>::find_program_address(id, &GAME_PROGRAM);
+
+    let data = rpc_client.get_account_data(&Address::new_from_array(lobby_pda.to_bytes()))?;
+    let lobby = match DeformAccount::<SoccerGame>::from_bytes(&data)? {
+        DeformAccount::Lobby(lobby) => lobby,
+        _ => anyhow::bail!("account {lobby_pda} is not a lobby"),
+    };
+
+    // same order the program walks the players in, so the remaining accounts line up
+    let players: Vec<Pubkey> = match &lobby.state {
+        LobbyState::NotStarted(not_started) => not_started.player_status.keys().copied().collect(),
+        LobbyState::Ongoing(ongoing) => ongoing.tick_info.inputs.keys().copied().collect(),
+        LobbyState::Finished(LobbyFinished(finished)) => {
+            finished.tick_info.inputs.keys().copied().collect()
+        }
+    };
+    info!(
+        "closing lobby {id} ({lobby_pda}) with {} players",
+        players.len()
+    );
+
+    let mut ix = SoccerAnchorClient.write_and_close_ix(
+        admin_pubkey,
+        lobby_pda,
+        lobby.metadata.creator,
+        &lobby,
+    )?;
+
+    // fully-on-chain lobbies also own one inputs account per player, which the
+    // program closes and refunds through the remaining accounts: [inputs, player]
+    if matches!(lobby.metadata.network, Network::FullyOnChain(_)) {
+        for player in &players {
+            let (inputs_pda, _) =
+                InputsAccount::<SoccerGame>::find_program_address(id, player, &GAME_PROGRAM);
+            ix.accounts.push(AccountMeta::new(inputs_pda, false));
+            ix.accounts.push(AccountMeta::new(*player, false));
+        }
+    }
+
+    let is_localhost = rpc_url.contains("127.0.0.1") || rpc_url.contains("localhost");
+    let sig = send_and_confirm_tx(&rpc_client, ix, &admin, is_localhost)?;
+    println!("{sig}");
+
+    Ok(())
+}
+
+/// Escape hatch for accounts the program can no longer deserialize (e.g. lobbies written
+/// by an older layout), which is what makes [`close_lobby`] fail on them.
+fn force_close(account: &str, admin_path: &std::path::Path, rpc_url: &str) -> anyhow::Result<()> {
+    let rpc_client = RpcClient::new(rpc_url.to_string());
+    let admin = read_keypair_file(admin_path).map_err(|e| {
+        anyhow::anyhow!("failed to read admin keypair {}: {e}", admin_path.display())
+    })?;
+    let admin_pubkey = Pubkey::from(admin.pubkey().to_bytes());
+    let account: Pubkey = account.parse()?;
+
+    let ix = SoccerAnchorClient.force_close_ix(admin_pubkey, account)?;
+
+    info!("force closing {account}, refunding its rent to {admin_pubkey}");
+    let is_localhost = rpc_url.contains("127.0.0.1") || rpc_url.contains("localhost");
+    let sig = send_and_confirm_tx(&rpc_client, ix, &admin, is_localhost)?;
+    println!("{sig}");
+
+    Ok(())
+}
+
 pub fn to_sdk_ix(ix: solana_instruction::Instruction) -> solana_sdk::instruction::Instruction {
     solana_sdk::instruction::Instruction {
         program_id: Address::new_from_array(ix.program_id.to_bytes()),
@@ -148,7 +309,7 @@ pub fn send_and_confirm_tx(
     ix: solana_instruction::Instruction,
     keypair: &Keypair,
     is_localhost: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Signature> {
     let ix = to_sdk_ix(ix);
     let blockhash = rpc.get_latest_blockhash()?;
     let msg = Message::new(&[ix], Some(&keypair.pubkey()));
@@ -159,6 +320,5 @@ pub fn send_and_confirm_tx(
     } else {
         rpc.send_and_confirm_transaction(&tx)?
     };
-    info!("tx confirmed: {sig}");
-    Ok(())
+    Ok(sig)
 }

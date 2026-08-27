@@ -57,6 +57,11 @@ pub trait GameProgramClient<T: DeformUserLogic>: Clone + Send + Sync {
         lobby: &Lobby<T>,
     ) -> Result<Instruction, T::Error>;
 
+    /// Closes `account` and refunds its rent to `admin`, with no checks whatsoever.
+    /// Meant for wiping accounts left behind by an older layout, which no longer
+    /// deserialize and so can't go through [`Self::write_and_close_ix`].
+    fn force_close_ix(&self, admin: Pubkey, account: Pubkey) -> Result<Instruction, T::Error>;
+
     fn start_ix(
         &self,
         user: Pubkey,

@@ -202,6 +202,7 @@ pub struct SoccerGameState {
     pub last_player_contact: Option<Pubkey>,
     pub creator: Pubkey,
     #[smooth(map)]
+    #[serde(serialize_with = "deform_core::pubkey_map::serialize")]
     pub players: HashMap<Pubkey, PlayerState>,
     pub phase: GamePhase,
     pub phase_ticks: u64,

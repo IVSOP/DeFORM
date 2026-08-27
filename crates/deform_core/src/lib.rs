@@ -24,6 +24,57 @@ use crate::accounts::lobby::{not_started::LobbyNotStarted, LobbyMetadata, Valida
 /// I like calling it a pubkey
 pub type Pubkey = solana_address::Address;
 
+/// serde helper for maps keyed by [`Pubkey`]. A pubkey serializes as a byte array, and
+/// json object keys must be strings, so serializing such a map fails outright unless the
+/// keys go out as base58 instead.
+/// Use with `#[serde(serialize_with = "deform_core::pubkey_map::serialize")]`.
+#[cfg(not(target_arch = "bpf"))]
+pub mod pubkey_map {
+    use std::collections::{BTreeMap, HashMap};
+
+    use serde::{ser::SerializeMap, Serialize, Serializer};
+
+    use crate::Pubkey;
+
+    /// Implemented for the map types we key by [`Pubkey`].
+    pub trait PubkeyMap {
+        type Value: Serialize;
+        fn entries(&self) -> impl Iterator<Item = (&Pubkey, &Self::Value)>;
+        fn len(&self) -> usize;
+    }
+
+    impl<V: Serialize> PubkeyMap for BTreeMap<Pubkey, V> {
+        type Value = V;
+        fn entries(&self) -> impl Iterator<Item = (&Pubkey, &V)> {
+            self.iter()
+        }
+        fn len(&self) -> usize {
+            self.len()
+        }
+    }
+
+    impl<V: Serialize, H> PubkeyMap for HashMap<Pubkey, V, H> {
+        type Value = V;
+        fn entries(&self) -> impl Iterator<Item = (&Pubkey, &V)> {
+            self.iter()
+        }
+        fn len(&self) -> usize {
+            self.len()
+        }
+    }
+
+    pub fn serialize<M: PubkeyMap, S: Serializer>(
+        map: &M,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        let mut out = serializer.serialize_map(Some(map.len()))?;
+        for (pubkey, value) in map.entries() {
+            out.serialize_entry(&pubkey.to_string(), value)?;
+        }
+        out.end()
+    }
+}
+
 /// Trait that defines what data types the game uses, as well as the logic functions/callbacks.
 ///
 /// To use this crate, you should start by implementing this type, and then making a [`DeformClient`].
@@ -174,9 +225,12 @@ pub struct TickInfo<T: DeformUserLogic> {
     // TODO: this is probably really bad.
     // I had to do this to prevent the user from having to store inputs inside of the GameState which would be even worse
     // but hashing pubkeys like this is going to use a lot of memory and be very slow. It would prob be better to use player IDs
-    // FIX: need to serialize these pubkeys as B64
     /// The inputs that, combined with the previous state, have led to this new state.
     // TODO: in sbf, this should use pinocchio pubkey
+    #[cfg_attr(
+        not(target_arch = "bpf"),
+        serde(serialize_with = "crate::pubkey_map::serialize")
+    )]
     pub inputs: BTreeMap<Pubkey, T::Inputs>,
 }
 

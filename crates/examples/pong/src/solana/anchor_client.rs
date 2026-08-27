@@ -21,9 +21,10 @@ use solana_instruction::{AccountMeta, Instruction};
 use crate::{
     generated::{
         instructions::{
-            CreateLobby, CreateLobbyInstructionArgs, JoinLobby, JoinLobbyInstructionArgs, Ready,
-            ReadyInstructionArgs, SetInputs, SetInputsInstructionArgs, Start, StartInstructionArgs,
-            Tick, TickInstructionArgs, WriteAndClose, WriteAndCloseInstructionArgs,
+            CreateLobby, CreateLobbyInstructionArgs, ForceClose, JoinLobby,
+            JoinLobbyInstructionArgs, Ready, ReadyInstructionArgs, SetInputs,
+            SetInputsInstructionArgs, Start, StartInstructionArgs, Tick, TickInstructionArgs,
+            WriteAndClose, WriteAndCloseInstructionArgs,
         },
         types::PlayerScore,
     },
@@ -128,6 +129,10 @@ impl GameProgramClient<PongGame> for PongAnchorClient {
             id: lobby.metadata.id,
             scores,
         }))
+    }
+
+    fn force_close_ix(&self, admin: Pubkey, account: Pubkey) -> Result<Instruction, PongError> {
+        Ok(ForceClose { admin, account }.instruction())
     }
 
     fn start_ix(

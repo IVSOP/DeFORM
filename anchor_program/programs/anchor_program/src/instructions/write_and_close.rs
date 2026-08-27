@@ -2,8 +2,9 @@ use anchor_lang::prelude::*;
 use deform_core::accounts::lobby::{LobbyFinished, LobbyState, Network};
 
 use crate::{
-    constants::ADMIN, error::GameProgramError, util::deser_and_check_inputs,
-    util::deser_and_check_lobby,
+    constants::ADMIN,
+    error::GameProgramError,
+    util::{deser_and_check_inputs, deser_and_check_lobby},
 };
 
 #[derive(AnchorSerialize, AnchorDeserialize)]
@@ -85,7 +86,7 @@ pub fn handler<'info>(
 }
 
 /// Drain `account` into `refund`, hand it back to the system program and zero its data.
-fn close_account(account: &AccountInfo, refund: &AccountInfo) -> Result<()> {
+pub(crate) fn close_account(account: &AccountInfo, refund: &AccountInfo) -> Result<()> {
     let lamports = account.lamports();
 
     **account.try_borrow_mut_lamports()? = 0;

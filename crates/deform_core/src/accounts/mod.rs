@@ -30,12 +30,10 @@ pub enum DeformAccountType {
 
 impl<T: DeformUserLogic> DeformAccount<T> {
     pub fn from_bytes(bytes: &[u8]) -> DeformResult<Self> {
-        wincode::deserialize(bytes)
-            .map_err(|e| DeformError::DeserializeInputsAccount(e.to_string()))
+        wincode::deserialize(bytes).map_err(|e| DeformError::DeserializeAccount(e.to_string()))
     }
 
     pub fn write_into(&self, dst: &mut [u8]) -> DeformResult<()> {
-        wincode::serialize_into(dst, self)
-            .map_err(|e| DeformError::SerializeInputsAccount(e.to_string()))
+        wincode::serialize_into(dst, self).map_err(|e| DeformError::SerializeAccount(e.to_string()))
     }
 }

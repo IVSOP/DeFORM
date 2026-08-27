@@ -7,13 +7,6 @@ use solana_sdk::signer::keypair::read_keypair_file;
 /// Identical shape to pong's server: the QUIC server is the match authority and
 /// runs the same avian/tnua `advance_frame` as the clients — just headless.
 pub fn serve(port: u16, rpc_url: &str, keypair_path: &str) -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
-
     let rpc_client = Arc::new(solana_rpc_client::nonblocking::rpc_client::RpcClient::new(
         rpc_url.to_string(),
     ));

@@ -10,8 +10,12 @@ use solana_client::{
     rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig, UiAccountEncoding},
     rpc_filter::{Memcmp, RpcFilterType},
 };
-use solana_sdk::{message::Message, signature::Keypair, signer::Signer, transaction::Transaction};
-use tracing::info;
+use solana_sdk::{
+    message::Message,
+    signature::{Keypair, Signature},
+    signer::Signer,
+    transaction::Transaction,
+};
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -60,6 +64,23 @@ enum CliCommand {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // bevy's LogPlugin installs its own global subscriber, so the game client has to
+    // be the one command we leave alone; everything else logs through tracing here.
+    let bevy_owns_logging = match &cli.command {
+        #[cfg(feature = "client")]
+        CliCommand::Run { .. } => true,
+        _ => false,
+    };
+    if !bevy_owns_logging {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .init();
+    }
+
     match cli.command {
         #[cfg(feature = "client")]
         CliCommand::Run { wallet } => crate::client::run_game(wallet),
@@ -148,7 +169,7 @@ fn send_and_confirm_tx(
     ix: solana_instruction::Instruction,
     keypair: &Keypair,
     is_localhost: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Signature> {
     let ix = to_sdk_ix(ix);
     let blockhash = rpc.get_latest_blockhash()?;
     let msg = Message::new(&[ix], Some(&keypair.pubkey()));
@@ -160,6 +181,5 @@ fn send_and_confirm_tx(
     } else {
         rpc.send_and_confirm_transaction(&tx)?
     };
-    info!("tx confirmed: {sig}");
-    Ok(())
+    Ok(sig)
 }

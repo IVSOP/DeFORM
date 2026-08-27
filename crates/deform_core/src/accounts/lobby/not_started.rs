@@ -10,5 +10,9 @@ use crate::{accounts::lobby::PlayerStatus, Pubkey};
 #[cfg_attr(not(target_arch = "bpf"), derive(serde::Serialize))]
 #[derive(Clone, Debug, SchemaRead, SchemaWrite)]
 pub struct LobbyNotStarted {
+    #[cfg_attr(
+        not(target_arch = "bpf"),
+        serde(serialize_with = "crate::pubkey_map::serialize")
+    )]
     pub player_status: BTreeMap<Pubkey, PlayerStatus>, // ready vs not ready
 }

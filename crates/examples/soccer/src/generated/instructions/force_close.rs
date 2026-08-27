@@ -7,46 +7,31 @@
 
 use borsh::{BorshDeserialize, BorshSerialize};
 
-pub const UNDELEGATE_DISCRIMINATOR: [u8; 8] = [131, 148, 180, 198, 91, 104, 42, 238];
+pub const FORCE_CLOSE_DISCRIMINATOR: [u8; 8] = [71, 1, 6, 64, 15, 200, 254, 234];
 
 /// Accounts.
 #[derive(Debug)]
-pub struct Undelegate {
+pub struct ForceClose {
     pub admin: solana_address::Address,
 
-    pub lobby: solana_address::Address,
-
-    pub magic_context: solana_address::Address,
-
-    pub magic_program: solana_address::Address,
+    pub account: solana_address::Address,
 }
 
-impl Undelegate {
-    pub fn instruction(&self, args: UndelegateInstructionArgs) -> solana_instruction::Instruction {
-        self.instruction_with_remaining_accounts(args, &[])
+impl ForceClose {
+    pub fn instruction(&self) -> solana_instruction::Instruction {
+        self.instruction_with_remaining_accounts(&[])
     }
     #[allow(clippy::arithmetic_side_effects)]
     #[allow(clippy::vec_init_then_push)]
     pub fn instruction_with_remaining_accounts(
         &self,
-        args: UndelegateInstructionArgs,
         remaining_accounts: &[solana_instruction::AccountMeta],
     ) -> solana_instruction::Instruction {
-        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(self.admin, true));
-        accounts.push(solana_instruction::AccountMeta::new(self.lobby, false));
-        accounts.push(solana_instruction::AccountMeta::new(
-            self.magic_context,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            self.magic_program,
-            false,
-        ));
+        accounts.push(solana_instruction::AccountMeta::new(self.account, false));
         accounts.extend_from_slice(remaining_accounts);
-        let mut data = UndelegateInstructionData::new().try_to_vec().unwrap();
-        let mut args = args.try_to_vec().unwrap();
-        data.append(&mut args);
+        let data = ForceCloseInstructionData::new().try_to_vec().unwrap();
 
         solana_instruction::Instruction {
             program_id: crate::ANCHOR_PROGRAM_ID,
@@ -57,14 +42,14 @@ impl Undelegate {
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
-pub struct UndelegateInstructionData {
+pub struct ForceCloseInstructionData {
     discriminator: [u8; 8],
 }
 
-impl UndelegateInstructionData {
+impl ForceCloseInstructionData {
     pub fn new() -> Self {
         Self {
-            discriminator: [131, 148, 180, 198, 91, 104, 42, 238],
+            discriminator: [71, 1, 6, 64, 15, 200, 254, 234],
         }
     }
 
@@ -73,42 +58,26 @@ impl UndelegateInstructionData {
     }
 }
 
-impl Default for UndelegateInstructionData {
+impl Default for ForceCloseInstructionData {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Clone, Debug, Eq, PartialEq)]
-pub struct UndelegateInstructionArgs {
-    pub id: u64,
-}
-
-impl UndelegateInstructionArgs {
-    pub(crate) fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-        borsh::to_vec(self)
-    }
-}
-
-/// Instruction builder for `Undelegate`.
+/// Instruction builder for `ForceClose`.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable, signer, optional]` admin (default to `AdmiapAjgTDNTKHUAs7FWztVWSGPNU5zHv2YKSN5GiMg`)
-///   1. `[writable]` lobby
-///   2. `[writable, optional]` magic_context (default to `MagicContext1111111111111111111111111111111`)
-///   3. `[optional]` magic_program (default to `Magic11111111111111111111111111111111111111`)
+///   1. `[writable]` account
 #[derive(Clone, Debug, Default)]
-pub struct UndelegateBuilder {
+pub struct ForceCloseBuilder {
     admin: Option<solana_address::Address>,
-    lobby: Option<solana_address::Address>,
-    magic_context: Option<solana_address::Address>,
-    magic_program: Option<solana_address::Address>,
-    id: Option<u64>,
+    account: Option<solana_address::Address>,
     __remaining_accounts: Vec<solana_instruction::AccountMeta>,
 }
 
-impl UndelegateBuilder {
+impl ForceCloseBuilder {
     pub fn new() -> Self {
         Self::default()
     }
@@ -119,25 +88,8 @@ impl UndelegateBuilder {
         self
     }
     #[inline(always)]
-    pub fn lobby(&mut self, lobby: solana_address::Address) -> &mut Self {
-        self.lobby = Some(lobby);
-        self
-    }
-    /// `[optional account, default to 'MagicContext1111111111111111111111111111111']`
-    #[inline(always)]
-    pub fn magic_context(&mut self, magic_context: solana_address::Address) -> &mut Self {
-        self.magic_context = Some(magic_context);
-        self
-    }
-    /// `[optional account, default to 'Magic11111111111111111111111111111111111111']`
-    #[inline(always)]
-    pub fn magic_program(&mut self, magic_program: solana_address::Address) -> &mut Self {
-        self.magic_program = Some(magic_program);
-        self
-    }
-    #[inline(always)]
-    pub fn id(&mut self, id: u64) -> &mut Self {
-        self.id = Some(id);
+    pub fn account(&mut self, account: solana_address::Address) -> &mut Self {
+        self.account = Some(account);
         self
     }
     /// Add an additional account to the instruction.
@@ -157,66 +109,43 @@ impl UndelegateBuilder {
     }
     #[allow(clippy::clone_on_copy)]
     pub fn instruction(&self) -> solana_instruction::Instruction {
-        let accounts = Undelegate {
+        let accounts = ForceClose {
             admin: self.admin.unwrap_or(solana_address::address!(
                 "AdmiapAjgTDNTKHUAs7FWztVWSGPNU5zHv2YKSN5GiMg"
             )),
-            lobby: self.lobby.expect("lobby is not set"),
-            magic_context: self.magic_context.unwrap_or(solana_address::address!(
-                "MagicContext1111111111111111111111111111111"
-            )),
-            magic_program: self.magic_program.unwrap_or(solana_address::address!(
-                "Magic11111111111111111111111111111111111111"
-            )),
-        };
-        let args = UndelegateInstructionArgs {
-            id: self.id.clone().expect("id is not set"),
+            account: self.account.expect("account is not set"),
         };
 
-        accounts.instruction_with_remaining_accounts(args, &self.__remaining_accounts)
+        accounts.instruction_with_remaining_accounts(&self.__remaining_accounts)
     }
 }
 
-/// `undelegate` CPI accounts.
-pub struct UndelegateCpiAccounts<'a, 'b> {
+/// `force_close` CPI accounts.
+pub struct ForceCloseCpiAccounts<'a, 'b> {
     pub admin: &'b solana_account_info::AccountInfo<'a>,
 
-    pub lobby: &'b solana_account_info::AccountInfo<'a>,
-
-    pub magic_context: &'b solana_account_info::AccountInfo<'a>,
-
-    pub magic_program: &'b solana_account_info::AccountInfo<'a>,
+    pub account: &'b solana_account_info::AccountInfo<'a>,
 }
 
-/// `undelegate` CPI instruction.
-pub struct UndelegateCpi<'a, 'b> {
+/// `force_close` CPI instruction.
+pub struct ForceCloseCpi<'a, 'b> {
     /// The program to invoke.
     pub __program: &'b solana_account_info::AccountInfo<'a>,
 
     pub admin: &'b solana_account_info::AccountInfo<'a>,
 
-    pub lobby: &'b solana_account_info::AccountInfo<'a>,
-
-    pub magic_context: &'b solana_account_info::AccountInfo<'a>,
-
-    pub magic_program: &'b solana_account_info::AccountInfo<'a>,
-    /// The arguments for the instruction.
-    pub __args: UndelegateInstructionArgs,
+    pub account: &'b solana_account_info::AccountInfo<'a>,
 }
 
-impl<'a, 'b> UndelegateCpi<'a, 'b> {
+impl<'a, 'b> ForceCloseCpi<'a, 'b> {
     pub fn new(
         program: &'b solana_account_info::AccountInfo<'a>,
-        accounts: UndelegateCpiAccounts<'a, 'b>,
-        args: UndelegateInstructionArgs,
+        accounts: ForceCloseCpiAccounts<'a, 'b>,
     ) -> Self {
         Self {
             __program: program,
             admin: accounts.admin,
-            lobby: accounts.lobby,
-            magic_context: accounts.magic_context,
-            magic_program: accounts.magic_program,
-            __args: args,
+            account: accounts.account,
         }
     }
     #[inline(always)]
@@ -242,15 +171,10 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
         signers_seeds: &[&[&[u8]]],
         remaining_accounts: &[(&'b solana_account_info::AccountInfo<'a>, bool, bool)],
     ) -> solana_program_error::ProgramResult {
-        let mut accounts = Vec::with_capacity(4 + remaining_accounts.len());
+        let mut accounts = Vec::with_capacity(2 + remaining_accounts.len());
         accounts.push(solana_instruction::AccountMeta::new(*self.admin.key, true));
-        accounts.push(solana_instruction::AccountMeta::new(*self.lobby.key, false));
         accounts.push(solana_instruction::AccountMeta::new(
-            *self.magic_context.key,
-            false,
-        ));
-        accounts.push(solana_instruction::AccountMeta::new_readonly(
-            *self.magic_program.key,
+            *self.account.key,
             false,
         ));
         remaining_accounts.iter().for_each(|remaining_account| {
@@ -260,21 +184,17 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
                 is_writable: remaining_account.2,
             })
         });
-        let mut data = UndelegateInstructionData::new().try_to_vec().unwrap();
-        let mut args = self.__args.try_to_vec().unwrap();
-        data.append(&mut args);
+        let data = ForceCloseInstructionData::new().try_to_vec().unwrap();
 
         let instruction = solana_instruction::Instruction {
             program_id: crate::ANCHOR_PROGRAM_ID,
             accounts,
             data,
         };
-        let mut account_infos = Vec::with_capacity(5 + remaining_accounts.len());
+        let mut account_infos = Vec::with_capacity(3 + remaining_accounts.len());
         account_infos.push(self.__program.clone());
         account_infos.push(self.admin.clone());
-        account_infos.push(self.lobby.clone());
-        account_infos.push(self.magic_context.clone());
-        account_infos.push(self.magic_program.clone());
+        account_infos.push(self.account.clone());
         remaining_accounts
             .iter()
             .for_each(|remaining_account| account_infos.push(remaining_account.0.clone()));
@@ -287,28 +207,23 @@ impl<'a, 'b> UndelegateCpi<'a, 'b> {
     }
 }
 
-/// Instruction builder for `Undelegate` via CPI.
+/// Instruction builder for `ForceClose` via CPI.
 ///
 /// ### Accounts:
 ///
 ///   0. `[writable, signer]` admin
-///   1. `[writable]` lobby
-///   2. `[writable]` magic_context
-///   3. `[]` magic_program
+///   1. `[writable]` account
 #[derive(Clone, Debug)]
-pub struct UndelegateCpiBuilder<'a, 'b> {
-    instruction: Box<UndelegateCpiBuilderInstruction<'a, 'b>>,
+pub struct ForceCloseCpiBuilder<'a, 'b> {
+    instruction: Box<ForceCloseCpiBuilderInstruction<'a, 'b>>,
 }
 
-impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
+impl<'a, 'b> ForceCloseCpiBuilder<'a, 'b> {
     pub fn new(program: &'b solana_account_info::AccountInfo<'a>) -> Self {
-        let instruction = Box::new(UndelegateCpiBuilderInstruction {
+        let instruction = Box::new(ForceCloseCpiBuilderInstruction {
             __program: program,
             admin: None,
-            lobby: None,
-            magic_context: None,
-            magic_program: None,
-            id: None,
+            account: None,
             __remaining_accounts: Vec::new(),
         });
         Self { instruction }
@@ -319,29 +234,8 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
         self
     }
     #[inline(always)]
-    pub fn lobby(&mut self, lobby: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
-        self.instruction.lobby = Some(lobby);
-        self
-    }
-    #[inline(always)]
-    pub fn magic_context(
-        &mut self,
-        magic_context: &'b solana_account_info::AccountInfo<'a>,
-    ) -> &mut Self {
-        self.instruction.magic_context = Some(magic_context);
-        self
-    }
-    #[inline(always)]
-    pub fn magic_program(
-        &mut self,
-        magic_program: &'b solana_account_info::AccountInfo<'a>,
-    ) -> &mut Self {
-        self.instruction.magic_program = Some(magic_program);
-        self
-    }
-    #[inline(always)]
-    pub fn id(&mut self, id: u64) -> &mut Self {
-        self.instruction.id = Some(id);
+    pub fn account(&mut self, account: &'b solana_account_info::AccountInfo<'a>) -> &mut Self {
+        self.instruction.account = Some(account);
         self
     }
     /// Add an additional account to the instruction.
@@ -378,26 +272,12 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
     #[allow(clippy::clone_on_copy)]
     #[allow(clippy::vec_init_then_push)]
     pub fn invoke_signed(&self, signers_seeds: &[&[&[u8]]]) -> solana_program_error::ProgramResult {
-        let args = UndelegateInstructionArgs {
-            id: self.instruction.id.clone().expect("id is not set"),
-        };
-        let instruction = UndelegateCpi {
+        let instruction = ForceCloseCpi {
             __program: self.instruction.__program,
 
             admin: self.instruction.admin.expect("admin is not set"),
 
-            lobby: self.instruction.lobby.expect("lobby is not set"),
-
-            magic_context: self
-                .instruction
-                .magic_context
-                .expect("magic_context is not set"),
-
-            magic_program: self
-                .instruction
-                .magic_program
-                .expect("magic_program is not set"),
-            __args: args,
+            account: self.instruction.account.expect("account is not set"),
         };
         instruction.invoke_signed_with_remaining_accounts(
             signers_seeds,
@@ -407,13 +287,10 @@ impl<'a, 'b> UndelegateCpiBuilder<'a, 'b> {
 }
 
 #[derive(Clone, Debug)]
-struct UndelegateCpiBuilderInstruction<'a, 'b> {
+struct ForceCloseCpiBuilderInstruction<'a, 'b> {
     __program: &'b solana_account_info::AccountInfo<'a>,
     admin: Option<&'b solana_account_info::AccountInfo<'a>>,
-    lobby: Option<&'b solana_account_info::AccountInfo<'a>>,
-    magic_context: Option<&'b solana_account_info::AccountInfo<'a>>,
-    magic_program: Option<&'b solana_account_info::AccountInfo<'a>>,
-    id: Option<u64>,
+    account: Option<&'b solana_account_info::AccountInfo<'a>>,
     /// Additional instruction accounts `(AccountInfo, is_writable, is_signer)`.
     __remaining_accounts: Vec<(&'b solana_account_info::AccountInfo<'a>, bool, bool)>,
 }

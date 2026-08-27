@@ -59,6 +59,13 @@ pub enum DeformError {
 
     #[error("Tick rate missmatch: {0}")]
     TickRateMissmatch(String),
+
+    #[error("serialize account: {0}")]
+    SerializeAccount(String),
+
+    /// A [`crate::accounts::DeformAccount`], so either a lobby or an inputs account.
+    #[error("deserialize account: {0}")]
+    DeserializeAccount(String),
 }
 
 pub type DeformResult<T = ()> = Result<T, DeformError>;
@@ -83,6 +90,8 @@ impl From<DeformError> for ProgramError {
             DeformError::DeserializeInputsAccount(_) => 15,
             DeformError::CommitInputsError(_) => 16,
             DeformError::TickRateMissmatch(_) => 17,
+            DeformError::SerializeAccount(_) => 18,
+            DeformError::DeserializeAccount(_) => 19,
         })
     }
 }

@@ -32,6 +32,11 @@ pub mod anchor_program {
         ready::handler(ctx, id)
     }
 
+    /// WARN: DO NOT DEPLOY THIS INSTRUCTION. Closes any account, with no checks at all.
+    pub fn force_close(ctx: Context<ForceCloseAccounts>) -> Result<()> {
+        force_close::handler(ctx)
+    }
+
     pub fn write_and_close<'info>(
         ctx: Context<'info, WriteAndCloseAccounts<'info>>,
         id: u64,

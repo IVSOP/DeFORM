@@ -248,7 +248,7 @@ pub fn egui_in_menu(
                                 keypair,
                                 menu.selected_preset_idx == 0,
                             ) {
-                                Ok(()) => {
+                                Ok(_) => {
                                     toasts.0.info("Lobby created!");
                                 }
                                 Err(e) => {
@@ -269,7 +269,7 @@ pub fn egui_in_menu(
                                 keypair,
                                 menu.selected_preset_idx == 0,
                             ) {
-                                Ok(()) => {
+                                Ok(_) => {
                                     toasts.0.info("Joined lobby!");
                                 }
                                 Err(e) => {
@@ -316,7 +316,7 @@ pub fn egui_in_menu(
                                 keypair,
                                 menu.selected_preset_idx == 0,
                             ) {
-                                Ok(()) => {
+                                Ok(_) => {
                                     toasts.0.info("Ready!");
                                 }
                                 Err(e) => {
@@ -353,7 +353,7 @@ pub fn egui_in_menu(
                                             keypair,
                                             menu.selected_preset_idx == 0,
                                         ) {
-                                            Ok(()) => {
+                                            Ok(_) => {
                                                 toasts.0.info("Game started!");
                                             }
                                             Err(e) => {
@@ -426,7 +426,7 @@ pub fn egui_in_menu(
                                             keypair,
                                             menu.selected_preset_idx == 0,
                                         ) {
-                                            Ok(()) => {
+                                            Ok(_) => {
                                                 toasts.0.info("Crank scheduled!");
                                             }
                                             Err(e) => {
