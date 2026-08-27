@@ -63,11 +63,20 @@ pub fn handler(ctx: Context<ReadyAccounts>, id: u64) -> Result<()> {
             .ok_or_else(|| error!(GameProgramError::MissingInputsAccount))?
             .to_account_info();
 
-        // 1) must be uninitialized (still owned by the system program, no data)
+        // TODO: I am supporting already initialized inputs accounts for now as only lobbies can be fetched to delete (only lobbies are owned by the system program)
+        // create_pda_account should support creation
+        // so I just check the owner is either our program or the system program, cannot be anything else
         require!(
-            inputs_info.data_is_empty() && inputs_info.owner == &ctx.accounts.system_program.key(),
-            GameProgramError::InputsAccountAlreadyInitialized
+            inputs_info.owner == &ctx.accounts.system_program.key()
+                || inputs_info.owner == &crate::ID,
+            anchor_lang::error::ErrorCode::AccountOwnedByWrongProgram,
         );
+
+        // // 1) must be uninitialized (still owned by the system program, no data)
+        // require!(
+        //     inputs_info.data_is_empty() && inputs_info.owner == &ctx.accounts.system_program.key(),
+        //     GameProgramError::InputsAccountAlreadyInitialized
+        // );
 
         // 2) check pda
         let (pda, inputs_bump) =
