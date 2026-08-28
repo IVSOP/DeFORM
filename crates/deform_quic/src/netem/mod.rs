@@ -1,4 +1,4 @@
-use std::{io, net::SocketAddr};
+use std::{io, net::SocketAddr, time::Duration};
 
 use tokio_util::sync::CancellationToken;
 
@@ -29,6 +29,14 @@ pub enum FakeNetwork {
     Satellite,
     /// Severely congested path: 80ms, 40ms jitter, ~10% loss, 10 Mbps.
     Congested,
+    /// Clean 50ms RTT: no loss, no reordering, 2ms jitter, unmetered. Isolates
+    /// distance from damage.
+    Good50Ms,
+    /// As bad as a link gets while still being playable: 60ms +/- 25ms correlated
+    /// jitter (so never past a 100ms RTT), ~10% bursty loss, every 10th packet
+    /// reordered, 1% duplicated. Unmetered on purpose --- a bottleneck's queueing
+    /// delay would push the round trip past the 100ms this promises.
+    StressTest,
 }
 
 impl From<FakeNetwork> for NetemConfig {
@@ -40,6 +48,16 @@ impl From<FakeNetwork> for NetemConfig {
             FakeNetwork::Cellular => NetemConfig::cellular(),
             FakeNetwork::Satellite => NetemConfig::satellite(),
             FakeNetwork::Congested => NetemConfig::congested(),
+            FakeNetwork::Good50Ms => NetemConfig::new()
+                .latency(Duration::from_millis(50))
+                .jitter(Duration::from_millis(2)),
+            FakeNetwork::StressTest => NetemConfig::new()
+                .latency(Duration::from_millis(60))
+                .jitter(Duration::from_millis(25))
+                .delay_correlation(Probability::new(0.5))
+                .loss(GilbertElliot::congested())
+                .duplicate(Probability::new(0.01))
+                .reorder_gap(10),
         }
     }
 }
