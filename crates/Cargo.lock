@@ -3854,6 +3854,7 @@ dependencies = [
  "better_tokio_select",
  "deform_core",
  "deform_metrics",
+ "egui-probe",
  "glam",
  "quinn",
  "rcgen",

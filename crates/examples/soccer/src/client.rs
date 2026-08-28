@@ -19,6 +19,7 @@ use deform_core::{
     },
 };
 use deform_offline::new_offline_client;
+use deform_quic::netem::FakeNetwork;
 use soccer::{soccer_logic::*, solana::anchor_client::SoccerAnchorClient};
 #[cfg(feature = "foc")]
 use solana_sdk::signature::Keypair;
@@ -350,6 +351,7 @@ pub fn setup(
     }
 
     commands.insert_resource(MenuState {
+        fake_network: None,
         keypair_files,
         selected_keypair_idx,
         keypair,
@@ -424,6 +426,7 @@ pub fn start_online(
     main_player: Pubkey,
     server_addr: &str,
     skip_cert_verify: bool,
+    fake_network: Option<FakeNetwork>,
     player_entities: &mut ResMut<PlayerEntities>,
     slots: &PlayerSlots,
     players_q: &mut Query<(&mut Player, &mut Visibility)>,
@@ -462,6 +465,7 @@ pub fn start_online(
         visual_tick_micros,
         NoAuth,
         cancellation_token,
+        fake_network,
     )?;
     commands.insert_resource(MultiplayerClient(client));
     commands.insert_resource(LocalPlayer(main_player));

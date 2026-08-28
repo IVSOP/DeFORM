@@ -272,6 +272,8 @@ pub fn new_quic_client<Q: DeformQuicLogic>(
     visual_tick_micros: u64,
     auth: Q::Auth,
     cancellation_token: CancellationToken,
+    // `None` uses the real network; `Some` degrades this client's egress.
+    fake_network: Option<netem::FakeNetwork>,
 ) -> UserFacingResult<Q::UserLogic, DeformClient<Q::UserLogic>> {
     client::QuicBackend::<Q>::init(
         server_addr,
@@ -282,5 +284,6 @@ pub fn new_quic_client<Q: DeformQuicLogic>(
         visual_tick_micros,
         auth,
         cancellation_token,
+        fake_network,
     )
 }

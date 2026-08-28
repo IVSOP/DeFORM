@@ -13,6 +13,7 @@ use deform_core::{
     },
     game_program_client::{GameProgramClient, ReadyArgs},
 };
+use deform_quic::netem::FakeNetwork;
 use egui_probe::Probe;
 use soccer::{
     soccer_logic::*,
@@ -54,6 +55,9 @@ pub struct MenuState {
     pub lobby_data: Option<Lobby<SoccerGame>>,
 
     pub skip_cert_verify: bool,
+
+    /// Emulated link conditions for the web2 backend. `None` is the real network.
+    pub fake_network: Option<FakeNetwork>,
 }
 
 pub fn egui_in_menu(
@@ -468,6 +472,12 @@ pub fn egui_in_menu(
                     }
                 }
                 ui.checkbox(&mut menu.skip_cert_verify, "Skip TLS verification (dev)");
+                // Only the web2 backend goes through a QUIC socket we can degrade
+                if matches!(menu.network, Network::Web2(_)) {
+                    Probe::new(&mut menu.fake_network)
+                        .with_header("Fake network")
+                        .show(ui);
+                }
 
                 if menu.lobby_data.is_some() {
                     let play_label = match menu.network {
@@ -498,6 +508,7 @@ pub fn egui_in_menu(
                                 user,
                                 &web2_addr,
                                 menu.skip_cert_verify,
+                                menu.fake_network,
                                 &mut player_entities,
                                 &player_slots,
                                 &mut players_q,

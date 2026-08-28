@@ -24,7 +24,7 @@ use crate::{
     ALPN_PROTOCOL, Compressed, DeformQuicLogic, ReliableMessage, ServerInstruction,
     StateUpdatePacket, UserIdentification,
     datagram::{DatagramDefragmentor, DatagramFragmentor},
-    netem::fake_network_from_env,
+    netem::FakeNetwork,
 };
 
 pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
@@ -107,6 +107,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         visual_tick_micros: u64,
         auth: Q::Auth,
         cancellation_token: CancellationToken,
+        fake_network: Option<FakeNetwork>,
     ) -> UserFacingResult<Q::UserLogic, DeformClient<Q::UserLogic>> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let (setup_tx, setup_rx) = oneshot::channel::<DeformResult>();
@@ -231,7 +232,7 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 return;
                             }
                         };
-                        let new_endpoint = match fake_network_from_env() {
+                        let new_endpoint = match fake_network {
                             Some(config) => crate::netem::fake_quic_endpoint(
                                 bind_addr,
                                 config,

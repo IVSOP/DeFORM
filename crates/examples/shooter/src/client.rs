@@ -16,6 +16,7 @@ use deform_core::{
     },
 };
 use deform_offline::new_offline_client;
+use deform_quic::netem::FakeNetwork;
 use shooter::{shooter_logic::*, solana::anchor_client::ShooterAnchorClient};
 use solana_sdk::{signature::read_keypair_file, signer::Signer};
 use tokio_util::sync::CancellationToken;
@@ -315,6 +316,7 @@ pub fn setup(
     }
 
     commands.insert_resource(MenuState {
+        fake_network: None,
         keypair_files,
         selected_keypair_idx,
         keypair,
@@ -379,6 +381,7 @@ pub fn start_online(
     main_player: Pubkey,
     server_addr: &str,
     skip_cert_verify: bool,
+    fake_network: Option<FakeNetwork>,
     visual_tick_micros: u64,
 ) -> Result<()> {
     let cancellation_token = CancellationToken::new();
@@ -397,6 +400,7 @@ pub fn start_online(
         visual_tick_micros,
         NoAuth,
         cancellation_token,
+        fake_network,
     )?;
     commands.insert_resource(MultiplayerClient(client));
     commands.insert_resource(LocalPlayer(main_player));
