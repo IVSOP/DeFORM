@@ -24,6 +24,7 @@ use crate::{
     ALPN_PROTOCOL, Compressed, DeformQuicLogic, ReliableMessage, ServerInstruction,
     StateUpdatePacket, UserIdentification,
     datagram::{DatagramDefragmentor, DatagramFragmentor},
+    netem::fake_network_from_env,
 };
 
 pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
@@ -230,7 +231,16 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
                                 return;
                             }
                         };
-                        let mut endpoint = match quinn::Endpoint::client(bind_addr) {
+                        let new_endpoint = match fake_network_from_env() {
+                            Some(config) => crate::netem::fake_quic_endpoint(
+                                bind_addr,
+                                config,
+                                cancellation_token_clone.clone(),
+                            ),
+                            None => quinn::Endpoint::client(bind_addr),
+                        };
+
+                        let mut endpoint = match new_endpoint {
                             Ok(ep) => ep,
                             Err(e) => {
                                 let _ = setup_tx.send(Err(DeformError::Connection(format!(

@@ -3864,6 +3864,7 @@ dependencies = [
  "solana-rpc-client",
  "solana-sdk",
  "solana-signature",
+ "str0m-netem",
  "tokio",
  "tokio-util",
  "tracing",
@@ -11855,6 +11856,29 @@ name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
+name = "str0m-netem"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76cfce55ee1b5c6068a788424d378842ffd0751e108fac77f8a1d9d6abee18c0"
+dependencies = [
+ "fastrand",
+ "str0m-proto",
+]
+
+[[package]]
+name = "str0m-proto"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8f3d99f2cf6c76a502e45feb896ea71e54787ede8744bcdb215acfbfcb905dd"
+dependencies = [
+ "base64ct",
+ "fastrand",
+ "serde",
+ "subtle",
+ "time",
+]
 
 [[package]]
 name = "strict-num"

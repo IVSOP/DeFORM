@@ -21,6 +21,7 @@ use wincode::{SchemaRead, SchemaWrite, config::DefaultConfig};
 
 mod client;
 pub mod datagram;
+pub mod netem;
 pub mod server;
 
 pub const ALPN_PROTOCOL: &[u8] = b"deform/1";
