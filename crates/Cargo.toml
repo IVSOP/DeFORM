@@ -6,6 +6,7 @@ members = [
     "deform_metrics",
     "deform_quic",
     "deform_foc",
+    "deform_ffi",
     "deform_offline",
     "examples/*",
 ]
@@ -54,6 +55,7 @@ deform_derive = { path = "deform_derive" }
 deform_offline = { path = "deform_offline" }
 deform_quic = { path = "deform_quic" }
 deform_foc = { path = "deform_foc" }
+deform_ffi = { path = "deform_ffi" }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 zstd = "0.13.3"
 strum = "0.28.0"

@@ -3800,6 +3800,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "deform_ffi"
+version = "0.1.0"
+dependencies = [
+ "deform_core",
+ "deform_foc",
+ "deform_offline",
+ "deform_quic",
+ "paste",
+ "serde",
+ "serde_json",
+ "solana-address 2.6.1",
+ "solana-sdk",
+ "tokio-util",
+ "wincode",
+]
+
+[[package]]
 name = "deform_foc"
 version = "0.1.0"
 dependencies = [
@@ -7302,6 +7319,14 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wincode",
+]
+
+[[package]]
+name = "pong_ffi"
+version = "0.1.0"
+dependencies = [
+ "deform_ffi",
+ "pong",
 ]
 
 [[package]]

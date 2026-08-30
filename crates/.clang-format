@@ -1,0 +1,4 @@
+BasedOnStyle: LLVM
+AlignAfterOpenBracket: AlwaysBreak
+BinPackParameters: false
+BinPackArguments: false

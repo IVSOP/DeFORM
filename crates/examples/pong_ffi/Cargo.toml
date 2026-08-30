@@ -1,0 +1,21 @@
+[package]
+name = "pong_ffi"
+version = "0.1.0"
+edition = "2024"
+
+# The C library itself. `rlib` is kept so the workspace can still `cargo check` it as a
+# normal dependency.
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = ["offline", "quic", "foc"]
+offline = ["deform_ffi/offline"]
+quic = ["deform_ffi/quic"]
+foc = ["deform_ffi/foc", "pong/foc"]
+
+[dependencies]
+# `bin` (not `client`) so the C library never pulls bevy in: it needs PongQuicLogic and
+# PongAnchorClient, both of which live behind `bin`, and nothing from the bevy frontend.
+pong = { path = "../pong", default-features = false, features = ["bin", "anchor", "20hz"] }
+deform_ffi = { workspace = true }

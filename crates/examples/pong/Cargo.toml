@@ -20,7 +20,7 @@ anchor = ["dep:anchor-lang", "solana-address/borsh", "deform_core/anchor"]
 metrics = ["dep:deform_metrics", "deform_core/metrics", "deform_quic?/metrics", "deform_foc?/metrics", "deform_offline?/metrics"]
 
 # Fully-on-chain client backend.
-foc = ["dep:deform_foc", "client"]
+foc = ["dep:deform_foc", "bin"]
 
 60hz = []
 20hz = []

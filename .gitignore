@@ -8,3 +8,6 @@ crates/examples/*/dist/
 # Address of the deployed Web2 server, written by deploy.sh and read by the client
 # (see `preset_server_addr`). Deliberately never in git.
 server.addr
+
+# The compiled C test for the FFI bindings, built by examples/pong_ffi/c/Makefile.
+crates/examples/*/c/smoke
