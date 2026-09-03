@@ -198,6 +198,11 @@ pub fn egui_in_menu(
             Probe::new(&mut menu.network)
                 .with_header("Network")
                 .show(ui);
+            if matches!(menu.network, Network::Web2(_)) {
+                Probe::new(&mut menu.fake_network)
+                    .with_header("Fake network")
+                    .show(ui);
+            }
             if !matches!(menu.network, Network::Web2(_)) {
                 ui.colored_label(
                     egui::Color32::YELLOW,
@@ -356,13 +361,6 @@ pub fn egui_in_menu(
                     }
                 }
                 ui.checkbox(&mut menu.skip_cert_verify, "Skip TLS verification (dev)");
-                // Only the web2 backend goes through a QUIC socket we can degrade
-                if matches!(menu.network, Network::Web2(_)) {
-                    Probe::new(&mut menu.fake_network)
-                        .with_header("Fake network")
-                        .show(ui);
-                }
-
                 if menu.lobby_data.is_some() {
                     if ui.button("Play Online (web2)").clicked() {
                         let lobby = menu.lobby_data.clone().unwrap();
