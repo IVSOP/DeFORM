@@ -1,8 +1,10 @@
 use std::{
+    collections::VecDeque,
+    future::Future,
     io,
     net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
     time::{Duration, Instant},
 };
@@ -23,6 +25,12 @@ const STATS_INTERVAL: Duration = Duration::from_secs(5);
 /// [`Netem::poll_timeout`] returns a decade-out sentinel in that case, which is well
 /// past what tokio's timer wheel handles gracefully.
 const MAX_IDLE: Duration = Duration::from_secs(3600);
+
+/// Scratch space for one read off the real socket.
+const MAX_DATAGRAM: usize = 64 * 1024;
+
+/// Cap on one `poll_recv`'s ingest, so a fast sender cannot hold the loop forever.
+const RX_INGEST_BURST: usize = 64;
 
 /// An owned copy of a [`Transmit`], since `Transmit::contents` only borrows and we
 /// need to hold the bytes across the emulated delay.
@@ -51,16 +59,53 @@ impl Clone for QueuedTx {
     }
 }
 
-/// Wraps a real socket and pushes every outgoing datagram through a network emulator.
-#[derive(Debug)]
+/// The same, for a datagram held back on its way in.
+#[derive(Clone)]
+struct QueuedRx {
+    addr: SocketAddr,
+    dst_ip: Option<IpAddr>,
+    ecn: Option<EcnCodepoint>,
+    contents: Vec<u8>,
+}
+
+impl WithLen for QueuedRx {
+    fn len(&self) -> usize {
+        self.contents.len()
+    }
+}
+
+/// Egress gets a background task; ingress cannot, since quinn owns the only read on the
+/// inner socket and a second reader would race it for datagrams. So [`poll_recv`] drives
+/// the emulator itself, with `timer` standing in for the drain loop's sleep.
+///
+/// [`poll_recv`]: FakeSocket::poll_recv
+struct RxState {
+    netem: Netem<QueuedRx>,
+    ready: VecDeque<QueuedRx>,
+    timer: Pin<Box<tokio::time::Sleep>>,
+    scratch: Vec<u8>,
+}
+
+/// Wraps a real socket and pushes every datagram, both directions, through a network
+/// emulator.
 pub struct FakeSocket<S: AsyncUdpSocket + ?Sized> {
     inner: Arc<S>,
     /// Where `try_send` puts a datagram instead of sending it.
     outgoing: mpsc::UnboundedSender<QueuedTx>,
+    /// Guarded because `poll_recv` takes `&self`.
+    rx: Mutex<RxState>,
+}
+
+// Hand-written so `RxState` does not have to be `Debug` too.
+impl<S: AsyncUdpSocket + ?Sized> std::fmt::Debug for FakeSocket<S> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeSocket").finish_non_exhaustive()
+    }
 }
 
 impl<S: AsyncUdpSocket + ?Sized> FakeSocket<S> {
-    /// Wrap `inner`, spawning the drain task that owns the emulator.
+    /// Wrap `inner`, spawning the drain task that owns the egress emulator. `config`
+    /// applies to each direction separately.
     ///
     /// Must be called from inside a tokio runtime: it panics otherwise, the same way
     /// [`tokio::spawn`] does. The drain task stops when `cancellation_token` fires or
@@ -74,8 +119,8 @@ impl<S: AsyncUdpSocket + ?Sized> FakeSocket<S> {
 
         info!(
             ?config,
-            "netem active on this endpoint's egress; the other direction is only \
-             degraded if the peer is wrapped too",
+            "netem active on both directions of this endpoint; the peer's own link is \
+             only degraded if it is wrapped too",
         );
 
         tokio::spawn(drain(
@@ -85,9 +130,25 @@ impl<S: AsyncUdpSocket + ?Sized> FakeSocket<S> {
             cancellation_token,
         ));
 
-        Arc::new(Self { inner, outgoing })
+        // A different seed than egress, or both directions would drop the same packet
+        // indices.
+        let rx = RxState {
+            netem: Netem::new(config.seed(RX_SEED_OFFSET)),
+            ready: VecDeque::new(),
+            timer: Box::pin(tokio::time::sleep(MAX_IDLE)),
+            scratch: vec![0; MAX_DATAGRAM],
+        };
+
+        Arc::new(Self {
+            inner,
+            outgoing,
+            rx: Mutex::new(rx),
+        })
     }
 }
+
+/// Arbitrary; only has to differ from the egress seed, which [`NetemConfig`] defaults.
+const RX_SEED_OFFSET: u64 = 0x5eed_d01f;
 
 impl<S: AsyncUdpSocket + ?Sized> AsyncUdpSocket for FakeSocket<S> {
     fn try_send(&self, transmit: &Transmit) -> io::Result<()> {
@@ -122,13 +183,118 @@ impl<S: AsyncUdpSocket + ?Sized> AsyncUdpSocket for FakeSocket<S> {
         Ok(())
     }
 
+    /// Reads off the real socket into the emulator, then hands quinn whatever it has
+    /// released.
     fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.inner.poll_recv(cx, bufs, meta)
+        let mut guard = self.rx.lock().unwrap_or_else(|e| e.into_inner());
+        let rx = &mut *guard;
+
+        let mut ingested = 0;
+        let mut saturated = true;
+        while ingested < RX_INGEST_BURST {
+            let mut one_meta = [RecvMeta::default()];
+            let polled = {
+                let mut one_buf = [io::IoSliceMut::new(&mut rx.scratch)];
+                self.inner.poll_recv(cx, &mut one_buf, &mut one_meta)
+            };
+
+            let count = match polled {
+                // Registers our waker against the socket becoming readable.
+                Poll::Pending => {
+                    saturated = false;
+                    break;
+                }
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Ready(Ok(count)) => count,
+            };
+
+            if count == 0 {
+                saturated = false;
+                break;
+            }
+
+            let now = Instant::now();
+            for m in &one_meta[..count] {
+                // GRO coalesces datagrams into one buffer at `stride` boundaries. Split
+                // them so loss acts per datagram, as on the send side.
+                let stride = if m.stride == 0 { m.len } else { m.stride };
+                for chunk in rx.scratch[..m.len].chunks(stride.max(1)) {
+                    rx.netem.handle_input(Input::Packet(
+                        now,
+                        QueuedRx {
+                            addr: m.addr,
+                            dst_ip: m.dst_ip,
+                            ecn: m.ecn,
+                            contents: chunk.to_vec(),
+                        },
+                    ));
+                }
+                ingested += 1;
+            }
+        }
+
+        rx.netem.handle_input(Input::Timeout(Instant::now()));
+        while let Some(output) = rx.netem.poll_output() {
+            // `Output::Timeout` is only a hint; `poll_timeout` below says the same.
+            if let Output::Packet(packet) = output {
+                rx.ready.push_back(packet);
+            }
+        }
+
+        let capacity = bufs.len().min(meta.len());
+        let mut filled = 0;
+        while filled < capacity {
+            let Some(next) = rx.ready.front() else { break };
+
+            // Dropping beats truncating: a partial datagram reads as corruption.
+            if next.contents.len() > bufs[filled].len() {
+                warn!(
+                    len = next.contents.len(),
+                    "netem dropping oversized datagram"
+                );
+                rx.ready.pop_front();
+                continue;
+            }
+
+            let packet = rx.ready.pop_front().expect("front just peeked");
+            let len = packet.contents.len();
+            bufs[filled][..len].copy_from_slice(&packet.contents);
+            meta[filled] = RecvMeta {
+                addr: packet.addr,
+                len,
+                stride: len,
+                ecn: packet.ecn,
+                dst_ip: packet.dst_ip,
+            };
+            filled += 1;
+        }
+
+        if filled > 0 {
+            return Poll::Ready(Ok(filled));
+        }
+
+        // Nothing to hand over, and `Pending` owes the caller a wakeup. Above we only
+        // got one for free if the socket ran dry.
+        if saturated || !rx.ready.is_empty() {
+            cx.waker().wake_by_ref();
+            return Poll::Pending;
+        }
+
+        let due = rx
+            .netem
+            .poll_timeout()
+            .saturating_duration_since(Instant::now())
+            .min(MAX_IDLE);
+        rx.timer.as_mut().reset(tokio::time::Instant::now() + due);
+        // Polling is what registers the waker; whether it is already due does not matter.
+        let _ = rx.timer.as_mut().poll(cx);
+
+        Poll::Pending
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -147,8 +313,9 @@ impl<S: AsyncUdpSocket + ?Sized> AsyncUdpSocket for FakeSocket<S> {
         1
     }
 
+    /// Likewise 1 inbound: `poll_recv` hands over one datagram per slot.
     fn max_receive_segments(&self) -> usize {
-        self.inner.max_receive_segments()
+        1
     }
 
     fn may_fragment(&self) -> bool {
@@ -165,7 +332,7 @@ impl UdpPoller for AlwaysWritable {
     }
 }
 
-/// Owns the emulator and forwards packets to the real socket once they come due.
+/// Owns the egress emulator and forwards packets to the real socket once they come due.
 ///
 /// This is the whole reason the emulator can be sans-IO: it hands us decisions
 /// (`Output::Packet` now, `Output::Timeout` later) and we supply the clock and the I/O.
