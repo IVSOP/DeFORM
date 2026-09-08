@@ -4,8 +4,11 @@
     all(feature = "pong", feature = "shooter"),
     all(feature = "pong", feature = "soccer"),
     all(feature = "shooter", feature = "soccer"),
+    all(feature = "shooter_airsoft", feature = "pong"),
+    all(feature = "shooter_airsoft", feature = "shooter"),
+    all(feature = "shooter_airsoft", feature = "soccer"),
 ))]
-compile_error!("enable exactly one game feature: `pong`, `shooter`, or `soccer`");
+compile_error!("enable exactly one game feature: `pong`, `shooter`, `shooter_airsoft`, or `soccer`");
 
 #[cfg(feature = "pong")]
 pub use pong::pong_logic::{
@@ -18,4 +21,9 @@ pub use shooter::shooter_logic::{
 #[cfg(feature = "soccer")]
 pub use soccer::soccer_logic::{
     SoccerGame as UserLogic, SoccerGameState as GameState, SoccerInputs as Inputs,
+};
+
+#[cfg(feature = "shooter_airsoft")]
+pub use shooter_airsoft::shooter_logic::{
+    ShooterGame as UserLogic, ShooterGameState as GameState, ShooterInputs as Inputs,
 };

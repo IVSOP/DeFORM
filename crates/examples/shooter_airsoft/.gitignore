@@ -1,0 +1,6 @@
+blender/*.blend1
+blender/*.blend2
+__pycache__/
+airsoft-screenshot.png
+dist/
+server.addr

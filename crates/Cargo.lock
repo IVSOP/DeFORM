@@ -5229,6 +5229,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "http"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5501,6 +5507,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]
@@ -8020,6 +8028,7 @@ checksum = "d0a536bb79db59098ef71a4dd4246c02eb87b316deceb1b68e0cde7167ec01eb"
 dependencies = [
  "cpal",
  "dasp_sample",
+ "hound",
  "lewton",
  "num-rational 0.4.2",
  "thiserror 2.0.18",
@@ -8509,6 +8518,49 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "shooter"
+version = "0.1.0"
+dependencies = [
+ "anchor-lang",
+ "anyhow",
+ "avian3d",
+ "bevy",
+ "bevy-egui-notify",
+ "bevy-tnua",
+ "bevy-tnua-avian3d",
+ "bevy_egui",
+ "borsh 1.7.0",
+ "clap",
+ "deform_core",
+ "deform_metrics",
+ "deform_offline",
+ "deform_quic",
+ "egui-probe",
+ "ephemeral-rollups-sdk",
+ "glam",
+ "magicblock-magic-program-api",
+ "num-derive",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "solana-account-info 3.1.1",
+ "solana-address 2.6.1",
+ "solana-client",
+ "solana-cpi 3.1.0",
+ "solana-instruction 3.4.0",
+ "solana-program-error 3.0.1",
+ "solana-rpc-client",
+ "solana-sdk",
+ "solana-system-interface 3.2.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "wincode",
+]
+
+[[package]]
+name = "shooter_airsoft"
 version = "0.1.0"
 dependencies = [
  "anchor-lang",

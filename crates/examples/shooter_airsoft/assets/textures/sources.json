@@ -1,0 +1,47 @@
+[
+  {
+    "asset": "concrete_floor",
+    "map": "Diffuse",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor/concrete_floor_diff_1k.jpg",
+    "md5": "99b94da291a4f038fa6af93c3993cbec",
+    "file": "concrete_floor_diff_1k.jpg"
+  },
+  {
+    "asset": "concrete_floor",
+    "map": "nor_gl",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor/concrete_floor_nor_gl_1k.jpg",
+    "md5": "d77c5c5de3f58adcb00f93caeb4c5a73",
+    "file": "concrete_floor_nor_gl_1k.jpg"
+  },
+  {
+    "asset": "concrete_floor",
+    "map": "arm",
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor/concrete_floor_arm_1k.jpg",
+    "md5": "3df74374f5f190be74799f9bc32a8831",
+    "file": "concrete_floor_arm_1k.jpg"
+  },
+  {
+    "asset": "plywood",
+    "map": "Diffuse",
+    "file": "plywood_diff_1k.jpg",
+    "size": 882059,
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/plywood/plywood_diff_1k.jpg",
+    "md5": "8032b768029adffbbfb223dd890102de"
+  },
+  {
+    "asset": "plywood",
+    "map": "nor_gl",
+    "file": "plywood_nor_gl_1k.jpg",
+    "size": 648222,
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/plywood/plywood_nor_gl_1k.jpg",
+    "md5": "0203f642273e4a3697daf7a6034a4ae5"
+  },
+  {
+    "asset": "plywood",
+    "map": "Rough",
+    "file": "plywood_rough_1k.jpg",
+    "size": 729997,
+    "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/plywood/plywood_rough_1k.jpg",
+    "md5": "d46c674551da8c15b2a82000e22fc60b"
+  }
+]
