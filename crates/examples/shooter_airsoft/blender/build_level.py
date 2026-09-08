@@ -128,7 +128,8 @@ for z in (-12,-4,4,12):
     for x in (-5,5):
         box('Suspended light housing',(x,6.2,z),(0.35,0.12,1.8),steel,False)
         box('Fluorescent tube',(x,6.12,z),(0.24,0.035,1.65),lightmat,False)
-        data=bpy.data.lights.new('Ceiling lamp','POINT');data.energy=170;data.shadow_soft_size=0.35
+        data=bpy.data.lights.new('Ceiling lamp','SPOT');data.energy=170;data.shadow_soft_size=0.35
+        data.spot_size=math.radians(160);data.spot_blend=1-65/80
         ob=bpy.data.objects.new('Ceiling lamp',data);scene.collection.objects.link(ob);ob.location=(x,-z,5.8)
 for sign,mat,label in ((1,blue,'A'),(-1,red,'B')):
     z=sign*15.91

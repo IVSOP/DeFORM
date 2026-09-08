@@ -87,7 +87,6 @@ impl PhysicsSim {
         if state.players.values().any(|p| p.score >= WIN_SCORE) {
             return state.clone();
         }
-        let sim = self.world.get_or_insert_with(SimWorld::new);
         let mut next = state.clone();
 
         next.shots.retain(|_, shot| {
@@ -98,7 +97,9 @@ impl PhysicsSim {
             ps.cooldown = ps.cooldown.saturating_sub(1);
         }
         for (pk, input) in inputs {
-            if let Some(ps) = next.players.get_mut(pk) {
+            if let Some(ps) = next.players.get_mut(pk)
+                && ps.death.is_none()
+            {
                 let look = input.look_dir();
                 let horizontal = Vec2::new(look.x, look.z);
                 if horizontal.length_squared() > 1e-6 {
@@ -107,21 +108,58 @@ impl PhysicsSim {
                 ps.pitch = input.pitch();
             }
         }
-        // Rays use the input snapshot directly, independent of physics solver caches.
-        // All players shoot from the same snapshot, so simultaneous hits are fair.
+        match next.phase {
+            RoundPhase::SpawnFreeze => {
+                next.phase_ticks += 1;
+                if next.phase_ticks >= SPAWN_FREEZE_TICKS {
+                    next.phase = RoundPhase::Playing;
+                    next.phase_ticks = 0;
+                }
+                // All 180 spawn ticks allow look only: no gravity, movement or shots.
+                return next;
+            }
+            RoundPhase::RoundOver => {
+                next.phase_ticks += 1;
+                if next.phase_ticks >= ROUND_OVER_TICKS {
+                    next.reset_round();
+                    self.world = None; // discard old controller actions/contact caches
+                    return next;
+                }
+            }
+            RoundPhase::Playing => {}
+        }
+        let sim = self.world.get_or_insert_with(SimWorld::new);
+        // All rays use the same snapshot. The first lethal hit (sorted input keys)
+        // ends scoring for the round, including any other shots in this same tick.
         let snapshot = next.clone();
         for (pk, input) in inputs {
             let Some(ps) = snapshot.players.get(pk) else {
                 continue;
             };
-            if !input.fire || ps.cooldown != 0 {
+            if !input.fire || ps.cooldown != 0 || next.players[pk].death.is_some() {
                 continue;
             }
             next.players.get_mut(pk).unwrap().cooldown = FIRE_COOLDOWN_TICKS;
             let origin = ps.pos + Vec3::Y * PLAYER_EYE_HEIGHT;
-            let shot = sim.trace_shot(&snapshot, *pk, origin, input.look_dir());
-            if shot.hit_player {
+            let (mut shot, victim) = sim.trace_shot(&snapshot, *pk, origin, input.look_dir());
+            if next.phase == RoundPhase::Playing
+                && let Some(victim) = victim
+            {
                 next.players.get_mut(pk).unwrap().score += 1;
+                let body = next.players.get_mut(&victim).unwrap();
+                body.death = Some(DeathState {
+                    killer: *pk,
+                    camera_position: body.pos + Vec3::Y * PLAYER_EYE_HEIGHT,
+                });
+                body.body_rotation =
+                    Quat::from_rotation_y((-body.look_xz.x).atan2(-body.look_xz.y)).to_array();
+                // Release balance with a small deterministic tumble; preserve linear momentum.
+                body.angular_velocity = Vec3::Y.cross(input.look_dir()) * 2.5;
+                next.phase = RoundPhase::RoundOver;
+                next.phase_ticks = 0;
+            } else {
+                // Survivors may keep firing, but no score/hit confirmation during the reset wait.
+                shot.hit_player = false;
             }
             let id = next.next_shot_id;
             next.next_shot_id = id.wrapping_add(1);
@@ -281,13 +319,33 @@ impl SimWorld {
             // Write Transform alongside Position: a freshly spawned entity has a
             // default Transform at the origin, and avian's Transform->Position sync
             // would otherwise overwrite the teleport with (0,0,0) on its first tick.
-            let rot = Quat::from_rotation_y(yaw);
+            let rot = if ps.death.is_some() {
+                Quat::from_array(ps.body_rotation).normalize()
+            } else {
+                Quat::from_rotation_y(yaw)
+            };
             let mut e = world.entity_mut(entity);
+            if ps.death.is_some() {
+                // Removing the motor is essential: a cached motor would still apply forces.
+                e.remove::<(
+                    TnuaController<ShooterScheme>,
+                    bevy_tnua::TnuaMotor,
+                    TnuaAvian3dSensorShape,
+                    LockedAxes,
+                )>();
+            } else if !e.contains::<TnuaController<ShooterScheme>>() {
+                e.insert((
+                    TnuaController::<ShooterScheme>::default(),
+                    TnuaConfig::<ShooterScheme>(self.tnua_config.clone()),
+                    TnuaAvian3dSensorShape(Collider::cylinder(PLAYER_RADIUS * 0.95, 0.0)),
+                    LockedAxes::new().lock_rotation_x().lock_rotation_z(),
+                ));
+            }
             e.insert((
                 Position::from(ps.pos),
                 Rotation::from(rot),
                 LinearVelocity(ps.vel),
-                AngularVelocity(Vec3::ZERO),
+                AngularVelocity(ps.angular_velocity),
                 Transform::from_translation(ps.pos).with_rotation(rot),
             ));
         }
@@ -349,6 +407,10 @@ impl SimWorld {
             if let Some(velocity) = world.get::<LinearVelocity>(*entity) {
                 ps.vel = velocity.0;
             }
+            if ps.death.is_some() {
+                ps.body_rotation = world.get::<Rotation>(*entity).unwrap().0.to_array();
+                ps.angular_velocity = world.get::<AngularVelocity>(*entity).unwrap().0;
+            }
         }
     }
 
@@ -358,11 +420,11 @@ impl SimWorld {
         owner: Pubkey,
         origin: Vec3,
         direction: Vec3,
-    ) -> Shot {
+    ) -> (Shot, Option<Pubkey>) {
         let mut distance = SHOT_RANGE;
         let mut normal = Vec3::ZERO;
         let mut hit_geometry = false;
-        let mut hit_player = false;
+        let mut victim = None;
         for (collider, pos, rot) in &self.solids {
             if let Some((d, n)) = collider.cast_ray(*pos, *rot, origin, direction, distance, true)
                 && d < distance
@@ -379,27 +441,39 @@ impl SimWorld {
             if *pk == owner {
                 continue;
             }
-            if let Some((d, n)) =
-                capsule.cast_ray(ps.pos, Quat::IDENTITY, origin, direction, distance, true)
-            {
+            if let Some((d, n)) = capsule.cast_ray(
+                ps.pos,
+                if ps.death.is_some() {
+                    Quat::from_array(ps.body_rotation)
+                } else {
+                    Quat::IDENTITY
+                },
+                origin,
+                direction,
+                distance,
+                true,
+            ) {
                 // Geometry wins a tie; shots never penetrate a touching wall.
                 if d < distance {
                     distance = d;
                     normal = n;
                     hit_geometry = false;
-                    hit_player = true;
+                    victim = ps.death.is_none().then_some(*pk);
                 }
             }
         }
-        Shot {
-            origin,
-            impact: origin + direction * distance,
-            normal,
-            owner,
-            hit_geometry,
-            hit_player,
-            ttl: SHOT_EVENT_TTL,
-        }
+        (
+            Shot {
+                origin,
+                impact: origin + direction * distance,
+                normal,
+                owner,
+                hit_geometry,
+                hit_player: victim.is_some(),
+                ttl: SHOT_EVENT_TTL,
+            },
+            victim,
+        )
     }
 }
 
@@ -428,7 +502,8 @@ mod tests {
         };
         let not_started = LobbyNotStarted { player_status };
         let game = ShooterGame::new_from_lobby(&metadata, &not_started).unwrap();
-        let state = ShooterGame::new_game_from_lobby(&metadata, &not_started).unwrap();
+        let mut state = ShooterGame::new_game_from_lobby(&metadata, &not_started).unwrap();
+        state.phase = RoundPhase::Playing;
         (game, state, a, b)
     }
 
@@ -552,7 +627,7 @@ mod tests {
         }
         assert_eq!(state.players[&a].score, 1);
         state = game.advance_frame(&state, &inputs).unwrap();
-        assert_eq!(state.players[&a].score, 2);
+        assert_eq!(state.players[&a].score, 1, "no repeat score on a corpse");
     }
 
     #[test]
@@ -562,11 +637,11 @@ mod tests {
         state.players.get_mut(&a).unwrap().pos = Vec3::new(-0.9, PLAYER_FLOAT_HEIGHT, 14.4);
         state.players.get_mut(&b).unwrap().pos = Vec3::new(-0.9, PLAYER_FLOAT_HEIGHT, 10.5);
         let origin = state.players[&a].pos + Vec3::Y * PLAYER_EYE_HEIGHT;
-        let shot = sim.trace_shot(&state, a, origin, Vec3::NEG_Z);
+        let (shot, _) = sim.trace_shot(&state, a, origin, Vec3::NEG_Z);
         assert!(shot.hit_geometry && !shot.hit_player);
         assert!((11.85..11.94).contains(&shot.impact.z), "{:?}", shot.impact);
         assert!(shot.normal.dot(Vec3::Z) > 0.99);
-        let miss = sim.trace_shot(&state, a, Vec3::new(30.0, 20.0, 0.0), Vec3::Y);
+        let (miss, _) = sim.trace_shot(&state, a, Vec3::new(30.0, 20.0, 0.0), Vec3::Y);
         assert!(!miss.hit_geometry && !miss.hit_player);
         assert_eq!(miss.origin.distance(miss.impact), SHOT_RANGE);
     }
@@ -648,5 +723,174 @@ mod tests {
             per_tick < std::time::Duration::from_millis(5),
             "one tick took {per_tick:?}; a rollback burst replays dozens of ticks in one frame"
         );
+    }
+    fn lethal_setup() -> (
+        ShooterGame,
+        ShooterGameState,
+        Pubkey,
+        Pubkey,
+        BTreeMap<Pubkey, ShooterInputs>,
+    ) {
+        let (game, mut state, a, b) = two_player_setup();
+        state.players.get_mut(&a).unwrap().pos = Vec3::new(0.0, 3.0, 14.4);
+        state.players.get_mut(&b).unwrap().pos = Vec3::new(3.0, 3.0, 14.4);
+        state.players.get_mut(&b).unwrap().vel = Vec3::new(1.5, 1.0, 0.0);
+        let mut inputs = idle_inputs(a, b);
+        inputs.get_mut(&a).unwrap().fire = true;
+        inputs
+            .get_mut(&a)
+            .unwrap()
+            .set_look(-std::f32::consts::FRAC_PI_2, 0.0);
+        (game, state, a, b, inputs)
+    }
+
+    #[test]
+    fn spawn_freeze_is_three_seconds_of_look_only() {
+        let (mut game, mut state, a, b) = two_player_setup();
+        state.reset_round();
+        let position = state.players[&a].pos;
+        let mut inputs = idle_inputs(a, b);
+        let input = inputs.get_mut(&a).unwrap();
+        input.move_z = 100;
+        input.jump = true;
+        input.fire = true;
+        input.set_look(0.7, 0.4);
+        for _ in 0..SPAWN_FREEZE_TICKS {
+            state = game.advance_frame(&state, &inputs).unwrap();
+            assert_eq!(state.players[&a].pos, position);
+            assert_eq!(state.players[&a].vel, Vec3::ZERO);
+            assert!(state.shots.is_empty());
+            assert!((state.players[&a].pitch - 0.4).abs() < 0.001);
+        }
+        assert_eq!(state.phase, RoundPhase::Playing);
+        state = game.advance_frame(&state, &inputs).unwrap();
+        assert!(!state.shots.is_empty());
+    }
+
+    #[test]
+    fn death_releases_controller_preserves_momentum_and_ignores_input() {
+        let (mut game, state, a, b, inputs) = lethal_setup();
+        let mut dead = game.advance_frame(&state, &inputs).unwrap();
+        assert_eq!(dead.phase, RoundPhase::RoundOver);
+        let victim = &dead.players[&b];
+        assert_eq!(
+            victim.death.as_ref().unwrap().camera_position,
+            state.players[&b].pos + Vec3::Y * PLAYER_EYE_HEIGHT
+        );
+        assert!(
+            (victim.vel.x - 1.5).abs() < 0.05,
+            "death must keep horizontal momentum"
+        );
+        assert!(victim.angular_velocity.length() > 1.0);
+        let sim = game.sim.world.as_ref().unwrap();
+        let entity = sim.players[&b];
+        assert!(
+            sim.world
+                .get::<TnuaController<ShooterScheme>>(entity)
+                .is_none()
+        );
+        assert!(sim.world.get::<bevy_tnua::TnuaMotor>(entity).is_none());
+        assert!(sim.world.get::<LockedAxes>(entity).is_none());
+
+        let bytes = wincode::serialize(&dead).unwrap();
+        let restored: ShooterGameState = wincode::deserialize(&bytes).unwrap();
+        let mut noisy = idle_inputs(a, b);
+        noisy.get_mut(&b).unwrap().move_z = 100;
+        noisy.get_mut(&b).unwrap().jump = true;
+        noisy.get_mut(&b).unwrap().fire = true;
+        noisy.get_mut(&b).unwrap().set_look(2.0, 0.8);
+        let replay = game.clone().advance_frame(&restored, &noisy).unwrap();
+        let idle_replay = game
+            .clone()
+            .advance_frame(&restored, &idle_inputs(a, b))
+            .unwrap();
+        assert!(replay.players[&b].pos.distance(idle_replay.players[&b].pos) < 0.0001);
+        assert_eq!(replay.players[&b].pitch, idle_replay.players[&b].pitch);
+        assert_eq!(replay.players[&b].score, 0);
+        let eye = victim.death.as_ref().unwrap().camera_position;
+        for _ in 0..90 {
+            dead = game.advance_frame(&dead, &noisy).unwrap();
+        }
+        assert!(
+            dead.players[&b].pos.y < state.players[&b].pos.y - 0.5,
+            "corpse must fall"
+        );
+        assert!(
+            Quat::from_array(dead.players[&b].body_rotation)
+                .mul_vec3(Vec3::Y)
+                .dot(Vec3::Y)
+                < 0.95,
+            "corpse must tumble"
+        );
+        assert_eq!(
+            dead.players[&b].death.as_ref().unwrap().camera_position,
+            eye
+        );
+    }
+
+    #[test]
+    fn one_point_then_five_seconds_of_live_physics_then_both_respawn() {
+        let (mut game, initial, a, b, mut inputs) = lethal_setup();
+        let mut state = game.advance_frame(&initial, &inputs).unwrap();
+        let start = state.players[&a].pos;
+        inputs.get_mut(&a).unwrap().move_z = 100;
+        for _ in 1..ROUND_OVER_TICKS {
+            state = game.advance_frame(&state, &inputs).unwrap();
+            assert_eq!(state.phase, RoundPhase::RoundOver);
+            assert_eq!(state.players[&a].score, 1);
+            assert_eq!(state.players[&b].score, 0);
+        }
+        assert!(
+            state.players[&a].pos.distance(start) > 1.0,
+            "survivor can still move"
+        );
+        assert!(state.next_shot_id > 2, "survivor can still fire");
+        let next_id = state.next_shot_id;
+        state = game.advance_frame(&state, &inputs).unwrap();
+        assert_eq!(state.phase, RoundPhase::SpawnFreeze);
+        assert_eq!(state.phase_ticks, 0);
+        assert_eq!(state.round, initial.round + 1);
+        assert_eq!(state.next_shot_id, next_id);
+        assert!(state.shots.is_empty());
+        for (slot, pk) in [a, b].into_iter().enumerate() {
+            assert_eq!(state.players[&pk].pos, spawn_for_slot(slot).0);
+            assert_eq!(state.players[&pk].vel, Vec3::ZERO);
+            assert_eq!(state.players[&pk].angular_velocity, Vec3::ZERO);
+            assert!(state.players[&pk].death.is_none());
+        }
+        for _ in 0..SPAWN_FREEZE_TICKS {
+            state = game.advance_frame(&state, &inputs).unwrap();
+            assert_eq!(state.players[&a].pos, spawn_for_slot(0).0);
+            assert_eq!(state.players[&a].score, 1);
+        }
+        state = game.advance_frame(&state, &inputs).unwrap();
+        let sim = game.sim.world.as_ref().unwrap();
+        assert!(
+            sim.world
+                .get::<TnuaController<ShooterScheme>>(sim.players[&b])
+                .is_some()
+        );
+        assert!(!state.shots.is_empty());
+    }
+
+    #[test]
+    fn simultaneous_shots_award_only_one_point_and_ten_ends_match() {
+        let (mut game, state, a, b, mut inputs) = lethal_setup();
+        inputs.get_mut(&b).unwrap().fire = true;
+        inputs
+            .get_mut(&b)
+            .unwrap()
+            .set_look(std::f32::consts::FRAC_PI_2, 0.0);
+        let next = game.advance_frame(&state, &inputs).unwrap();
+        assert_eq!(next.players.values().map(|p| p.score).sum::<u32>(), 1);
+        assert!(next.players[&b].death.is_some());
+        let mut match_point = state;
+        match_point.players.get_mut(&a).unwrap().score = 9;
+        let won = game.advance_frame(&match_point, &inputs).unwrap();
+        use deform_core::DeformGameState;
+        assert!(won.has_ended());
+        let after = game.advance_frame(&won, &inputs).unwrap();
+        assert_eq!(after.players[&a].score, 10);
+        assert_eq!(after.round, won.round);
     }
 }

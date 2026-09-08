@@ -41,7 +41,13 @@ for i,n in spawns:
  assert np.allclose(world[i][:3,3],s['position'],atol=0.0001)
 assert manifest['spawns'][0]['position'][2]>14 and manifest['spawns'][1]['position'][2]<-14
 assert len(gltf['images'])>=1 and all('bufferView' in im for im in gltf['images'])
-assert len(gltf['extensions']['KHR_lights_punctual']['lights'])==8
+lights=gltf['extensions']['KHR_lights_punctual']['lights']
+assert len(lights)==8
+assert all(light['type']=='spot' for light in lights), 'Ceiling lamps must use one shadow view each'
+for i,n in enumerate(gltf['nodes']):
+ if 'KHR_lights_punctual' in n.get('extensions',{}):
+  direction=world[i][:3,:3]@np.array([0,0,-1])
+  assert np.allclose(direction,[0,-1,0],atol=0.0001), 'Ceiling lamps must face down'
 # The committed Rust output must still match the manifest after rustfmt.
 import re
 rust=(root/'src/arena_data.rs').read_text()

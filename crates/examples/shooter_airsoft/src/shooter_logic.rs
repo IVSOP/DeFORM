@@ -41,6 +41,35 @@ pub const FIRE_COOLDOWN_TICKS: u16 = 12;
 pub const MAX_SHOT_EVENTS: usize = 32;
 
 pub const WIN_SCORE: u32 = 10;
+pub const SPAWN_FREEZE_TICKS: u16 = 180;
+pub const ROUND_OVER_TICKS: u16 = 300;
+
+#[derive(
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    SchemaRead,
+    SchemaWrite,
+)]
+pub enum RoundPhase {
+    #[default]
+    SpawnFreeze,
+    Playing,
+    RoundOver,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite)]
+pub struct DeathState {
+    pub killer: Pubkey,
+    /// Fixed at the hit, independent of the falling body and input prediction.
+    #[wincode(with = "PodVec3")]
+    pub camera_position: Vec3,
+}
 
 /// One player's input for one tick.
 ///
@@ -152,6 +181,11 @@ pub struct PlayerState {
     pub score: u32,
     /// Ticks until this player can fire again.
     pub cooldown: u16,
+    pub death: Option<DeathState>,
+    /// Full corpse orientation and angular velocity survive rollback/world rebuilds.
+    pub body_rotation: [f32; 4],
+    #[wincode(with = "PodVec3")]
+    pub angular_velocity: Vec3,
 }
 
 #[derive(
@@ -184,6 +218,32 @@ pub struct ShooterGameState {
     // Events are discrete: interpolating impact positions smears decals off walls.
     pub shots: BTreeMap<u32, Shot>,
     pub next_shot_id: u32,
+    pub phase: RoundPhase,
+    pub phase_ticks: u16,
+    pub round: u32,
+}
+
+impl ShooterGameState {
+    pub fn reset_round(&mut self) {
+        let mut keys: Vec<_> = self.players.keys().copied().collect();
+        keys.sort_unstable();
+        for (slot, key) in keys.into_iter().enumerate() {
+            let player = self.players.get_mut(&key).unwrap();
+            let (pos, yaw) = spawn_for_slot(slot);
+            *player = PlayerState {
+                pos,
+                look_xz: Vec2::new(-yaw.sin(), -yaw.cos()),
+                score: player.score,
+                body_rotation: glam::Quat::from_rotation_y(yaw).to_array(),
+                ..Default::default()
+            };
+        }
+        self.phase = RoundPhase::SpawnFreeze;
+        self.phase_ticks = 0;
+        self.round = self.round.wrapping_add(1);
+        self.shots.clear();
+        // Keep shot IDs monotonic so clients don't suppress the next round's effects.
+    }
 }
 
 impl DeformGameState for ShooterGameState {
@@ -256,7 +316,8 @@ impl DeformUserLogic for ShooterGame {
                     look_xz,
                     pitch: 0.0,
                     score: 0,
-                    cooldown: 0,
+                    body_rotation: glam::Quat::from_rotation_y(yaw).to_array(),
+                    ..Default::default()
                 },
             );
         }
@@ -265,6 +326,7 @@ impl DeformUserLogic for ShooterGame {
             players,
             shots: BTreeMap::new(),
             next_shot_id: 0,
+            ..Default::default()
         })
     }
 
@@ -333,10 +395,14 @@ pub fn shooter_bot(
         return ShooterInputs::default();
     };
 
+    if me.death.is_some() {
+        return ShooterInputs::default();
+    }
+
     // Nearest other player, by lowest key on ties (BTreeMap-style determinism).
     let mut target: Option<(&Pubkey, &PlayerState)> = None;
     for (pk, ps) in state.players.iter() {
-        if pk == bot {
+        if pk == bot || ps.death.is_some() {
             continue;
         }
         let better = match target {
@@ -438,6 +504,7 @@ mod tests {
                     pitch: 0.1,
                     score: 3,
                     cooldown: 4,
+                    ..Default::default()
                 },
             );
         }

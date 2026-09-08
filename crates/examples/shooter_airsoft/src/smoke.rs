@@ -28,7 +28,7 @@ pub fn smoke_update(
     impacts: Query<&GlobalTransform, With<crate::effects::Impact>>,
     mut exit: MessageWriter<AppExit>,
 ) {
-    if !options.smoke_test {
+    if !options.smoke_test || std::env::var_os("AIRSOFT_ROUND_SMOKE").is_some() {
         return;
     }
     if let Some(bevy::asset::LoadState::Failed(error)) = assets.get_load_state(scene.level.id()) {
@@ -87,7 +87,7 @@ pub fn preview_remote_weapon(
     mut commands: Commands,
     options: Res<LaunchOptions>,
     progress: Res<SmokeProgress>,
-    weapons: Query<&ChildOf, With<crate::effects::RemoteWeapon>>,
+    weapons: Query<(&ChildOf, &InheritedVisibility), With<crate::effects::RemoteWeapon>>,
     bodies: Query<&GlobalTransform, With<crate::client::PlayerCapsule>>,
     bands: Query<&ChildOf, With<crate::client::TeamHeadband>>,
     mut cameras: Query<&mut Transform, With<Camera3d>>,
@@ -161,7 +161,7 @@ pub fn preview_remote_weapon(
         }
         return;
     }
-    let Some(parent) = weapons.iter().next() else {
+    let Some((parent, _)) = weapons.iter().find(|(_, visible)| visible.get()) else {
         panic!("remote player must have a held gun");
     };
     let body = bodies

@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::anyhow;
-use bevy::{prelude::*, window::Monitor};
+use bevy::{
+    diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    prelude::*,
+    window::Monitor,
+};
 use bevy_egui::{EguiContexts, egui};
 use bevy_egui_notify::EguiToasts;
 use deform_core::{
@@ -59,6 +63,7 @@ pub struct MenuState {
     pub fake_network: Option<FakeNetwork>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn egui_in_menu(
     mut contexts: EguiContexts,
     mut bot: ResMut<BotEnabled>,
@@ -67,10 +72,12 @@ pub fn egui_in_menu(
     mut toasts: ResMut<EguiToasts>,
     mut commands: Commands,
     monitor_q: Query<&Monitor>,
+    diagnostics: Res<DiagnosticsStore>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     egui::Window::new("Bomb House / Airsoft").show(&ctx, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
+            show_fps(ui, &diagnostics);
             if cfg!(feature = "metrics") {
                 ui.colored_label(egui::Color32::LIGHT_GREEN, "Metrics enabled");
             } else {
@@ -421,6 +428,7 @@ pub fn egui_in_game(
     client: Res<MultiplayerClient>,
     local: Res<LocalPlayer>,
     net_stats: Res<NetStats>,
+    diagnostics: Res<DiagnosticsStore>,
 ) -> Result {
     let lobby = client.0.read_state()?.lobby.clone();
 
@@ -435,6 +443,10 @@ pub fn egui_in_game(
         }
     };
 
+    let round_state = match &lobby.state {
+        LobbyState::Ongoing(ongoing) => Some(&ongoing.tick_info.game_state),
+        _ => None,
+    };
     let ctx = contexts.ctx_mut()?;
 
     egui::Window::new("Scoreboard").show(ctx, |ui| {
@@ -445,7 +457,38 @@ pub fn egui_in_game(
             ui.label(format!("{}…{you}: {score}", &pk.to_string()[..8]));
         }
         ui.separator();
+        show_fps(ui, &diagnostics);
         ui.label(format!("Ping: {:.0} ms", net_stats.ping_ms));
+        if let Some(state) = round_state {
+            use shooter_airsoft::shooter_logic::{
+                ROUND_OVER_TICKS, RoundPhase, SPAWN_FREEZE_TICKS,
+            };
+            match state.phase {
+                RoundPhase::SpawnFreeze => {
+                    let seconds = SPAWN_FREEZE_TICKS
+                        .saturating_sub(state.phase_ticks)
+                        .div_ceil(60);
+                    ui.heading(format!("Ready in {seconds}s"));
+                    ui.label("Look around — movement and shooting unlock at GO.");
+                }
+                RoundPhase::RoundOver => {
+                    let seconds = ROUND_OVER_TICKS
+                        .saturating_sub(state.phase_ticks)
+                        .div_ceil(60);
+                    ui.heading(format!("Respawn in {seconds}s"));
+                    if state
+                        .players
+                        .get(&local.0)
+                        .is_some_and(|p| p.death.is_some())
+                    {
+                        ui.label("You were hit — watching the shooter.");
+                    } else {
+                        ui.label("Round over — scoring is paused.");
+                    }
+                }
+                RoundPhase::Playing => {}
+            }
+        }
         if finished {
             let winner = players.first().map(|(pk, _)| pk.to_string());
             ui.separator();
@@ -457,6 +500,17 @@ pub fn egui_in_game(
     });
 
     Ok(())
+}
+
+fn show_fps(ui: &mut egui::Ui, diagnostics: &DiagnosticsStore) {
+    if let Some(fps) = diagnostics
+        .get(&FrameTimeDiagnosticsPlugin::FPS)
+        .and_then(|diagnostic| diagnostic.smoothed())
+    {
+        ui.label(format!("FPS: {fps:.0}"));
+    } else {
+        ui.label("FPS: —");
+    }
 }
 
 fn collect_scores(state: &ShooterGameState) -> Vec<(Pubkey, u32)> {

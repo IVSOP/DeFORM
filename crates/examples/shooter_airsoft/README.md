@@ -8,7 +8,7 @@ From the `crates` workspace:
 cargo run -p shooter_airsoft --locked -- run --offline
 ```
 
-No wallet, Blender, or server is needed for offline play. Omit `--offline` for the inherited lobby menu. WASD moves, mouse looks, Space jumps, left mouse fires, Escape releases the cursor, and F12 saves `airsoft-screenshot.png`. First to ten hits wins. Players remain in play after a hit, following the original scoring rules. Other players have capsule bodies with a held AEG, glove grips, and a team headband: blue for spawn A, orange for spawn B. Headband colors follow the same deterministic player order as spawn assignment. Their weapons follow replicated yaw and pitch, making their aim direction visible.
+No wallet, Blender, or server is needed for offline play. Omit `--offline` for the inherited lobby menu. WASD moves, mouse looks, Space jumps, left mouse fires, Escape releases the cursor, and F12 saves `airsoft-screenshot.png`. First to ten points wins. Each spawn begins with three seconds of look-only time. The first hit scores one point and starts a five-second round-end phase: the victim becomes an uncontrolled physics capsule retaining its linear velocity, while the survivor can move and shoot without scoring again. Both players then return to their assigned spawns for another three-second countdown. The victim's camera stays at the hit position and tracks the shooter, whose red silhouette remains visible through walls. The camera weapon and crosshair are hidden while dead. The winning tenth point ends the match immediately. Other players have capsule bodies with a held AEG, glove grips, and a team headband: blue for spawn A, orange for spawn B. Headband colors follow the same deterministic player order as spawn assignment. Their weapons follow replicated yaw and pitch, making their aim direction visible.
 
 The map is a 24 × 36 m plywood training house inside a warehouse: rooms and doorways, firing windows, staggered central cover, two flank routes, crates, a raised deck with stairs and rails, roof trusses, skylights, and fluorescent fixtures. Players alternate between the two Blender spawn markers in sorted player-key order; additional players spread along each spawn line. The offline bot follows a ground navigation grid derived from the exported collision geometry.
 
@@ -43,7 +43,7 @@ blender --background -noaudio --python-exit-code 1 --python blender/build_level.
 
 ## Lighting
 
-Direct lighting uses real-time shadow maps: angled daylight through skylight gaps plus eight imported ceiling lights. Ambient light, SSAO, TAA, and a small bloom contribution provide the current warehouse look. Imported lamps explicitly enable shadows, so their direct light is blocked by plywood. There is **no Cycles bake or ray-traced lighting** in this version; editing the scene needs only an export. This is a visually tuned prototype, not a calibrated Blender/Bevy lighting match. Static lightmaps can be added using the reference project's indirect-only bake and UV1 workflow.
+Direct lighting uses real-time shadow maps: angled daylight through skylight gaps plus eight imported ceiling spotlights aimed downward. Each ceiling light renders one shadow view instead of the six faces required by a point light. Ambient light, SSAO, TAA, and a small bloom contribution provide the current warehouse look. Imported lamps explicitly enable shadows, so their direct light is blocked by plywood. There is **no Cycles bake or ray-traced lighting** in this version; editing the scene needs only an export. This is a visually tuned prototype, not a calibrated Blender/Bevy lighting match. Static lightmaps can be added using the reference project's indirect-only bake and UV1 workflow.
 
 ## Validation
 
@@ -60,7 +60,7 @@ These commands assume the workspace directory. The rendered smoke test needs a d
 
 ## Multiplayer
 
-Use this example's `serve` command and copied Docker/run/package scripts with **airsoft clients on both ends**. Its shot-event wire format differs from the original shooter; do not mix clients and servers. Build the lobby program with `anchor_program/build_airsoft_shooter.sh`. It selects the `shooter_airsoft` game feature without physics, then regenerates this example’s Rust client. Web2 lobbies remain `NotStarted` on chain and the admin settlement instruction passes scores separately. The server image has been built and its binary startup checked. Local Surfpool and ephemeral-validator startup and RPC health have also been verified; no live multiplayer match was performed. The default local server port remains 4433; run it separately from the original shooter's server.
+Use this example's `serve` command and copied Docker/run/package scripts with **airsoft clients on both ends**. Its round/death and shot-event wire format differs from earlier Airsoft builds and the original shooter; rebuild both clients and server together, and do not mix clients and servers. Build the lobby program with `anchor_program/build_airsoft_shooter.sh`. It selects the `shooter_airsoft` game feature without physics, then regenerates this example’s Rust client. Web2 lobbies remain `NotStarted` on chain and the admin settlement instruction passes scores separately. The server image has been built and its binary startup checked. Local Surfpool and ephemeral-validator startup and RPC health have also been verified; no live multiplayer match was performed. The default local server port remains 4433; run it separately from the original shooter's server.
 
 The headless server uses the compiled collision data and does not require graphical assets, audio, or Blender. Fully-on-chain physics remains unsupported, as in the original example.
 
@@ -90,3 +90,21 @@ when any process exits, the launcher preserves its status and terminates the
 remaining process groups, including the game processes started by Cargo.
 The `up.sh` and `build-image.sh` wrappers work from any current directory and
 propagate build failures. The existing devnet launchers already stop on errors.
+
+The round flow is authoritative (`SpawnFreeze` → `Playing` → `RoundOver`) with tick timers, following Soccer's phase/reset pattern. Simultaneous lethal shots resolve in deterministic player-key order and award only one point for the round. Corpse orientation, angular velocity, and the fixed death-camera origin are serialized for rollback. Bodies are single physics capsules with attached weapons and headbands.
+
+Run the death/respawn rendering fixture with:
+
+```sh
+AIRSOFT_ROUND_SMOKE=1 cargo run -p shooter_airsoft --locked -- run --smoke-test
+```
+
+It captures the death camera, a killer occluded by verified solid geometry, the fallen body, and the respawn countdown under `/tmp/airsoft-*.png`.
+
+The egui menu and scoreboard display smoothed FPS. To compare the ceiling-light rendering cost with the original point-light setup:
+
+```sh
+AIRSOFT_PERF_PROBE=1 cargo run -p shooter_airsoft --release --locked -- run --offline
+```
+
+This optional probe runs a stationary, bot-disabled scene, temporarily disables VSync, and compares the current spotlights with the original point lights. Each stage warms up for four seconds, measures six seconds, and logs FPS, frame times, physical framebuffer resolution and GPU pass timings before exiting. Normal play does not enable these diagnostics. `run.sh` launches two clients, which share the GPU; its performance is not directly comparable with a single-client probe.

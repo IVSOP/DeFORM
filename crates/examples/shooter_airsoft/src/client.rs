@@ -76,6 +76,7 @@ pub struct SceneAssets {
     pub camera: Entity,
     pub player_mesh: Handle<Mesh>,
     pub player_material: Handle<StandardMaterial>,
+    pub outline_material: Handle<crate::killcam::OutlineMaterial>,
     pub headband_mesh: Handle<Mesh>,
     pub team_materials: [Handle<StandardMaterial>; 2],
 }
@@ -120,6 +121,9 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
                     ..default()
                 }),
         )
+        .add_plugins(MaterialPlugin::<crate::killcam::OutlineMaterial>::default())
+        .init_resource::<crate::killcam::PlayerView>()
+        .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
         .add_plugins(EguiToastsPlugin::default())
         .init_state::<AppState>()
@@ -172,8 +176,20 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
                 .after(update_state)
                 .before(bevy::transform::TransformSystems::Propagate),
         )
-        .add_systems(Update, on_app_exit)
-        .run();
+        .add_systems(PreUpdate, crate::round_smoke::advance)
+        .add_systems(
+            PostUpdate,
+            crate::round_smoke::preview_corpse
+                .after(update_state)
+                .before(bevy::transform::TransformSystems::Propagate),
+        )
+        .add_systems(Update, on_app_exit);
+    if std::env::var_os("AIRSOFT_PERF_PROBE").is_some() {
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
+            .init_resource::<crate::perf_probe::PerfProbe>()
+            .add_systems(Update, crate::perf_probe::sample);
+    }
+    app.run();
 }
 
 #[derive(Clone)]
@@ -246,6 +262,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut outlines: ResMut<Assets<crate::killcam::OutlineMaterial>>,
     wallet: Res<WalletArg>,
     assets: Res<AssetServer>,
 ) -> Result<()> {
@@ -291,6 +308,7 @@ pub fn setup(
         level: assets.load("levels/bomb_house.glb"),
         camera,
         player_mesh: meshes.add(Capsule3d::new(PLAYER_RADIUS, PLAYER_CAPSULE_LENGTH)),
+        outline_material: outlines.add(crate::killcam::OutlineMaterial {}),
         headband_mesh: meshes.add(Torus::new(0.30, 0.41)),
         // Match the Blender spawn stripes: Team A blue, Team B orange.
         team_materials: [
@@ -350,7 +368,7 @@ pub fn setup(
     Ok(())
 }
 
-fn make_backend_lobby(main_player: Pubkey, bot_player: Pubkey) -> Lobby<ShooterGame> {
+pub(crate) fn make_backend_lobby(main_player: Pubkey, bot_player: Pubkey) -> Lobby<ShooterGame> {
     let mut player_status = std::collections::BTreeMap::new();
     for pk in [main_player, bot_player] {
         player_status.insert(pk, PlayerStatus::Ready);
@@ -472,8 +490,9 @@ pub fn mouse_look(
     scene: Res<SceneAssets>,
     mut transforms: Query<&mut Transform>,
     bot: Res<BotEnabled>,
+    view: Res<crate::killcam::PlayerView>,
 ) -> Result<()> {
-    if bot.0 || cursor.grab_mode == CursorGrabMode::None {
+    if view.dead || bot.0 || cursor.grab_mode == CursorGrabMode::None {
         motion.clear();
         return Ok(());
     }
@@ -505,7 +524,12 @@ pub fn update_inputs(
     bot: Res<BotEnabled>,
     client: Res<MultiplayerClient>,
     local: Res<LocalPlayer>,
+    view: Res<crate::killcam::PlayerView>,
 ) -> Result<()> {
+    if view.dead {
+        current.0 = ShooterInputs::default();
+        return Ok(());
+    }
     if bot.0 {
         let state = client.0.read_state()?;
         if let LobbyState::Ongoing(ongoing) = &state.lobby.state {
@@ -561,7 +585,10 @@ pub fn update_state(
     client: Res<MultiplayerClient>,
     local: Res<LocalPlayer>,
     scene: Res<SceneAssets>,
-    orientation: Res<CameraOrientation>,
+    mut orientation: ResMut<CameraOrientation>,
+    mut view: ResMut<crate::killcam::PlayerView>,
+    mut visibility: Query<&mut Visibility>,
+    outlines: Query<(Entity, &crate::killcam::KillerOutline)>,
     mut player_entities: ResMut<PlayerEntities>,
     mut effects: ResMut<crate::effects::ShotEffects>,
     weapon_model: Res<crate::effects::WeaponModel>,
@@ -582,37 +609,67 @@ pub fn update_state(
         LobbyState::Ongoing(ongoing) => &ongoing.tick_info.game_state,
     };
 
+    let me = game_state.players.get(&local.0);
+    view.dead = me.is_some_and(|p| p.death.is_some());
+    if view.round != Some(game_state.round) {
+        view.round = Some(game_state.round);
+        if let Some(me) = me {
+            orientation.yaw = (-me.look_xz.x).atan2(-me.look_xz.y);
+            orientation.pitch = me.pitch;
+        }
+    }
+    let killer = me.and_then(|p| p.death.as_ref()).map(|death| death.killer);
+
     // Match the sorted lobby-key order used by new_game_from_lobby/spawn_for_slot.
     // HashMap iteration order is different on each client and cannot assign teams.
     let mut players: Vec<_> = game_state.players.iter().collect();
     players.sort_unstable_by_key(|(pk, _)| **pk);
     for (slot, (pk, ps)) in players.into_iter().enumerate() {
         let yaw = (-ps.look_xz.x).atan2(-ps.look_xz.y);
-        let transform =
-            Transform::from_translation(ps.pos).with_rotation(Quat::from_rotation_y(yaw));
+        let position = if game_state.phase == RoundPhase::SpawnFreeze {
+            spawn_for_slot(slot).0 // teleport immediately, without interpolation from the corpse
+        } else {
+            ps.pos
+        };
+        let rotation = if ps.death.is_some() {
+            Quat::from_array(ps.body_rotation)
+        } else {
+            Quat::from_rotation_y(yaw)
+        };
+        let transform = Transform::from_translation(position).with_rotation(rotation);
+        let body_visibility = if *pk == local.0 && ps.death.is_none() {
+            Visibility::Hidden
+        } else {
+            Visibility::Visible
+        };
         match player_entities.0.get(pk) {
             Some(entity) => {
                 if let Ok(mut t) = transforms.get_mut(*entity) {
                     *t = transform;
                 }
+                if let Ok(mut visible) = visibility.get_mut(*entity) {
+                    *visible = body_visibility;
+                }
             }
             None => {
-                // First-person: the local player's own capsule is never rendered.
-                let visibility = if *pk == local.0 {
-                    Visibility::Hidden
-                } else {
-                    Visibility::Visible
-                };
                 let entity = commands
                     .spawn((
                         PlayerCapsule(*pk),
                         Mesh3d(scene.player_mesh.clone()),
                         MeshMaterial3d(scene.player_material.clone()),
                         transform,
-                        visibility,
+                        body_visibility,
                     ))
                     .id();
                 commands.entity(entity).with_children(|parent| {
+                    parent.spawn((
+                        crate::killcam::KillerOutline(*pk),
+                        Mesh3d(scene.player_mesh.clone()),
+                        MeshMaterial3d(scene.outline_material.clone()),
+                        Transform::from_scale(Vec3::splat(1.015)),
+                        Visibility::Hidden,
+                        bevy::light::NotShadowCaster,
+                    ));
                     parent.spawn((
                         TeamHeadband,
                         Name::new(if slot % 2 == 0 {
@@ -626,9 +683,7 @@ pub fn update_state(
                         Visibility::Inherited,
                     ));
                 });
-                if *pk != local.0 {
-                    weapon_model.spawn_remote(&mut commands, entity, *pk, ps.pitch);
-                }
+                weapon_model.spawn_remote(&mut commands, entity, *pk, ps.pitch);
                 player_entities.0.insert(*pk, entity);
             }
         }
@@ -650,6 +705,15 @@ pub fn update_state(
         }
     }
 
+    for (entity, outline) in &outlines {
+        if let Ok(mut visible) = visibility.get_mut(entity) {
+            *visible = if killer == Some(outline.0) {
+                Visibility::Inherited
+            } else {
+                Visibility::Hidden
+            };
+        }
+    }
     effects.present(&mut commands, game_state, local.0);
 
     // Camera position follows the local player's (smoothed) body; camera rotation
@@ -657,9 +721,27 @@ pub fn update_state(
     if let Some(me) = game_state.players.get(&local.0)
         && let Ok(mut camera_transform) = transforms.get_mut(scene.camera)
     {
-        camera_transform.translation = me.pos + Vec3::Y * PLAYER_EYE_HEIGHT;
-        camera_transform.rotation =
-            Quat::from_euler(EulerRot::YXZ, orientation.yaw, orientation.pitch, 0.0);
+        if let Some(death) = &me.death {
+            if let Some(killer) = game_state.players.get(&death.killer) {
+                *camera_transform = crate::killcam::death_camera(me, killer);
+            } else {
+                camera_transform.translation = death.camera_position;
+            }
+        } else {
+            let position = if game_state.phase == RoundPhase::SpawnFreeze {
+                let slot = game_state
+                    .players
+                    .keys()
+                    .filter(|pk| **pk < local.0)
+                    .count();
+                spawn_for_slot(slot).0
+            } else {
+                me.pos
+            };
+            camera_transform.translation = position + Vec3::Y * PLAYER_EYE_HEIGHT;
+            camera_transform.rotation =
+                Quat::from_euler(EulerRot::YXZ, orientation.yaw, orientation.pitch, 0.0);
+        }
     }
 
     Ok(())
@@ -687,19 +769,22 @@ fn auto_start(
     options: Res<LaunchOptions>,
     mut next: ResMut<NextState<AppState>>,
 ) -> Result<()> {
-    if options.offline {
+    if options.smoke_test && std::env::var_os("AIRSOFT_ROUND_SMOKE").is_some() {
+        crate::round_smoke::start(&mut commands);
+        next.set(AppState::InGame);
+    } else if options.offline {
         start_offline(
             &mut commands,
             Pubkey::new_from_array([1; 32]),
             16_667,
-            !options.smoke_test,
+            !options.smoke_test && std::env::var_os("AIRSOFT_PERF_PROBE").is_none(),
         )?;
         next.set(AppState::InGame);
     }
     Ok(())
 }
 
-fn configure_lamps(mut lamps: Query<&mut PointLight, Added<PointLight>>) {
+fn configure_lamps(mut lamps: Query<&mut SpotLight, Added<SpotLight>>) {
     for mut lamp in &mut lamps {
         lamp.shadow_maps_enabled = true;
         lamp.radius = 0.35;

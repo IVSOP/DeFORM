@@ -22,7 +22,13 @@ pub mod client;
 #[cfg(feature = "client")]
 pub mod effects;
 #[cfg(feature = "client")]
+pub mod killcam;
+#[cfg(feature = "client")]
 pub mod menu;
+#[cfg(feature = "client")]
+pub mod perf_probe;
+#[cfg(feature = "client")]
+pub mod round_smoke;
 #[cfg(feature = "server")]
 pub mod server;
 #[cfg(feature = "client")]

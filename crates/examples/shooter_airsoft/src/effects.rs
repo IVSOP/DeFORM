@@ -298,11 +298,12 @@ pub fn animate_feedback(
     time: Res<Time>,
     state: Res<State<AppState>>,
     mut effects: ResMut<ShotEffects>,
+    view: Res<crate::killcam::PlayerView>,
     mut guns: Query<(&mut Transform, &mut Visibility), With<Weapon>>,
     mut crosshairs: Query<&mut Node, With<Crosshair>>,
     mut colors: Query<&mut BackgroundColor, With<CrosshairLine>>,
 ) {
-    let playing = *state.get() == AppState::InGame;
+    let playing = *state.get() == AppState::InGame && !view.dead;
     effects.recoil = (effects.recoil - time.delta_secs() * 9.0).max(0.0);
     effects.hit_flash = (effects.hit_flash - time.delta_secs()).max(0.0);
     for (mut t, mut v) in &mut guns {
