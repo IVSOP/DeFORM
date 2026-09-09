@@ -1,5 +1,5 @@
 """Rebuild the original BOMB HOUSE scene. Export separately to preserve hand edits.
-blender --background -noaudio --python-exit-code 1 --python blender/build_level.py --python blender/export_level.py
+blender --background -noaudio --python-exit-code 1 --python blender/build_level.py --python blender/bake_lighting.py --python blender/export_level.py
 All authored coordinates below are Bevy (X, up Y, Z), in metres.
 """
 import bpy, math, random

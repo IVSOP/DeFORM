@@ -25,6 +25,8 @@ pub fn smoke_update(
     local: Option<Res<LocalPlayer>>,
     mut inputs: ResMut<CurrentInputs>,
     meshes: Query<&Mesh3d>,
+    lightmaps: Query<&bevy::pbr::Lightmap>,
+    images: Res<Assets<Image>>,
     impacts: Query<&GlobalTransform, With<crate::effects::Impact>>,
     mut exit: MessageWriter<AppExit>,
 ) {
@@ -39,6 +41,13 @@ pub fn smoke_update(
         panic!("render smoke timed out waiting for loaded arena and shot feedback");
     }
     if meshes.iter().count() < 500 || audio.is_empty() {
+        return;
+    }
+    if lightmaps.iter().count() < 700
+        || lightmaps
+            .iter()
+            .any(|bake| !images.contains(bake.image.id()))
+    {
         return;
     }
     let (Some(client), Some(local)) = (client, local) else {
@@ -73,7 +82,7 @@ pub fn smoke_update(
         progress.captured = true;
         progress.frames = 0;
         info!(
-            "AIRSOFT SMOKE: GLB loaded, grounded player, hitscan events and impact decals verified"
+            "AIRSOFT SMOKE: GLB and lightmaps loaded, grounded player, hitscan events and impact decals verified"
         );
     }
     if progress.captured && progress.frames > 210 {

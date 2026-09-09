@@ -11,7 +11,7 @@ pub struct PerfProbe {
     gpu: BTreeMap<String, (f64, usize)>,
 }
 
-const STAGES: &[&str] = &["downward-spots", "legacy-point-lights"];
+const STAGES: &[&str] = &["baked-msaa", "baked-all-lights-2048"];
 
 #[allow(clippy::too_many_arguments)]
 pub fn sample(
@@ -20,7 +20,9 @@ pub fn sample(
     mut probe: ResMut<PerfProbe>,
     diagnostics: Res<DiagnosticsStore>,
     mut windows: Query<&mut Window>,
-    spots: Query<(Entity, &SpotLight)>,
+    mut budget: ResMut<crate::lighting::LiveLampBudget>,
+    mut shadow_map: ResMut<bevy::light::DirectionalLightShadowMap>,
+    lightmaps: Query<&bevy::pbr::Lightmap>,
     assets: Res<AssetServer>,
     scene: Res<crate::client::SceneAssets>,
     mut exit: MessageWriter<AppExit>,
@@ -38,7 +40,15 @@ pub fn sample(
     if !assets.is_loaded_with_dependencies(scene.level.id()) {
         return;
     }
+    if lightmaps.iter().count() < 700
+        || lightmaps
+            .iter()
+            .any(|bake| !assets.is_loaded_with_dependencies(bake.image.id()))
+    {
+        return;
+    }
     if probe.start.is_none() {
+        info!("PERF requests AutoNoVsync; compositor pacing may still limit measured FPS");
         for mut window in &mut windows {
             window.present_mode = PresentMode::AutoNoVsync;
         }
@@ -95,26 +105,9 @@ pub fn sample(
         probe.start = Some(time.elapsed_secs_f64());
         return;
     }
-    // Recreate the original eight omnidirectional lights for an A/B comparison.
-    // Sun, SSAO, resolution and all other render settings stay identical.
-    assert_eq!(
-        spots.iter().count(),
-        8,
-        "benchmark expects the eight ceiling lamps"
-    );
-    for (entity, light) in &spots {
-        commands
-            .entity(entity)
-            .remove::<SpotLight>()
-            .insert(PointLight {
-                color: light.color,
-                intensity: light.intensity,
-                range: light.range,
-                radius: light.radius,
-                shadow_maps_enabled: true,
-                ..default()
-            });
-    }
+    // Isolate the live shadow budget; both stages keep the same bake and MSAA.
+    budget.0 = 8;
+    shadow_map.size = 2048;
     probe.samples.clear();
     probe.gpu.clear();
     probe.start = Some(time.elapsed_secs_f64());

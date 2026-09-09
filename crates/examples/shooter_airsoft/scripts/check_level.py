@@ -42,10 +42,13 @@ for i,n in spawns:
 assert manifest['spawns'][0]['position'][2]>14 and manifest['spawns'][1]['position'][2]<-14
 assert len(gltf['images'])>=1 and all('bufferView' in im for im in gltf['images'])
 lights=gltf['extensions']['KHR_lights_punctual']['lights']
-assert len(lights)==8
-assert all(light['type']=='spot' for light in lights), 'Ceiling lamps must use one shadow view each'
+assert len(lights)==9
+assert sum(light['type']=='directional' for light in lights)==1
+spots=[light for light in lights if light['type']=='spot']
+assert len(spots)==8
+assert all(light['type']=='spot' for light in spots), 'Ceiling lamps must use one shadow view each'
 for i,n in enumerate(gltf['nodes']):
- if 'KHR_lights_punctual' in n.get('extensions',{}):
+ if 'KHR_lights_punctual' in n.get('extensions',{}) and lights[n['extensions']['KHR_lights_punctual']['light']]['type']=='spot':
   direction=world[i][:3,:3]@np.array([0,0,-1])
   assert np.allclose(direction,[0,-1,0],atol=0.0001), 'Ceiling lamps must face down'
 # The committed Rust output must still match the manifest after rustfmt.
@@ -55,4 +58,20 @@ body=rust.split('= &[',1)[1].split('];',1)[0]
 values=[float(v) for v in re.findall(r'-?\d+\.\d+',body)]
 expected=[v for s in manifest['solids'] for key in ('center','size','rotation') for v in s[key]]
 assert np.allclose(values,expected,atol=0.000001)
-print(f'PASS: {len(solids)} visual/collision bounds agree; two opposite spawns; packed textures; eight lights; Rust data matches.')
+bake=json.loads((root/'assets/lightmaps/bake.json').read_text())
+receivers={n['name']: n for n in gltf['nodes'] if 'airsoft_lightmap' in n.get('extras',{})}
+assert sorted(receivers)==bake['receivers']
+assert bake['pass']=='DIFFUSE / DIRECT + INDIRECT (no COLOR)'
+assert bake['denoiser']=='Open Image Denoise / RTLightmap'
+assert bake['exposure']>0 and bake['lit_pixel_fraction']>0.05
+png=(root/'assets'/bake['image']).read_bytes()
+assert png[:8]==b'\x89PNG\r\n\x1a\n'
+assert struct.unpack_from('>II',png,16)==(bake['resolution'],bake['resolution'])
+for name,n in receivers.items():
+ assert n['extras']['airsoft_lightmap']['image']==bake['image'],name
+ assert np.isclose(n['extras']['airsoft_lightmap']['exposure'],bake['exposure']),name
+ assert 'mesh' in n,name
+ for primitive in gltf['meshes'][n['mesh']]['primitives']:
+  assert 'TEXCOORD_1' in primitive['attributes'],name
+print(f'PASS: {len(receivers)} baked receivers with UV1; {bake["resolution"]}² diffuse atlas.')
+print(f'PASS: {len(solids)} visual/collision bounds agree; two opposite spawns; packed textures; eight lamps and sun; Rust data matches.')

@@ -80,6 +80,7 @@ pub fn advance(
     scene: Res<SceneAssets>,
     assets: Res<AssetServer>,
     meshes: Query<&Mesh3d>,
+    lightmaps: Query<&bevy::pbr::Lightmap>,
     time: Res<Time>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
@@ -90,6 +91,13 @@ pub fn advance(
     assert!(time.elapsed_secs() < 90.0, "round render smoke timed out");
     while fixture.receiver.try_recv().is_ok() {}
     if !assets.is_loaded_with_dependencies(scene.level.id()) || meshes.iter().count() < 500 {
+        return;
+    }
+    if lightmaps.iter().count() < 700
+        || lightmaps
+            .iter()
+            .any(|bake| !assets.is_loaded_with_dependencies(bake.image.id()))
+    {
         return;
     }
     let mut shared = client.0.read_state().unwrap();

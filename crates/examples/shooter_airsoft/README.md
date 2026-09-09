@@ -23,11 +23,10 @@ Unlike the Lazarus prototype, this example uses explicit Blender object custom p
 1. Open the `.blend` and edit the **BOMB HOUSE** scene. Save GUI edits before using the background exporter.
 2. `airsoft_solid = true` marks collision cuboids. Translation, rotation, and scale are supported. Keep these as unmodified cuboids; use multiple boxes for doorways, stairs, and complex shapes. Decorative meshes have `airsoft_solid = false`.
 3. Keep exactly two Empty objects with `airsoft_spawn = 0` and `1`, positioned at floor height. `yaw` is the Bevy Y-axis angle in radians: zero faces −Z, π faces +Z.
-4. Export saved edits from this example directory:
+4. Bake and export saved geometry, material, or lighting edits from this example directory:
 
 ```sh
-blender --background -noaudio --python-exit-code 1 blender/bomb_house.blend --python blender/export_level.py
-python3 scripts/check_level.py
+sh scripts/bake-lighting.sh
 cargo fmt -p shooter_airsoft
 ```
 
@@ -36,14 +35,28 @@ The exporter saves the `.blend`, exports Y-up GLB with packed PBR textures and p
 To reconstruct the initial layout (replaces the scene; do not use for exporting hand edits):
 
 ```sh
-blender --background -noaudio --python-exit-code 1 --python blender/build_level.py --python blender/export_level.py
+blender --background -noaudio --python-exit-code 1 --python blender/build_level.py --python blender/bake_lighting.py --python blender/export_level.py
 ```
 
 `blender/apply_materials.py` reapplies the packed PBR materials without rebuilding geometry. `scripts/make_effect_assets.py` recreates the original firing WAV and impact PNG (requires Pillow). The asset validator requires NumPy and verifies every exported visual collision bound against the server manifest and generated Rust data, plus spawns, embedded textures, and lights.
 
 ## Lighting
 
-Direct lighting uses real-time shadow maps: angled daylight through skylight gaps plus eight imported ceiling spotlights aimed downward. Each ceiling light renders one shadow view instead of the six faces required by a point light. Ambient light, SSAO, TAA, and a small bloom contribution provide the current warehouse look. Imported lamps explicitly enable shadows, so their direct light is blocked by plywood. There is **no Cycles bake or ray-traced lighting** in this version; editing the scene needs only an export. This is a visually tuned prototype, not a calibrated Blender/Bevy lighting match. Static lightmaps can be added using the reference project's indirect-only bake and UV1 workflow.
+Static direct and indirect diffuse lighting is baked with Blender Cycles into `assets/lightmaps/bomb_house_diffuse.png`. The atlas includes all eight ceiling lamps, the sun, emissive fixtures, and the world environment. UV0 keeps the detailed repeating PBR textures; UV1 addresses the lighting atlas. Base color is excluded from the bake and applied once by Bevy. Lightmap exposure restores the PNG's normalized linear range. The sun is authored and exported from Blender alongside the lamps.
+
+The camera uses **4× MSAA**, with no TAA or SSAO. Depth prepass remains enabled for impact decals, and the small bloom contribution remains. Baked occlusion replaces SSAO on the static scenery. Native rendering supports MSAA with these decals; Bevy's WebGPU forward decals require MSAA off if a browser client is added later.
+
+Players and guns still receive real-time light and ambient fill. At most two ceiling lamps are active at runtime: the closest lamp to each player (the preview camera before a match). Their shadows respect the plywood geometry. Sun shadows use two cascades covering 45 m. All live shadow maps are 1024², down from 2048²; this reduces the maximum live shadow views from twelve to four. The static diffuse lighting remains unchanged when a runtime lamp switches.
+
+This is a performance tradeoff: moving bodies do not cast new diffuse shadows into the baked atlas, and specular highlights/dynamic illumination can change when the selected lamp changes. Dynamic objects do not sample the static atlas or spatial light probes; ambient fill approximates their bounced light. Static diffuse light is disabled on runtime lamps/sun for lightmapped meshes to avoid double illumination. This is visually tuned, not a numerically calibrated match between Cycles and Bevy. See [Bevy's mixed-lighting example](https://bevy.org/examples-webgpu/3d-rendering/mixed-lighting/) for the rendering model.
+
+The shipped bake uses a 4096² atlas and 64 samples, followed by the offline Open Image Denoise `RTLightmap` filter to remove sampling noise. Rebaking requires `oidnDenoise` on `PATH` (the Open Image Denoise command-line tools); playing the shipped level does not. Filtering adds no runtime work and uses no temporal history. Run `sh scripts/bake-lighting.sh` after saving Blender edits; it preserves the edited geometry, repacks UV1, rebakes, saves, exports, and validates. Optional `AIRSOFT_BAKE_SIZE`, `AIRSOFT_BAKE_SAMPLES`, and `AIRSOFT_BAKE_DEVICE` (`AUTO`, `CPU`, or a Cycles GPU backend) control the bake. Only export without rebaking for changes that do not affect illumination, such as spawn markers:
+
+```sh
+blender --background -noaudio --python-exit-code 1 blender/bomb_house.blend --python blender/export_level.py
+```
+
+Ship `assets/lightmaps` with the GLB. `assets/lightmaps/bake.json` records the receivers, settings, and exposure; exported `airsoft_lightmap` extras attach the lightmap to each mesh in Bevy.
 
 ## Validation
 
@@ -56,7 +69,7 @@ python3 examples/shooter_airsoft/scripts/check_level.py
 cargo run -p shooter_airsoft --locked -- run --smoke-test
 ```
 
-These commands assume the workspace directory. The rendered smoke test needs a display/GPU, starts offline with an idle opponent, checks GLB import, grounding, shot events and decals, saves `/tmp/airsoft-smoke.png`, and exits. It submits gameplay inputs directly rather than emulating OS mouse clicks. Unit/integration tests cover immediate hits, cooldowns, occlusion, impact normals, event expiry, replay, serialization, spawn-route connectivity, grounding, movement, jumping, and offline visual interpolation.
+These commands assume the workspace directory. The rendered smoke test needs a display/GPU, starts offline with an idle opponent, checks GLB import, lightmap attachment/image loading, grounding, shot events and decals, saves `/tmp/airsoft-smoke.png`, and exits. It submits gameplay inputs directly rather than emulating OS mouse clicks. Unit/integration tests cover immediate hits, cooldowns, occlusion, impact normals, event expiry, replay, serialization, spawn-route connectivity, grounding, movement, jumping, and offline visual interpolation.
 
 ## Multiplayer
 
@@ -101,10 +114,10 @@ AIRSOFT_ROUND_SMOKE=1 cargo run -p shooter_airsoft --locked -- run --smoke-test
 
 It captures the death camera, a killer occluded by verified solid geometry, the fallen body, and the respawn countdown under `/tmp/airsoft-*.png`.
 
-The egui menu and scoreboard display smoothed FPS. To compare the ceiling-light rendering cost with the original point-light setup:
+The egui menu and scoreboard display smoothed FPS. To compare the reduced live-shadow budget with the former shadow settings:
 
 ```sh
 AIRSOFT_PERF_PROBE=1 cargo run -p shooter_airsoft --release --locked -- run --offline
 ```
 
-This optional probe runs a stationary, bot-disabled scene, temporarily disables VSync, and compares the current spotlights with the original point lights. Each stage warms up for four seconds, measures six seconds, and logs FPS, frame times, physical framebuffer resolution and GPU pass timings before exiting. Normal play does not enable these diagnostics. `run.sh` launches two clients, which share the GPU; its performance is not directly comparable with a single-client probe.
+This optional probe runs a stationary, bot-disabled scene, requests `AutoNoVsync` presentation, and compares the current lighting budget with all eight lamps active and 2048² shadow maps. Both stages use the same bake, two sun cascades, and 4× MSAA; this isolates shadow-budget costs, not the entire pre-bake rendering configuration. Each stage warms up for four seconds, measures six seconds, and logs FPS, frame times, physical framebuffer resolution and GPU pass timings before exiting. The compositor may still pace presentation, so measured FPS is not necessarily the GPU throughput ceiling. Normal play does not enable these diagnostics. `run.sh` launches two clients, which share the GPU; its performance is not directly comparable with a single-client probe.

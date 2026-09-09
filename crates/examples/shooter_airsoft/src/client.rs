@@ -122,6 +122,7 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
                 }),
         )
         .add_plugins(MaterialPlugin::<crate::killcam::OutlineMaterial>::default())
+        .add_plugins(crate::lighting::ArenaLightingPlugin)
         .init_resource::<crate::killcam::PlayerView>()
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
@@ -145,7 +146,6 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
             Update,
             (
                 crate::effects::animate_feedback,
-                configure_lamps,
                 screenshot_key,
                 crate::smoke::smoke_update.after(send_inputs),
             ),
@@ -277,27 +277,17 @@ pub fn setup(
                 ..default()
             }),
             Transform::from_xyz(0.6, 2.0, 14.4).looking_at(Vec3::new(0.6, 1.7, 0.0), Vec3::Y),
-            Msaa::Off,
-            bevy::anti_alias::taa::TemporalAntiAliasing::default(),
-            bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
+            Msaa::Sample4,
+            bevy::core_pipeline::prepass::DepthPrepass,
             bevy::post_process::bloom::Bloom::NATURAL,
             SpatialListener::new(0.2),
             AmbientLight {
                 color: Color::WHITE,
                 brightness: 220.0,
-                ..default()
+                affects_lightmapped_meshes: false,
             },
         ))
         .id();
-
-    commands.spawn((
-        DirectionalLight {
-            illuminance: 12_000.0,
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(-8.0, 30.0, 12.0).looking_at(Vec3::ZERO, Vec3::Y),
-    ));
 
     commands.spawn((
         Name::new("Bomb house / Blender export"),
@@ -782,14 +772,6 @@ fn auto_start(
         next.set(AppState::InGame);
     }
     Ok(())
-}
-
-fn configure_lamps(mut lamps: Query<&mut SpotLight, Added<SpotLight>>) {
-    for mut lamp in &mut lamps {
-        lamp.shadow_maps_enabled = true;
-        lamp.radius = 0.35;
-        lamp.range = 18.0;
-    }
 }
 
 fn screenshot_key(mut commands: Commands, keys: Res<ButtonInput<KeyCode>>) {

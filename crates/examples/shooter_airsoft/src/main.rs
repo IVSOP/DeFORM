@@ -24,6 +24,8 @@ pub mod effects;
 #[cfg(feature = "client")]
 pub mod killcam;
 #[cfg(feature = "client")]
+pub mod lighting;
+#[cfg(feature = "client")]
 pub mod menu;
 #[cfg(feature = "client")]
 pub mod perf_probe;
