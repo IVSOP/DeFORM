@@ -14,6 +14,10 @@ The map is a 24 × 36 m plywood training house inside a warehouse: rooms and doo
 
 Shots are immediate 100 m rays from the eye/crosshair. The nearest solid or other player's capsule stops the ray, with a 0.2 s firing cooldown. Shots are evaluated from the same input snapshot before physics advances; replay does not depend on physics contact caches. A bounded history of discrete impact events drives local and spatial remote firing audio, gun recoil, hit feedback, and surface-aligned chipped-plywood decals. There are at most 32 retained shot records and 256 decals. Clients suppress duplicate event IDs across rollback; an effect already presented during prediction is not undone if authority later corrects the shot.
 
+Body hits also create entry and exit wounds, a forward blood spray, and a smaller spray back from the entrance. Wound meshes conform to the capsule and remain attached as the corpse moves and tumbles. Droplets inherit body velocity, fall under gravity, and use swept collision checks against the exported geometry; their first surface hit creates an alpha-blended blood decal. Further hits on a corpse add wounds and spray but never award another point or score hit marker. Multiple wounds are cosmetic: the first hit still ends the round, rather than adding a health/damage system.
+
+Blood rendering is bounded to 96 live droplets, 128 surface stains, and 32 wound marks per player (sixteen entry/exit pairs); older marks are retired at those limits. Droplets expire after 1.5 seconds. Blood is cleared on round reset and when leaving a match. The original splatter texture is generated once in Rust, with a shared low-poly droplet mesh and no new shadow-casting lights or physics bodies. The authoritative hit event carries the victim ID and body-local entry/exit locations; clients handle particle trajectories and decals as cosmetic effects. As with other shot effects, already-presented blood is not retracted on a prediction correction, and late arrivals do not reconstruct expired shot events.
+
 ## Blender workflow
 
 The editable source is `blender/bomb_house.blend`; the shipped model is `assets/levels/bomb_house.glb`. This adapts the source/export separation described in `~/Desktop/rust/bevy_blender_test/docs/BLENDER_BEVY_WORKFLOW.md` to a rollback game with a renderless server.
@@ -73,7 +77,7 @@ These commands assume the workspace directory. The rendered smoke test needs a d
 
 ## Multiplayer
 
-Use this example's `serve` command and copied Docker/run/package scripts with **airsoft clients on both ends**. Its round/death and shot-event wire format differs from earlier Airsoft builds and the original shooter; rebuild both clients and server together, and do not mix clients and servers. Build the lobby program with `anchor_program/build_airsoft_shooter.sh`. It selects the `shooter_airsoft` game feature without physics, then regenerates this example’s Rust client. Web2 lobbies remain `NotStarted` on chain and the admin settlement instruction passes scores separately. The server image has been built and its binary startup checked. Local Surfpool and ephemeral-validator startup and RPC health have also been verified; no live multiplayer match was performed. The default local server port remains 4433; run it separately from the original shooter's server.
+Use this example's `serve` command and copied Docker/run/package scripts with **airsoft clients on both ends**. Its blood-hit, round/death and shot-event wire format differs from earlier Airsoft builds and the original shooter; rebuild both clients and server together, and do not mix clients and servers. Build the lobby program with `anchor_program/build_airsoft_shooter.sh`. It selects the `shooter_airsoft` game feature without physics, then regenerates this example’s Rust client. Web2 lobbies remain `NotStarted` on chain and the admin settlement instruction passes scores separately. The server image has been built and its binary startup checked. Local Surfpool and ephemeral-validator startup and RPC health have also been verified; no live multiplayer match was performed. The default local server port remains 4433; run it separately from the original shooter's server.
 
 The headless server uses the compiled collision data and does not require graphical assets, audio, or Blender. Fully-on-chain physics remains unsupported, as in the original example.
 
@@ -112,7 +116,7 @@ Run the death/respawn rendering fixture with:
 AIRSOFT_ROUND_SMOKE=1 cargo run -p shooter_airsoft --locked -- run --smoke-test
 ```
 
-It captures the death camera, a killer occluded by verified solid geometry, the fallen body, and the respawn countdown under `/tmp/airsoft-*.png`.
+It verifies repeated corpse shots leave multiple wounds and landed blood decals while the score stays at one, then checks blood cleanup at respawn. It captures the death camera, a killer occluded by verified solid geometry, the wounded fallen body, and the respawn countdown under `/tmp/airsoft-*.png`.
 
 The egui menu and scoreboard display smoothed FPS. To compare the reduced live-shadow budget with the former shadow settings:
 

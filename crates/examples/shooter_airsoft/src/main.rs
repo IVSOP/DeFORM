@@ -18,6 +18,8 @@ use solana_sdk::{
 };
 
 #[cfg(feature = "client")]
+pub mod blood;
+#[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
 pub mod effects;

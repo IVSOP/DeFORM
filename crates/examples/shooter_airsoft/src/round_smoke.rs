@@ -81,6 +81,8 @@ pub fn advance(
     assets: Res<AssetServer>,
     meshes: Query<&Mesh3d>,
     lightmaps: Query<&bevy::pbr::Lightmap>,
+    wounds: Query<Entity, With<crate::blood::Wound>>,
+    stains: Query<Entity, With<crate::blood::BloodStain>>,
     time: Res<Time>,
     mut commands: Commands,
     mut exit: MessageWriter<AppExit>,
@@ -117,7 +119,18 @@ pub fn advance(
             .unwrap()
             .pos = Vec3::new(3.0, PLAYER_FLOAT_HEIGHT, 10.5);
     }
-    let inputs = BTreeMap::from([(killer, ShooterInputs::default())]);
+    let mut input = ShooterInputs::default();
+    if [20, 40, 60].contains(&tick) {
+        let state = &ongoing.tick_info.game_state;
+        let body = &state.players[&fixture.victim];
+        let origin = state.players[&killer].pos + Vec3::Y * PLAYER_EYE_HEIGHT;
+        let offset = (tick as f32 - 40.0) * 0.008;
+        let target = body.pos + Quat::from_array(body.body_rotation) * Vec3::Y * offset;
+        let direction = (target - origin).normalize();
+        input.set_look((-direction.x).atan2(-direction.z), direction.y.asin());
+        input.fire = true;
+    }
+    let inputs = BTreeMap::from([(killer, input)]);
     ongoing.tick_info.game_state = fixture
         .game
         .advance_frame(&ongoing.tick_info.game_state, &inputs)
@@ -132,6 +145,26 @@ pub fn advance(
         assert!(
             !shooter_airsoft::navigation::visible(eye, state.players[&killer].pos),
             "outline fixture must actually be behind a wall"
+        );
+    }
+    if tick == 220 {
+        assert!(
+            wounds.iter().count() >= 8,
+            "four hits should leave entry and exit wounds"
+        );
+        assert!(
+            !stains.is_empty(),
+            "droplets must land and leave blood decals"
+        );
+        assert_eq!(ongoing.tick_info.game_state.players[&killer].score, 1);
+        info!(
+            "BLOOD SMOKE: repeated corpse hits, attached wounds and surface splatters verified; score stays one"
+        );
+    }
+    if tick == 330 {
+        assert!(
+            wounds.is_empty() && stains.is_empty(),
+            "round reset must clean blood effects"
         );
     }
     let capture = match tick {

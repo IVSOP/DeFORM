@@ -425,6 +425,7 @@ impl SimWorld {
         let mut normal = Vec3::ZERO;
         let mut hit_geometry = false;
         let mut victim = None;
+        let mut body_hit = None;
         for (collider, pos, rot) in &self.solids {
             if let Some((d, n)) = collider.cast_ray(*pos, *rot, origin, direction, distance, true)
                 && d < distance
@@ -441,24 +442,34 @@ impl SimWorld {
             if *pk == owner {
                 continue;
             }
-            if let Some((d, n)) = capsule.cast_ray(
-                ps.pos,
-                if ps.death.is_some() {
-                    Quat::from_array(ps.body_rotation)
-                } else {
-                    Quat::IDENTITY
-                },
-                origin,
-                direction,
-                distance,
-                true,
-            ) {
+            let rotation = if ps.death.is_some() {
+                Quat::from_array(ps.body_rotation)
+            } else {
+                Quat::from_rotation_y((-ps.look_xz.x).atan2(-ps.look_xz.y))
+            };
+            if let Some((d, n)) =
+                capsule.cast_ray(ps.pos, rotation, origin, direction, distance, true)
+            {
                 // Geometry wins a tie; shots never penetrate a touching wall.
                 if d < distance {
                     distance = d;
                     normal = n;
                     hit_geometry = false;
                     victim = ps.death.is_none().then_some(*pk);
+                    let entry = origin + direction * d;
+                    // Cast back from beyond the capsule to find its far surface.
+                    let span = PLAYER_CAPSULE_LENGTH + 2.0 * PLAYER_RADIUS + 0.1;
+                    let beyond = entry + direction * span;
+                    let (exit_distance, _) = capsule
+                        .cast_ray(ps.pos, rotation, beyond, -direction, span, true)
+                        .unwrap_or((span, -n));
+                    let exit = beyond - direction * exit_distance;
+                    let inverse = rotation.inverse();
+                    body_hit = Some(BodyHit {
+                        player: *pk,
+                        local_entry: inverse * (entry - ps.pos),
+                        local_exit: inverse * (exit - ps.pos),
+                    });
                 }
             }
         }
@@ -470,6 +481,7 @@ impl SimWorld {
                 owner,
                 hit_geometry,
                 hit_player: victim.is_some(),
+                body_hit,
                 ttl: SHOT_EVENT_TTL,
             },
             victim,
@@ -639,10 +651,12 @@ mod tests {
         let origin = state.players[&a].pos + Vec3::Y * PLAYER_EYE_HEIGHT;
         let (shot, _) = sim.trace_shot(&state, a, origin, Vec3::NEG_Z);
         assert!(shot.hit_geometry && !shot.hit_player);
+        assert!(shot.body_hit.is_none());
         assert!((11.85..11.94).contains(&shot.impact.z), "{:?}", shot.impact);
         assert!(shot.normal.dot(Vec3::Z) > 0.99);
         let (miss, _) = sim.trace_shot(&state, a, Vec3::new(30.0, 20.0, 0.0), Vec3::Y);
         assert!(!miss.hit_geometry && !miss.hit_player);
+        assert!(miss.body_hit.is_none());
         assert_eq!(miss.origin.distance(miss.impact), SHOT_RANGE);
     }
 
@@ -742,6 +756,52 @@ mod tests {
             .unwrap()
             .set_look(-std::f32::consts::FRAC_PI_2, 0.0);
         (game, state, a, b, inputs)
+    }
+
+    #[test]
+    fn corpse_hits_record_multiple_wounds_without_scoring() {
+        let (mut game, state, a, b, inputs) = lethal_setup();
+        let mut state = game.advance_frame(&state, &inputs).unwrap();
+        assert!(state.shots[&0].body_hit.is_some());
+        for _ in 0..3 {
+            for _ in 0..FIRE_COOLDOWN_TICKS {
+                state = game.advance_frame(&state, &idle_inputs(a, b)).unwrap();
+            }
+            let origin = state.players[&a].pos + Vec3::Y * PLAYER_EYE_HEIGHT;
+            let direction = (state.players[&b].pos - origin).normalize();
+            let mut input = ShooterInputs {
+                fire: true,
+                ..Default::default()
+            };
+            input.set_look((-direction.x).atan2(-direction.z), direction.y.asin());
+            let before = state.next_shot_id;
+            let old_body = state.players[&b].clone();
+            state = game
+                .advance_frame(&state, &BTreeMap::from([(a, input)]))
+                .unwrap();
+            let shot = &state.shots[&before];
+            let hit = shot
+                .body_hit
+                .as_ref()
+                .expect("shot must hit tumbling corpse");
+            assert_eq!(hit.player, b);
+            assert!(!shot.hit_player, "corpse hit must not confirm a scored hit");
+            assert!(!shot.hit_geometry);
+            assert_eq!(state.players[&a].score, 1);
+            let entry = old_body.pos + Quat::from_array(old_body.body_rotation) * hit.local_entry;
+            assert!(entry.distance(shot.impact) < 0.0001);
+            assert!(hit.local_entry.distance(hit.local_exit) > 0.1);
+            let restored: ShooterGameState =
+                wincode::deserialize(&wincode::serialize(&state).unwrap()).unwrap();
+            assert_eq!(
+                restored.shots[&before]
+                    .body_hit
+                    .as_ref()
+                    .unwrap()
+                    .local_entry,
+                hit.local_entry
+            );
+        }
     }
 
     #[test]

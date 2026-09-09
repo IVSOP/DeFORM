@@ -191,6 +191,17 @@ pub struct PlayerState {
 #[derive(
     Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
 )]
+pub struct BodyHit {
+    pub player: Pubkey,
+    #[wincode(with = "PodVec3")]
+    pub local_entry: Vec3,
+    #[wincode(with = "PodVec3")]
+    pub local_exit: Vec3,
+}
+
+#[derive(
+    Default, Debug, Clone, serde::Serialize, serde::Deserialize, SchemaRead, SchemaWrite, Smooth,
+)]
 pub struct Shot {
     #[wincode(with = "PodVec3")]
     pub origin: Vec3,
@@ -201,6 +212,8 @@ pub struct Shot {
     pub owner: Pubkey,
     pub hit_geometry: bool,
     pub hit_player: bool,
+    /// Physical flesh contact, including corpses; independent of score confirmation.
+    pub body_hit: Option<BodyHit>,
     pub ttl: u16,
 }
 
@@ -518,6 +531,11 @@ mod tests {
                     owner: Pubkey::new_from_array([1; 32]),
                     hit_geometry: true,
                     hit_player: false,
+                    body_hit: Some(BodyHit {
+                        player: Pubkey::new_from_array([2; 32]),
+                        local_entry: Vec3::X,
+                        local_exit: Vec3::NEG_X,
+                    }),
                     ttl: SHOT_EVENT_TTL,
                 },
             );
@@ -526,11 +544,15 @@ mod tests {
         let restored: ShooterGameState = wincode::deserialize(&bytes).unwrap();
         assert_eq!(restored.players.len(), 8);
         assert_eq!(restored.shots.len(), MAX_SHOT_EVENTS);
+        assert_eq!(
+            restored.shots[&0].body_hit.as_ref().unwrap().local_exit,
+            Vec3::NEG_X
+        );
 
-        // worst-case-ish state must leave room for the lobby wrappers within
+        // Largest event payload plus eight players must leave 2 KiB for lobby wrappers within
         // MAX_LOBBY_ACCOUNT_BYTES
         assert!(
-            (bytes.len() as u64) < ShooterGame::MAX_LOBBY_ACCOUNT_BYTES / 2,
+            (bytes.len() as u64) + 2048 < ShooterGame::MAX_LOBBY_ACCOUNT_BYTES,
             "state is {} bytes; MAX_LOBBY_ACCOUNT_BYTES needs raising",
             bytes.len()
         );

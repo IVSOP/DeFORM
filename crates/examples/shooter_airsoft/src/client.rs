@@ -123,6 +123,7 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
         )
         .add_plugins(MaterialPlugin::<crate::killcam::OutlineMaterial>::default())
         .add_plugins(crate::lighting::ArenaLightingPlugin)
+        .add_plugins(crate::blood::BloodPlugin)
         .init_resource::<crate::killcam::PlayerView>()
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
         .add_plugins(EguiPlugin::default())
@@ -581,6 +582,8 @@ pub fn update_state(
     outlines: Query<(Entity, &crate::killcam::KillerOutline)>,
     mut player_entities: ResMut<PlayerEntities>,
     mut effects: ResMut<crate::effects::ShotEffects>,
+    mut blood: ResMut<crate::blood::BloodEffects>,
+    mut meshes: ResMut<Assets<Mesh>>,
     weapon_model: Res<crate::effects::WeaponModel>,
     remote_weapons: Query<(Entity, &crate::effects::RemoteWeapon)>,
     mut transforms: Query<&mut Transform>,
@@ -705,6 +708,7 @@ pub fn update_state(
         }
     }
     effects.present(&mut commands, game_state, local.0);
+    blood.present(&mut commands, &mut meshes, game_state, &player_entities);
 
     // Camera position follows the local player's (smoothed) body; camera rotation
     // stays whatever the mouse last said — deliberately not read from the state.
