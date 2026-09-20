@@ -90,6 +90,73 @@ pub fn smoke_update(
     }
 }
 
+/// Exercise real pipeline changes, including forward decals with MSAA disabled.
+pub fn verify_graphics(
+    progress: Res<SmokeProgress>,
+    mut settings: ResMut<crate::graphics::GraphicsSettings>,
+    cameras: Query<(&Msaa, Has<bevy::post_process::bloom::Bloom>), With<Camera3d>>,
+    windows: Query<&Window>,
+    materials: Res<Assets<StandardMaterial>>,
+    images: Res<Assets<Image>>,
+    lightmaps: Query<&bevy::pbr::Lightmap>,
+) {
+    if !progress.captured {
+        return;
+    }
+    if [20, 80].contains(&progress.frames) {
+        let enabled = progress.frames == 80;
+        *settings = crate::graphics::GraphicsSettings {
+            msaa: enabled,
+            bloom: enabled,
+            vsync: enabled,
+        };
+    }
+    if [50, 110].contains(&progress.frames) {
+        let enabled = progress.frames == 110;
+        for (msaa, bloom) in &cameras {
+            assert_eq!(*msaa, if enabled { Msaa::Sample4 } else { Msaa::Off });
+            assert_eq!(bloom, enabled);
+        }
+        for window in &windows {
+            assert_eq!(
+                window.present_mode,
+                if enabled {
+                    bevy::window::PresentMode::AutoVsync
+                } else {
+                    bevy::window::PresentMode::AutoNoVsync
+                }
+            );
+        }
+        let textures = materials
+            .iter()
+            .flat_map(|(_, material)| {
+                [
+                    material.base_color_texture.as_ref(),
+                    material.normal_map_texture.as_ref(),
+                    material.metallic_roughness_texture.as_ref(),
+                    material.emissive_texture.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+            })
+            .chain(lightmaps.iter().map(|lightmap| &lightmap.image));
+        let mut checked = 0;
+        for texture in textures {
+            let image = images.get(texture).expect("texture loaded before capture");
+            let expected = image.width().max(image.height()).ilog2() + 1;
+            assert_eq!(
+                image.texture_descriptor.mip_level_count, expected,
+                "texture {texture:?} lacks mips"
+            );
+            checked += 1;
+        }
+        assert!(checked > 700, "check map textures and the lightmap atlas");
+        info!(
+            "AIRSOFT GRAPHICS: MSAA/bloom/vsync={enabled}, {checked} texture bindings have complete mip chains"
+        );
+    }
+}
+
 /// Inspect the held weapon, team headbands, and both spawn signs after the first-person capture.
 /// This changes only the test camera, and never runs during ordinary play.
 pub fn preview_remote_weapon(

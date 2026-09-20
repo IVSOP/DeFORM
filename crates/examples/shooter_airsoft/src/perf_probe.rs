@@ -1,6 +1,7 @@
 //! Opt-in comparison of render costs. Never runs in normal play.
 use std::collections::BTreeMap;
 
+use avian3d::prelude::{Physics, PhysicsTime};
 use bevy::{diagnostic::DiagnosticsStore, prelude::*, window::PresentMode};
 
 #[derive(Default, Resource)]
@@ -11,7 +12,11 @@ pub struct PerfProbe {
     gpu: BTreeMap<String, (f64, usize)>,
 }
 
-const STAGES: &[&str] = &["baked-msaa", "baked-all-lights-2048"];
+const STAGES: &[&str] = &[
+    "baked-msaa",
+    "baked-msaa-blood-paused",
+    "baked-all-lights-2048",
+];
 
 #[allow(clippy::too_many_arguments)]
 pub fn sample(
@@ -25,6 +30,7 @@ pub fn sample(
     lightmaps: Query<&bevy::pbr::Lightmap>,
     assets: Res<AssetServer>,
     scene: Res<crate::client::SceneAssets>,
+    mut blood_physics_time: ResMut<Time<Physics>>,
     mut exit: MessageWriter<AppExit>,
 ) {
     assert!(
@@ -105,9 +111,15 @@ pub fn sample(
         probe.start = Some(time.elapsed_secs_f64());
         return;
     }
-    // Isolate the live shadow budget; both stages keep the same bake and MSAA.
-    budget.0 = 8;
-    shadow_map.size = 2048;
+    if probe.stage == 1 {
+        // Same rendering, with the cosmetic physics step paused to measure idle cost.
+        blood_physics_time.pause();
+    } else {
+        blood_physics_time.unpause();
+        // Isolate the live shadow budget; keep the same bake and MSAA.
+        budget.0 = 8;
+        shadow_map.size = 2048;
+    }
     probe.samples.clear();
     probe.gpu.clear();
     probe.start = Some(time.elapsed_secs_f64());

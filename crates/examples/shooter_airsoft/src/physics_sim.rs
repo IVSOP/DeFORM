@@ -616,6 +616,63 @@ mod tests {
     }
 
     #[test]
+    fn bot_shots_are_at_least_half_a_second_apart() {
+        let (mut game, mut state, a, b) = two_player_setup();
+        // The survivor-fire phase permits repeated flesh hits without ending this
+        // cadence test on the first hit. Stay below its 300-tick reset timer.
+        state.phase = RoundPhase::RoundOver;
+        state.players.get_mut(&a).unwrap().pos = Vec3::new(0.0, PLAYER_FLOAT_HEIGHT, 14.4);
+        state.players.get_mut(&b).unwrap().pos = Vec3::new(3.0, PLAYER_FLOAT_HEIGHT, 14.4);
+        let mut inputs = idle_inputs(a, b);
+        let mut fired_at = Vec::new();
+        for tick in 0..151 {
+            let bot_input = crate::shooter_logic::shooter_bot(&state, &a, &inputs[&a]);
+            // Repeated rendering of the same tick must not advance the bot's clock.
+            let repeated = crate::shooter_logic::shooter_bot(&state, &a, &bot_input);
+            assert_eq!(bot_input.fire, repeated.fire);
+            assert_eq!(bot_input.look_dir(), repeated.look_dir());
+            inputs.insert(a, bot_input);
+            let before = state.next_shot_id;
+            state = game.advance_frame(&state, &inputs).unwrap();
+            if state.next_shot_id != before {
+                fired_at.push(tick);
+            }
+        }
+        assert_eq!(fired_at, vec![0, 30, 60, 90, 120, 150]);
+    }
+
+    #[test]
+    fn bot_spread_hits_up_close_but_can_miss_at_distance() {
+        let sim = SimWorld::new();
+        let (_, mut state, a, b) = two_player_setup();
+        state.players.get_mut(&a).unwrap().pos = Vec3::new(-4.5, PLAYER_FLOAT_HEIGHT, 14.4);
+        let origin = state.players[&a].pos + Vec3::Y * PLAYER_EYE_HEIGHT;
+        for distance in [3.0, 9.0] {
+            state.players.get_mut(&b).unwrap().pos = state.players[&a].pos + Vec3::X * distance;
+            let mut hits = 0;
+            let mut previous_direction = None;
+            for id in 0..256 {
+                state.next_shot_id = id;
+                let input =
+                    crate::shooter_logic::shooter_bot(&state, &a, &ShooterInputs::default());
+                assert!(input.fire, "back lane has line of sight");
+                assert_ne!(previous_direction, Some(input.look_dir()));
+                previous_direction = Some(input.look_dir());
+                let (_, victim) = sim.trace_shot(&state, a, origin, input.look_dir());
+                hits += usize::from(victim == Some(b));
+            }
+            if distance == 3.0 {
+                assert_eq!(hits, 256, "close-range spread fits inside the body");
+            } else {
+                assert!(
+                    hits > 0 && hits < 256,
+                    "distant shots should mix hits and misses: {hits}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn hitscan_scores_immediately_and_obeys_cooldown() {
         let (mut game, mut state, a, b) = two_player_setup();
         state.players.get_mut(&a).unwrap().pos = Vec3::new(0.0, PLAYER_FLOAT_HEIGHT, 14.4);

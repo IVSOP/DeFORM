@@ -1,7 +1,7 @@
 //! Bounded, cosmetic blood effects driven by authoritative flesh-hit events.
 use std::collections::{HashSet, VecDeque};
 
-use avian3d::prelude::Collider;
+use avian3d::prelude::*;
 use bevy::{
     asset::RenderAssetUsages,
     light::NotShadowCaster,
@@ -19,13 +19,17 @@ use shooter_airsoft::{
 const PARTICLE_LIMIT: usize = 96;
 const STAIN_LIMIT: usize = 128;
 const WOUNDS_PER_PLAYER: usize = 32; // entry + exit marks for sixteen hits
-const STEP: f32 = 1.0 / 60.0;
 
 pub struct BloodPlugin;
 impl Plugin for BloodPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup)
-            .add_systems(Update, animate)
+        app.add_plugins(PhysicsPlugins::default())
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .add_systems(Startup, (setup, setup_colliders))
+            .add_systems(
+                FixedPostUpdate,
+                splat_on_contact.after(PhysicsSystems::Last),
+            )
             .add_systems(OnExit(crate::client::AppState::InGame), clear);
     }
 }
@@ -36,14 +40,11 @@ pub struct Wound;
 pub struct BloodStain;
 #[derive(Component)]
 pub struct Droplet {
-    velocity: Vec3,
-    accumulator: f32,
     age: f32,
     seed: u32,
-    source: Option<Vec3>,
 }
 
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct BloodEffects {
     material: Handle<StandardMaterial>,
     stain: Handle<ForwardDecalMaterial<StandardMaterial>>,
@@ -57,73 +58,24 @@ pub struct BloodEffects {
     particles: VecDeque<Entity>,
 }
 
-struct Solid {
-    collider: Collider,
-    center: Vec3,
-    rotation: Quat,
-    min: Vec3,
-    max: Vec3,
-}
-#[derive(Resource)]
-struct BloodCollision(Vec<Solid>);
-impl Default for BloodCollision {
-    fn default() -> Self {
-        Self(
-            arena_data::SOLIDS
-                .iter()
-                .map(|(center, size, rotation)| {
-                    let center = Vec3::from_array(*center);
-                    let size = Vec3::from_array(*size);
-                    let rotation = Quat::from_array(*rotation).normalize();
-                    let half = size * 0.5;
-                    let extent = (rotation * Vec3::X).abs() * half.x
-                        + (rotation * Vec3::Y).abs() * half.y
-                        + (rotation * Vec3::Z).abs() * half.z;
-                    Solid {
-                        collider: Collider::cuboid(size.x, size.y, size.z),
-                        center,
-                        rotation,
-                        min: center - extent,
-                        max: center + extent,
-                    }
-                })
-                .collect(),
-        )
-    }
-}
-impl BloodCollision {
-    fn cast(&self, start: Vec3, end: Vec3) -> Option<(Vec3, Vec3)> {
-        let delta = end - start;
-        let length = delta.length();
-        if length < 1e-6 {
-            return None;
-        }
-        let direction = delta / length;
-        let mut nearest = length;
-        let mut hit = None;
-        let min = start.min(end);
-        let max = start.max(end);
-        for solid in &self.0 {
-            // Most segments touch no boxes. Avoid a physics query for those.
-            if min.cmpgt(solid.max).any() || max.cmplt(solid.min).any() {
-                continue;
-            }
-            if let Some((distance, normal)) = solid.collider.cast_ray(
-                solid.center,
-                solid.rotation,
-                start,
-                direction,
-                nearest,
-                true,
-            ) {
-                nearest = distance;
-                hit = Some((
-                    start + direction * distance,
-                    normal.try_normalize().unwrap_or(-direction),
-                ));
-            }
-        }
-        hit
+// This is the render app's cosmetic physics world. Gameplay has its own
+// rollback world; droplets cannot push players or alter authoritative outcomes.
+#[derive(Component)]
+struct BloodSurface;
+const SURFACE_LAYER: u32 = 1;
+const DROPLET_LAYER: u32 = 2;
+
+fn setup_colliders(mut commands: Commands) {
+    for (center, size, rotation) in arena_data::SOLIDS {
+        commands.spawn((
+            BloodSurface,
+            RigidBody::Static,
+            Collider::cuboid(size[0], size[1], size[2]),
+            CollisionLayers::from_bits(SURFACE_LAYER, DROPLET_LAYER),
+            SpeculativeMargin(0.0),
+            Transform::from_translation(Vec3::from_array(*center))
+                .with_rotation(Quat::from_array(*rotation).normalize()),
+        ));
     }
 }
 
@@ -210,7 +162,6 @@ fn setup(
         stains: default(),
         particles: default(),
     });
-    commands.insert_resource(BloodCollision::default());
 }
 
 fn capsule_normal(point: Vec3) -> Vec3 {
@@ -361,13 +312,12 @@ impl BloodEffects {
                     body.vel + direction * (3.0 + random(&mut seed) * 3.5) + spread + Vec3::Y * 0.4;
                 let entity = commands
                     .spawn((
-                        Droplet {
-                            velocity,
-                            accumulator: 0.0,
-                            age: 0.0,
-                            seed,
-                            source: Some(entry),
-                        },
+                        Droplet { age: 0.0, seed },
+                        RigidBody::Dynamic,
+                        Collider::sphere(1.0), // scaled to the visible droplet radius below
+                        LinearVelocity(velocity),
+                        CollisionLayers::from_bits(DROPLET_LAYER, SURFACE_LAYER),
+                        SpeculativeMargin(0.0),
                         Mesh3d(self.drop_mesh.clone()),
                         MeshMaterial3d(self.drop_material.clone()),
                         Transform::from_translation(origin + direction * 0.008)
@@ -386,7 +336,7 @@ impl BloodEffects {
     }
 
     fn stain(&mut self, commands: &mut Commands, position: Vec3, normal: Vec3, seed: &mut u32) {
-        let size = 0.10 + random(seed) * 0.16;
+        let size = (0.10 + random(seed) * 0.16) * 1.5;
         let entity = commands
             .spawn((
                 BloodStain,
@@ -410,40 +360,45 @@ impl BloodEffects {
     }
 }
 
-fn animate(
+fn splat_on_contact(
     mut commands: Commands,
-    time: Res<Time>,
-    collision: Res<BloodCollision>,
+    time: Res<Time<Fixed>>,
+    collisions: Collisions,
+    surfaces: Query<&Position, With<BloodSurface>>,
     mut effects: ResMut<BloodEffects>,
-    mut particles: Query<(Entity, &mut Transform, &mut Droplet)>,
+    mut particles: Query<(Entity, &mut Droplet)>,
 ) {
-    for (entity, mut transform, mut droplet) in &mut particles {
-        // A body can briefly overlap a wall during correction: do not emit through it.
-        if let Some(source) = droplet.source.take()
-            && let Some((position, normal)) = collision.cast(source, transform.translation)
-        {
+    for (entity, mut droplet) in &mut particles {
+        let hit = collisions.collisions_with(entity).find_map(|pair| {
+            let first = pair.collider1 == entity;
+            let surface = if first {
+                pair.collider2
+            } else {
+                pair.collider1
+            };
+            let center = surfaces.get(surface).ok()?.0;
+            pair.manifolds.iter().find_map(|manifold| {
+                // Discrete surface contact only; no ray casts or swept CCD.
+                let point = manifold
+                    .points
+                    .iter()
+                    .find(|point| point.penetration >= 0.0)?;
+                let normal = if first {
+                    -manifold.normal
+                } else {
+                    manifold.normal
+                };
+                let anchor = if first { point.anchor2 } else { point.anchor1 };
+                Some((center + anchor, normal))
+            })
+        });
+        if let Some((position, normal)) = hit {
             effects.stain(&mut commands, position, normal, &mut droplet.seed);
-            commands.entity(entity).despawn();
-            continue;
         }
-        droplet.accumulator += time.delta_secs().min(0.1);
-        while droplet.accumulator >= STEP {
-            droplet.accumulator -= STEP;
-            droplet.age += STEP;
-            let end = transform.translation
-                + droplet.velocity * STEP
-                + Vec3::NEG_Y * (4.905 * STEP * STEP);
-            if let Some((position, normal)) = collision.cast(transform.translation, end) {
-                effects.stain(&mut commands, position, normal, &mut droplet.seed);
-                commands.entity(entity).despawn();
-                break;
-            }
-            transform.translation = end;
-            droplet.velocity.y -= 9.81 * STEP;
-            if droplet.age >= 1.5 {
-                commands.entity(entity).despawn();
-                break;
-            }
+        droplet.age += time.delta_secs();
+        if hit.is_some() || droplet.age >= 1.5 {
+            commands.entity(entity).despawn();
+            effects.particles.retain(|particle| *particle != entity);
         }
     }
 }
@@ -461,27 +416,75 @@ mod tests {
     use super::*;
 
     #[test]
-    fn swept_droplets_hit_nearest_thin_plywood_and_floor() {
-        let thin = |x| Solid {
-            collider: Collider::cuboid(0.02, 3.0, 3.0),
-            center: Vec3::new(x, 0.0, 0.0),
-            rotation: Quat::IDENTITY,
-            min: Vec3::new(x - 0.01, -1.5, -1.5),
-            max: Vec3::new(x + 0.01, 1.5, 1.5),
-        };
-        let collision = BloodCollision(vec![thin(2.0), thin(0.0)]);
-        let (p, n) = collision.cast(Vec3::NEG_X, Vec3::X * 3.0).unwrap();
-        assert!((p.x + 0.01).abs() < 0.00001);
-        assert!(n.dot(Vec3::NEG_X) > 0.999);
-        assert!(
-            collision
-                .cast(Vec3::new(-1.0, 4.0, 0.0), Vec3::new(3.0, 4.0, 0.0))
-                .is_none()
-        );
-        let (p, n) = BloodCollision::default()
-            .cast(Vec3::new(0.0, 2.0, 14.4), Vec3::new(0.0, -1.0, 14.4))
-            .unwrap();
-        assert!(p.y.abs() < 0.2 && n.y > 0.99);
+    fn avian_spheres_fall_and_create_surface_aligned_decals_on_contact() {
+        for (surface_rotation, start, velocity, gravity) in [
+            (Quat::IDENTITY, Vec3::Y * 0.3, Vec3::ZERO, 1.0),
+            (
+                Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+                Vec3::NEG_X * 0.3,
+                Vec3::X,
+                0.0,
+            ),
+        ] {
+            let mut app = App::new();
+            app.add_plugins((
+                MinimalPlugins,
+                AssetPlugin::default(),
+                TransformPlugin,
+                PhysicsPlugins::default(),
+            ))
+            .init_asset::<Mesh>()
+            .init_asset::<bevy::shader::Shader>()
+            .add_plugins(bevy::pbr::decal::ForwardDecalPlugin)
+            .init_resource::<BloodEffects>()
+            .insert_resource(Time::<Fixed>::from_hz(60.0))
+            .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+                std::time::Duration::from_secs_f64(1.0 / 60.0),
+            ))
+            .add_systems(
+                FixedPostUpdate,
+                splat_on_contact.after(PhysicsSystems::Last),
+            );
+            app.world_mut().spawn((
+                BloodSurface,
+                RigidBody::Static,
+                Collider::cuboid(4.0, 0.1, 4.0),
+                CollisionLayers::from_bits(SURFACE_LAYER, DROPLET_LAYER),
+                SpeculativeMargin(0.0),
+                Transform::from_rotation(surface_rotation),
+            ));
+            let particle = app
+                .world_mut()
+                .spawn((
+                    Droplet { age: 0.0, seed: 93 },
+                    RigidBody::Dynamic,
+                    Collider::sphere(1.0),
+                    LinearVelocity(velocity),
+                    GravityScale(gravity),
+                    CollisionLayers::from_bits(DROPLET_LAYER, SURFACE_LAYER),
+                    SpeculativeMargin(0.0),
+                    Transform::from_translation(start).with_scale(Vec3::splat(0.02)),
+                ))
+                .id();
+            app.world_mut()
+                .resource_mut::<BloodEffects>()
+                .particles
+                .push_back(particle);
+            app.finish();
+            app.cleanup();
+            for _ in 0..60 {
+                app.update();
+            }
+            let world = app.world_mut();
+            assert!(world.get_entity(particle).is_err());
+            let mut query = world.query_filtered::<&Transform, With<BloodStain>>();
+            let stains: Vec<_> = query.iter(world).collect();
+            assert_eq!(stains.len(), 1, "first contact emits exactly one decal");
+            let normal = surface_rotation * Vec3::Y;
+            assert!((stains[0].translation.dot(normal) - 0.054).abs() < 0.002);
+            assert!((stains[0].rotation * Vec3::Y).dot(normal) > 0.999);
+            assert!(world.resource::<BloodEffects>().particles.is_empty());
+        }
     }
 
     #[test]

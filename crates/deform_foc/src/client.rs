@@ -1037,6 +1037,8 @@ impl<F: DeformFocLogic> FocBackend<F> {
 
 // task that runs in a loop sending transactions
 // takes care of refreshing the blockhash on its own as well
+// FIX: is this correct? shouldn't get_latest_blockhash also tell me when I'm going to need to get a new one?
+// FIX: detect if the inputs do not fit within a transaction and clamp the older ones somehow?
 pub async fn commit_task(
     rpc: Arc<RpcClient>,
     keypair: Arc<Keypair>,

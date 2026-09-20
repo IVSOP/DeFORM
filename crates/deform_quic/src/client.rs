@@ -36,6 +36,7 @@ pub(crate) struct QuicBackend<Q: DeformQuicLogic + Send + 'static> {
     pub remote_lobby: Lobby<Q::UserLogic>,
     // these are the inputs from our own player, appended only by set_inputs().
     // FIX: this might not be necessary. We may be able to just store the latest inputs, then reuse the old ones from `info_per_tick`. I only did it this way because it was easier in my head
+    /// NOTE: while looking up [k] in [`Self::info_per_tick`] yields ticks for tick [k-1], that is not the case in this map.
     pub inputs: HashMap<u64, ChannelInputs<Q::UserLogic>>,
 
     // pub rpc_client: Arc<RpcClient>,
@@ -1184,6 +1185,11 @@ impl<Q: DeformQuicLogic + Send + 'static> QuicBackend<Q> {
         // }
 
         // prune all local inputs that are older than the new remote tick
+        // NOTE: the state received from the server has k = new_remote_tick
+        // however, the inputs received are k = new_remote_tick - 1
+        // so we use `tick > new_remote_tick - 1`
+        // which for uints is the same as `tick >= new_remote_tick`
+        // but this saves the edge case where ticks are 0 and it underflows
         self.inputs.retain(|tick, _| *tick >= new_remote_tick);
 
         // #[cfg(feature = "log")]

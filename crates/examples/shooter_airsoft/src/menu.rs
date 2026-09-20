@@ -73,11 +73,13 @@ pub fn egui_in_menu(
     mut commands: Commands,
     monitor_q: Query<&Monitor>,
     diagnostics: Res<DiagnosticsStore>,
+    mut graphics: ResMut<crate::graphics::GraphicsSettings>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?.clone();
     egui::Window::new("Bomb House / Airsoft").show(&ctx, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| {
             show_fps(ui, &diagnostics);
+            crate::graphics::controls(ui, &mut graphics);
             if cfg!(feature = "metrics") {
                 ui.colored_label(egui::Color32::LIGHT_GREEN, "Metrics enabled");
             } else {
@@ -429,6 +431,7 @@ pub fn egui_in_game(
     local: Res<LocalPlayer>,
     net_stats: Res<NetStats>,
     diagnostics: Res<DiagnosticsStore>,
+    mut graphics: ResMut<crate::graphics::GraphicsSettings>,
 ) -> Result {
     let lobby = client.0.read_state()?.lobby.clone();
 
@@ -458,6 +461,7 @@ pub fn egui_in_game(
         }
         ui.separator();
         show_fps(ui, &diagnostics);
+        crate::graphics::controls(ui, &mut graphics);
         ui.label(format!("Ping: {:.0} ms", net_stats.ping_ms));
         if let Some(state) = round_state {
             use shooter_airsoft::shooter_logic::{

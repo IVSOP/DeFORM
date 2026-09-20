@@ -102,6 +102,7 @@ pub enum AppState {
 const MOUSE_SENSITIVITY: f32 = 0.002;
 
 pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
+    let perf_probe = std::env::var_os("AIRSOFT_PERF_PROBE").is_some();
     let mut app = App::new();
     app.insert_resource(WalletArg(wallet))
         .add_plugins(
@@ -114,8 +115,12 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: "BOMB HOUSE / Airsoft".into(),
-                        resolution: (1280, 800).into(),
-                        resizable: !smoke_test,
+                        resolution: if perf_probe {
+                            (1920, 1080).into()
+                        } else {
+                            (1280, 800).into()
+                        },
+                        resizable: !smoke_test && !perf_probe,
                         ..default()
                     }),
                     ..default()
@@ -123,6 +128,10 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
         )
         .add_plugins(MaterialPlugin::<crate::killcam::OutlineMaterial>::default())
         .add_plugins(crate::lighting::ArenaLightingPlugin)
+        .add_plugins((
+            crate::graphics::GraphicsPlugin,
+            crate::mipmaps::MipmapsPlugin,
+        ))
         .add_plugins(crate::blood::BloodPlugin)
         .init_resource::<crate::killcam::PlayerView>()
         .add_plugins(bevy::diagnostic::FrameTimeDiagnosticsPlugin::default())
@@ -149,6 +158,7 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
                 crate::effects::animate_feedback,
                 screenshot_key,
                 crate::smoke::smoke_update.after(send_inputs),
+                crate::smoke::verify_graphics.after(crate::smoke::smoke_update),
             ),
         )
         .add_systems(
@@ -185,7 +195,9 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool, smoke_test: bool) {
                 .before(bevy::transform::TransformSystems::Propagate),
         )
         .add_systems(Update, on_app_exit);
-    if std::env::var_os("AIRSOFT_PERF_PROBE").is_some() {
+    if perf_probe {
+        // Do not benchmark Bevy's default 60 Hz throttle for unfocused windows.
+        app.insert_resource(bevy::winit::WinitSettings::continuous());
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
             .init_resource::<crate::perf_probe::PerfProbe>()
             .add_systems(Update, crate::perf_probe::sample);

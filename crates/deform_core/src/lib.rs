@@ -226,6 +226,7 @@ pub struct TickInfo<T: DeformUserLogic> {
     // I had to do this to prevent the user from having to store inputs inside of the GameState which would be even worse
     // but hashing pubkeys like this is going to use a lot of memory and be very slow. It would prob be better to use player IDs
     /// The inputs that, combined with the previous state, have led to this new state.
+    /// This means that for a state S_k, these inputs are I_(k-1).
     // TODO: in sbf, this should use pinocchio pubkey
     #[cfg_attr(
         not(target_arch = "bpf"),

@@ -38,6 +38,9 @@ pub const PLAYER_JUMP_HEIGHT: f32 = 1.3;
 pub const SHOT_RANGE: f32 = 100.0;
 pub const SHOT_EVENT_TTL: u16 = 60;
 pub const FIRE_COOLDOWN_TICKS: u16 = 12;
+pub const BOT_FIRE_INTERVAL_TICKS: u16 = 30;
+/// Aim disk radius per metre of range (roughly a 4.6 degree cone).
+const BOT_AIM_SPREAD: f32 = 0.08;
 pub const MAX_SHOT_EVENTS: usize = 32;
 
 pub const WIN_SCORE: u32 = 10;
@@ -397,7 +400,7 @@ mod server_logic {
 #[cfg(feature = "bin")]
 pub use server_logic::{NoAuth, ShooterQuicLogic};
 
-/// Offline bot: follows exported-map routes and fires only with line of sight.
+/// Bot: follows exported-map routes and fires at most twice a second with aim spread.
 /// Deterministic — everything is derived from the game state.
 pub fn shooter_bot(
     state: &ShooterGameState,
@@ -451,7 +454,7 @@ pub fn shooter_bot(
     #[cfg(not(feature = "physics"))]
     let destination = target.pos;
     let to_target = if visible {
-        aim - eye
+        bot_aim_point(state, bot, eye, aim) - eye
     } else {
         destination - me.pos
     };
@@ -463,10 +466,39 @@ pub fn shooter_bot(
         0.0
     };
     inputs.set_look(yaw, pitch);
-    inputs.move_z = if !visible || horizontal > 6.0 { 75 } else { 0 };
-    inputs.fire = visible;
+    let distance = Vec2::new(target.pos.x - me.pos.x, target.pos.z - me.pos.z).length();
+    inputs.move_z = if !visible || distance > 6.0 { 75 } else { 0 };
+    // Use recorded simulation shots, not callback counts: this callback also runs
+    // at render frequency for the menu's bot toggle. The upcoming tick ages events
+    // once more, so an age of 29 here produces exactly 30 ticks between shots.
+    // Events live for 60 ticks; the 32-event buffer covers this interval even with
+    // eight players firing at the normal 12-tick weapon cooldown.
+    inputs.fire = visible
+        && me.cooldown <= 1
+        && !state.shots.values().any(|shot| {
+            shot.owner == *bot
+                && SHOT_EVENT_TTL.saturating_sub(shot.ttl) < BOT_FIRE_INTERVAL_TICKS - 1
+        });
 
     inputs
+}
+
+fn bot_aim_point(state: &ShooterGameState, bot: &Pubkey, eye: Vec3, center: Vec3) -> Vec3 {
+    // Replayable randomness, resampled for each new shot without adding network state.
+    let mut seed = state.next_shot_id ^ state.round.wrapping_mul(0x9e37_79b9);
+    for byte in bot.to_bytes() {
+        seed = (seed ^ u32::from(byte)).wrapping_mul(16_777_619);
+    }
+    let mut random = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (seed >> 8) as f32 / 16_777_216.0
+    };
+    let radius = random().sqrt() * eye.distance(center) * BOT_AIM_SPREAD;
+    let angle = random() * std::f32::consts::TAU;
+    let forward = (center - eye).normalize_or_zero();
+    let right = forward.cross(Vec3::Y).try_normalize().unwrap_or(Vec3::X);
+    let up = right.cross(forward);
+    center + radius * (right * angle.cos() + up * angle.sin())
 }
 
 /// Alternate sides in deterministic key order; additional players spread along the back line.
