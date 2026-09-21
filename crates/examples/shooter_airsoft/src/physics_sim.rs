@@ -616,6 +616,43 @@ mod tests {
     }
 
     #[test]
+    fn bots_navigate_from_either_spawn_to_engagement_range() {
+        for reverse in [false, true] {
+            let (mut game, mut state, a, b) = two_player_setup();
+            let (bot, target) = if reverse { (b, a) } else { (a, b) };
+            let mut inputs = idle_inputs(a, b);
+            let mut reached = false;
+            for _ in 0..1800 {
+                let mut input = crate::shooter_logic::shooter_bot(&state, &bot, &inputs[&bot]);
+                let repeated = crate::shooter_logic::shooter_bot(&state, &bot, &input);
+                assert_eq!(
+                    (input.move_x, input.move_z),
+                    (repeated.move_x, repeated.move_z)
+                );
+                input.fire = false;
+                inputs.insert(bot, input);
+                state = game.advance_frame(&state, &inputs).unwrap();
+                let from = state.players[&bot].pos;
+                let to = state.players[&target].pos;
+                if (to - from).with_y(0.0).length() < 6.1
+                    && crate::navigation::visible(
+                        from + Vec3::Y * PLAYER_EYE_HEIGHT,
+                        to + Vec3::Y * 0.2,
+                    )
+                {
+                    reached = true;
+                    break;
+                }
+            }
+            assert!(
+                reached,
+                "bot stuck at {:?}, reverse={reverse}",
+                state.players[&bot].pos
+            );
+        }
+    }
+
+    #[test]
     fn bot_shots_are_at_least_half_a_second_apart() {
         let (mut game, mut state, a, b) = two_player_setup();
         // The survivor-fire phase permits repeated flesh hits without ending this

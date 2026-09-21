@@ -12,7 +12,7 @@ use deform_core::{
     },
 };
 use deform_offline::new_offline_client;
-use shooter_airsoft::shooter_logic::{ShooterGame, ShooterInputs, shooter_bot};
+use shooter_airsoft::shooter_logic::{RoundPhase, ShooterGame, ShooterInputs, shooter_bot};
 use tokio_util::sync::CancellationToken;
 
 #[test]
@@ -124,10 +124,27 @@ fn visual_state_does_not_jump_backwards() {
         ..Default::default()
     };
 
-    // Let the player settle and get up to speed first.
+    // Wait out the three-second spawn freeze, then let the player get up to speed.
+    // Sampling during SpawnFreeze only measures a stationary player.
     let start = std::time::Instant::now();
-    while start.elapsed() < Duration::from_millis(500) {
+    let mut playing_since = None;
+    loop {
+        assert!(
+            start.elapsed() < Duration::from_secs(8),
+            "spawn freeze did not end"
+        );
         client.set_inputs(inputs.clone()).expect("send inputs");
+        let state = client.read_state().expect("read state");
+        if let LobbyState::Ongoing(ongoing) = &state.lobby.state
+            && ongoing.tick_info.game_state.phase == RoundPhase::Playing
+            && playing_since
+                .get_or_insert_with(std::time::Instant::now)
+                .elapsed()
+                >= Duration::from_millis(500)
+        {
+            break;
+        }
+        drop(state);
         std::thread::sleep(Duration::from_millis(10));
     }
 
@@ -146,11 +163,12 @@ fn visual_state_does_not_jump_backwards() {
         std::thread::sleep(Duration::from_millis(2));
     }
 
+    client.shutdown();
     assert!(samples.len() > 100, "expected many samples");
     let travelled = samples.first().unwrap() - samples.last().unwrap();
     assert!(
         travelled > 2.0,
-        "should have walked several meters along -Z, moved {travelled}"
+        "should have strafed several meters along +X, moved {travelled}"
     );
 
     // Walking steadily forward, the visual position must never move backwards by

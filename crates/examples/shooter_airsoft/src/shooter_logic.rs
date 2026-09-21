@@ -446,11 +446,7 @@ pub fn shooter_bot(
     #[cfg(not(feature = "physics"))]
     let visible = true;
     #[cfg(feature = "physics")]
-    let destination = if visible {
-        target.pos
-    } else {
-        crate::navigation::waypoint(me.pos, target.pos)
-    };
+    let destination = crate::navigation::waypoint(me.pos, target.pos);
     #[cfg(not(feature = "physics"))]
     let destination = target.pos;
     let to_target = if visible {
@@ -467,7 +463,19 @@ pub fn shooter_bot(
     };
     inputs.set_look(yaw, pitch);
     let distance = Vec2::new(target.pos.x - me.pos.x, target.pos.z - me.pos.z).length();
-    inputs.move_z = if !visible || distance > 6.0 { 75 } else { 0 };
+    if !visible || distance > 6.0 {
+        // Follow the route independently of aim, including when we can see over cover.
+        let movement = (destination - me.pos).with_y(0.0);
+        let direction = movement.normalize_or_zero();
+        let (sy, cy) = inputs.yaw().sin_cos();
+        let forward = Vec3::new(-sy, 0.0, -cy);
+        let right = Vec3::new(cy, 0.0, -sy);
+        // Slow down at corners instead of stepping past a short path segment.
+        let tick_distance = PLAYER_SPEED * TICK_RATE_MICROS as f32 / 1_000_000.0;
+        let speed = (movement.length() / tick_distance).min(0.75) * 100.0;
+        inputs.move_x = (direction.dot(right) * speed).round() as i8;
+        inputs.move_z = (direction.dot(forward) * speed).round() as i8;
+    }
     // Use recorded simulation shots, not callback counts: this callback also runs
     // at render frequency for the menu's bot toggle. The upcoming tick ages events
     // once more, so an age of 29 here produces exactly 30 ticks between shots.
