@@ -1,6 +1,6 @@
 # DeFORM netcode reference
 
-A record of how the algorithm works, written for thesis use. Every claim about behavior
+A record of how the algorithm works. Every claim about behavior
 cites the file and line that produces it. Numbers derived by hand are marked as such.
 
 Line numbers refer to commit `0493bf1`. Function names are given alongside them, since line
