@@ -13,7 +13,8 @@ name: shooter_airsoft-server
 
 services:
   shooter_airsoft_server:
-    image: shooter_airsoft-server:latest
+    image: shooter_airsoft-server:0.1.0
+    pull_policy: never
     container_name: shooter_airsoft-server
     ports:
       # The binary always binds 4433 inside the container; PORT only moves the

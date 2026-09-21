@@ -25,7 +25,8 @@ services:
     restart: unless-stopped
 
   shooter_server:
-    image: shooter-server:latest
+    image: shooter-server:0.1.0
+    pull_policy: never
     container_name: shooter-server
     ports:
       - "4433:4433/udp"

@@ -4,4 +4,4 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CRATES_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 
-docker build -f "$SCRIPT_DIR/Dockerfile" -t shooter_airsoft-server:latest "$CRATES_DIR" "$@"
+docker build -f "$SCRIPT_DIR/Dockerfile" -t shooter_airsoft-server:0.1.0 "$CRATES_DIR" "$@"

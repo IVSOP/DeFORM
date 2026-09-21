@@ -16,7 +16,7 @@ echo "==> loading pong-server image"
 docker load -i image.tar
 
 echo "==> starting stack"
-docker compose up -d "$@"
+docker compose up --pull never -d "$@"
 
 echo
 docker compose ps

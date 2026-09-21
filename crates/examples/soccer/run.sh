@@ -11,6 +11,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CRATES_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)" # workspace root, holds the CLi*.json wallets
 DOCKER_DIR="$SCRIPT_DIR/docker/localhost"
 
+# Use the checked-in compiler even when the caller has a rustup override.
+export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"/\1/p' "$CRATES_DIR/rust-toolchain.toml")"
+
 # Resolve the two wallets by prefix so the exact base58 suffix doesn't matter.
 WALLET1="$(ls "$CRATES_DIR"/CLi1*.json 2>/dev/null | head -n1 || true)"
 WALLET2="$(ls "$CRATES_DIR"/CLi2*.json 2>/dev/null | head -n1 || true)"
@@ -34,9 +37,9 @@ trap 'exit 143' TERM
 
 # cwd = CRATES_DIR so the in-app keypair dropdown (which scans ".") also finds the wallets.
 cd "$CRATES_DIR"
-cargo run --release -p soccer --no-default-features --features="client,server,anchor,foc,metrics,20hz" -- run ${WALLET1:+--wallet="$WALLET1"} &
+cargo run --locked --release -p soccer --no-default-features --features="client,server,anchor,foc,metrics,20hz" -- run ${WALLET1:+--wallet="$WALLET1"} &
 pids+=($!)
-cargo run --release -p soccer -- run ${WALLET2:+--wallet="$WALLET2"} &
+cargo run --locked --release -p soccer -- run ${WALLET2:+--wallet="$WALLET2"} &
 pids+=($!)
 
 # The image is already built. Monitor Compose alongside both clients so a

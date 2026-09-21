@@ -25,7 +25,8 @@ services:
     restart: unless-stopped
 
   shooter_airsoft_server:
-    image: shooter_airsoft-server:latest
+    image: shooter_airsoft-server:0.1.0
+    pull_policy: never
     container_name: shooter_airsoft-server
     ports:
       - "4433:4433/udp"

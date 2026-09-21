@@ -14,7 +14,8 @@ name: pong-server
 
 services:
   pong_server:
-    image: pong-server:latest
+    image: pong-server:0.1.0
+    pull_policy: never
     container_name: pong-server
     ports:
       # The binary always binds 4433 inside the container; PORT only moves the

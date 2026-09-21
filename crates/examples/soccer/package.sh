@@ -16,7 +16,7 @@
 set -euo pipefail
 
 GAME="soccer"
-IMAGE="${GAME}-server:latest"
+IMAGE="${GAME}-server:0.1.0"
 PLATFORM="${PLATFORM:-linux/amd64}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -65,8 +65,10 @@ rm -rf "$STAGE"
 mkdir -p "$STAGE"
 
 # Saved uncompressed: the whole bundle gets compressed once at the end.
-docker save "$IMAGE" -o "$STAGE/image.tar"
-cp "$DEVNET_DIR/docker-compose.yml" "$STAGE/"
+# Resolve once, then save and reference that exact image even if the build tag moves.
+IMAGE_ID="$(docker image inspect --format '{{.Id}}' "$IMAGE")"
+docker save "$IMAGE_ID" -o "$STAGE/image.tar"
+sed "s|image: $IMAGE|image: $IMAGE_ID|" "$DEVNET_DIR/docker-compose.yml" > "$STAGE/docker-compose.yml"
 install -m 755 "$DEVNET_DIR/run.sh" "$STAGE/run.sh"
 
 cat > "$STAGE/.env" << 'EOF'

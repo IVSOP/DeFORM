@@ -48,7 +48,8 @@ services:
     restart: unless-stopped
 
   pong_server:
-    image: pong-server:latest
+    image: pong-server:0.1.0
+    pull_policy: never
     container_name: pong-server
     ports:
       - "4433:4433/udp"

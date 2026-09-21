@@ -13,7 +13,8 @@ name: shooter-server
 
 services:
   shooter_server:
-    image: shooter-server:latest
+    image: shooter-server:0.1.0
+    pull_policy: never
     container_name: shooter-server
     ports:
       # The binary always binds 4433 inside the container; PORT only moves the
