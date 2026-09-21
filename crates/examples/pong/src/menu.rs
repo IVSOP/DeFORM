@@ -91,33 +91,25 @@ pub fn egui_in_menu(
                 let main_player = menu
                     .keypair
                     .as_ref()
-                    .map(|kp| Pubkey::from(kp.pubkey().to_bytes()));
-                match main_player {
-                    Some(main_player) => {
-                        let visual_tick_micros = monitor_q
-                            .iter()
-                            .filter_map(|m| m.refresh_rate_millihertz)
-                            .max()
-                            .map(|mhz| 1_000_000_000 / mhz as u64)
-                            .unwrap_or(PongGame::TICK_RATE_MICROS);
-                        match start_offline(
-                            &mut commands,
-                            main_player,
-                            &mut player_entities,
-                            &paddle_slots,
-                            &mut players_q,
-                            visual_tick_micros,
-                        ) {
-                            Ok(()) => next_state.set(AppState::InGame),
-                            Err(e) => {
-                                toasts.0.error(format!("Offline error: {e}"));
-                            }
-                        }
-                    }
-                    None => {
-                        toasts
-                            .0
-                            .error("Load a keypair first — it identifies your player.");
+                    .map(|kp| Pubkey::from(kp.pubkey().to_bytes()))
+                    .unwrap_or_else(|| Pubkey::new_from_array([1; 32]));
+                let visual_tick_micros = monitor_q
+                    .iter()
+                    .filter_map(|m| m.refresh_rate_millihertz)
+                    .max()
+                    .map(|mhz| 1_000_000_000 / mhz as u64)
+                    .unwrap_or(PongGame::TICK_RATE_MICROS);
+                match start_offline(
+                    &mut commands,
+                    main_player,
+                    &mut player_entities,
+                    &paddle_slots,
+                    &mut players_q,
+                    visual_tick_micros,
+                ) {
+                    Ok(()) => next_state.set(AppState::InGame),
+                    Err(e) => {
+                        toasts.0.error(format!("Offline error: {e}"));
                     }
                 }
             }

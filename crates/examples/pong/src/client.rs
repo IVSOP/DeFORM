@@ -6,13 +6,11 @@ use std::{
 };
 
 use anyhow::anyhow;
-use bevy::{ecs::message::MessageReader, prelude::*};
+use bevy::{ecs::message::MessageReader, prelude::*, window::Monitor};
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui_notify::EguiToastsPlugin;
-#[cfg(feature = "foc")]
-use deform_core::DeformUserLogic;
 use deform_core::{
-    DeformClient, Pubkey,
+    DeformClient, DeformUserLogic, Pubkey,
     accounts::lobby::{
         Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, ValidatorNetwork, Web2Server,
         not_started::LobbyNotStarted,
@@ -38,7 +36,7 @@ pub struct NetStats {
     pub ping_ms: f64,
 }
 
-pub fn run_game(wallet: Option<PathBuf>) {
+pub fn run_game(wallet: Option<PathBuf>, offline: bool) {
     let mut app = App::new();
     app.insert_resource(WalletArg(wallet))
         .add_plugins((DefaultPlugins,))
@@ -62,8 +60,11 @@ pub fn run_game(wallet: Option<PathBuf>) {
             ),
         )
         .add_systems(PostUpdate, update_state.run_if(in_state(AppState::InGame)))
-        .add_systems(Update, on_app_exit)
-        .run();
+        .add_systems(Update, on_app_exit);
+    if offline {
+        app.add_systems(Startup, start_offline_on_launch.after(setup));
+    }
+    app.run();
 }
 
 use pong::solana::anchor_client::PongAnchorClient;
@@ -295,6 +296,33 @@ pub fn setup(
     commands.insert_resource(PaddleSlots { left, right });
     commands.insert_resource(PlayerEntities(HashMap::new()));
 
+    Ok(())
+}
+
+/// Start after setup has created the player slots and applied its commands.
+fn start_offline_on_launch(
+    mut commands: Commands,
+    mut player_entities: ResMut<PlayerEntities>,
+    slots: Res<PaddleSlots>,
+    mut players_q: Query<(&mut Player, &mut Visibility)>,
+    monitor_q: Query<&Monitor>,
+    mut next_state: ResMut<NextState<AppState>>,
+) -> Result<()> {
+    let visual_tick_micros = monitor_q
+        .iter()
+        .filter_map(|m| m.refresh_rate_millihertz)
+        .max()
+        .map(|mhz| 1_000_000_000 / mhz as u64)
+        .unwrap_or(PongGame::TICK_RATE_MICROS);
+    start_offline(
+        &mut commands,
+        Pubkey::new_from_array([1; 32]),
+        &mut player_entities,
+        &slots,
+        &mut players_q,
+        visual_tick_micros,
+    )?;
+    next_state.set(AppState::InGame);
     Ok(())
 }
 
@@ -569,5 +597,50 @@ pub fn on_app_exit(
         if let Some(token) = &cancellation_token {
             token.0.cancel();
         }
+    }
+}
+
+#[cfg(test)]
+mod offline_launch_tests {
+    use super::*;
+
+    #[test]
+    fn startup_creates_a_local_match_without_a_wallet() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .init_state::<AppState>()
+            .insert_resource(WalletArg(None))
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<ColorMaterial>>()
+            .add_systems(Startup, setup)
+            .add_systems(Startup, start_offline_on_launch.after(setup));
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<AppState>>().get(),
+            AppState::InGame
+        );
+        assert!(app.world().resource::<MenuState>().keypair.is_none());
+        assert_eq!(
+            app.world().resource::<LocalPlayer>().0,
+            Pubkey::new_from_array([1; 32])
+        );
+
+        let entities = &app.world().resource::<PlayerEntities>().0;
+        assert_eq!(entities.len(), 2);
+        for (id, entity) in entities {
+            assert_eq!(app.world().get::<Player>(*entity).unwrap().0, *id);
+            assert_eq!(
+                *app.world().get::<Visibility>(*entity).unwrap(),
+                Visibility::Visible
+            );
+        }
+
+        let client = &app.world().resource::<MultiplayerClient>().0;
+        let state = client.read_state().unwrap();
+        assert!(state.internal_error.is_ok());
+        assert!(matches!(state.lobby.state, LobbyState::Ongoing(_)));
+        drop(state);
+        client.shutdown();
     }
 }

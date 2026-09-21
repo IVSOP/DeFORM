@@ -89,21 +89,13 @@ pub fn egui_in_menu(
                 let main_player = menu
                     .keypair
                     .as_ref()
-                    .map(|kp| Pubkey::from(kp.pubkey().to_bytes()));
-                match main_player {
-                    Some(main_player) => {
-                        let visual_tick_micros = visual_tick_micros(&monitor_q);
-                        match start_offline(&mut commands, main_player, visual_tick_micros) {
-                            Ok(()) => next_state.set(AppState::InGame),
-                            Err(e) => {
-                                toasts.0.error(format!("Offline error: {e}"));
-                            }
-                        }
-                    }
-                    None => {
-                        toasts
-                            .0
-                            .error("Load a keypair first — it identifies your player.");
+                    .map(|kp| Pubkey::from(kp.pubkey().to_bytes()))
+                    .unwrap_or_else(|| Pubkey::new_from_array([1; 32]));
+                let visual_tick_micros = visual_tick_micros(&monitor_q);
+                match start_offline(&mut commands, main_player, visual_tick_micros) {
+                    Ok(()) => next_state.set(AppState::InGame),
+                    Err(e) => {
+                        toasts.0.error(format!("Offline error: {e}"));
                     }
                 }
             }
@@ -410,7 +402,7 @@ pub fn egui_in_menu(
     Ok(())
 }
 
-fn visual_tick_micros(monitor_q: &Query<&Monitor>) -> u64 {
+pub(crate) fn visual_tick_micros(monitor_q: &Query<&Monitor>) -> u64 {
     monitor_q
         .iter()
         .filter_map(|m| m.refresh_rate_millihertz)

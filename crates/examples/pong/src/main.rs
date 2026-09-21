@@ -38,6 +38,9 @@ enum CliCommand {
     Run {
         #[arg(long, env = "WALLET")]
         wallet: Option<PathBuf>,
+        /// Start a local match immediately; no wallet or server required.
+        #[arg(long)]
+        offline: bool,
     },
     #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
     FetchLobbies {
@@ -83,7 +86,7 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         #[cfg(feature = "client")]
-        CliCommand::Run { wallet } => crate::client::run_game(wallet),
+        CliCommand::Run { wallet, offline } => crate::client::run_game(wallet, offline),
         CliCommand::FetchLobbies { rpc_url } => fetch_lobbies(&rpc_url)?,
         #[cfg(feature = "server")]
         CliCommand::Serve {

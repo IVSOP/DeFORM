@@ -4,7 +4,7 @@ use bevy::{
     ecs::message::MessageReader,
     input::mouse::MouseMotion,
     prelude::*,
-    window::{CursorGrabMode, CursorOptions, PrimaryWindow},
+    window::{CursorGrabMode, CursorOptions, Monitor, PrimaryWindow},
 };
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui_notify::EguiToastsPlugin;
@@ -102,7 +102,7 @@ pub enum AppState {
 
 const MOUSE_SENSITIVITY: f32 = 0.002;
 
-pub fn run_game(wallet: Option<PathBuf>) {
+pub fn run_game(wallet: Option<PathBuf>, offline: bool) {
     let mut app = App::new();
     app.insert_resource(WalletArg(wallet))
         .add_plugins((DefaultPlugins,))
@@ -131,8 +131,11 @@ pub fn run_game(wallet: Option<PathBuf>) {
         )
         .add_systems(OnEnter(AppState::InGame), grab_cursor_on_enter)
         .add_systems(PostUpdate, update_state.run_if(in_state(AppState::InGame)))
-        .add_systems(Update, on_app_exit)
-        .run();
+        .add_systems(Update, on_app_exit);
+    if offline {
+        app.add_systems(Startup, start_offline_on_launch.after(setup));
+    }
+    app.run();
 }
 
 #[derive(Clone)]
@@ -348,6 +351,20 @@ fn make_backend_lobby(main_player: Pubkey, bot_player: Pubkey) -> Lobby<ShooterG
         },
         state: LobbyState::NotStarted(LobbyNotStarted { player_status }),
     }
+}
+
+fn start_offline_on_launch(
+    mut commands: Commands,
+    monitor_q: Query<&Monitor>,
+    mut next_state: ResMut<NextState<AppState>>,
+) -> Result<()> {
+    start_offline(
+        &mut commands,
+        Pubkey::new_from_array([1; 32]),
+        crate::menu::visual_tick_micros(&monitor_q),
+    )?;
+    next_state.set(AppState::InGame);
+    Ok(())
 }
 
 pub fn start_offline(
@@ -648,5 +665,40 @@ pub fn on_app_exit(
         if let Some(token) = &cancellation_token {
             token.0.cancel();
         }
+    }
+}
+
+#[cfg(test)]
+mod offline_launch_tests {
+    use super::*;
+
+    #[test]
+    fn startup_creates_a_local_match_without_a_wallet() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, bevy::state::app::StatesPlugin))
+            .init_state::<AppState>()
+            .insert_resource(WalletArg(None))
+            .init_resource::<Assets<Mesh>>()
+            .init_resource::<Assets<StandardMaterial>>()
+            .add_systems(Startup, setup)
+            .add_systems(Startup, start_offline_on_launch.after(setup));
+        app.update();
+        app.update();
+        assert_eq!(
+            *app.world().resource::<State<AppState>>().get(),
+            AppState::InGame
+        );
+        assert!(app.world().resource::<MenuState>().keypair.is_none());
+        assert_eq!(
+            app.world().resource::<LocalPlayer>().0,
+            Pubkey::new_from_array([1; 32])
+        );
+
+        let client = &app.world().resource::<MultiplayerClient>().0;
+        let state = client.read_state().unwrap();
+        assert!(state.internal_error.is_ok());
+        assert!(matches!(state.lobby.state, LobbyState::Ongoing(_)));
+        drop(state);
+        client.shutdown();
     }
 }
