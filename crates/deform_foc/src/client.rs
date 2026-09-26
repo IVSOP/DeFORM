@@ -131,10 +131,13 @@ impl<F: DeformFocLogic> FocBackend<F> {
         cancellation_token: CancellationToken,
     ) -> UserFacingResult<F::UserLogic, DeformClient<F::UserLogic>> {
         let game_tick_micros = <F::UserLogic as DeformUserLogic>::TICK_RATE_MICROS;
-        if slot_time_micros != game_tick_micros {
+        // Prediction uses the game's tick duration; validator slots determine
+        // blockhash refresh timing. The on-chain handler converts elapsed slots
+        // into game ticks, so these durations do not need to be equal.
+        if slot_time_micros == 0 || game_tick_micros == 0 {
             Err(UserFacingError::Deform(DeformError::TickRateMissmatch(
                 format!(
-                    "Slot time of {} does not match the expected tick rate {}. In FoC, the game must run at the validator's tick rate.",
+                    "Slot time and game tick duration must be nonzero (slot: {} us, game tick: {} us).",
                     slot_time_micros, game_tick_micros
                 ),
             )))?;

@@ -8990,6 +8990,7 @@ dependencies = [
  "ephemeral-rollups-sdk",
  "fastrand",
  "glam",
+ "magicblock-delegation-program-api",
  "magicblock-magic-program-api",
  "num-derive",
  "num-traits",

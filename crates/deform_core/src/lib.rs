@@ -210,9 +210,27 @@ pub trait DeformUserLogic:
     fn get_micros_per_slot(network: &ValidatorNetwork) -> u64 {
         match network {
             ValidatorNetwork::Localhost(_) => 50000, // 20hz // 16667, // 60hz
-            ValidatorNetwork::Devnet(_) => 50000,    // 20hz
+            ValidatorNetwork::Devnet(_) => 10000,    // hosted ER slots are 10ms (100Hz)
             ValidatorNetwork::Mainnet(_) => 50000,   // 20hz
         }
+    }
+
+    /// Number of simulation ticks crossed between two ER slots. Count tick
+    /// boundaries on the slot clock so sub-tick slots do not speed up a game and
+    /// fractional ticks carry across calls without adding fields to lobby state.
+    fn ticks_since_slot(
+        previous_slot: Option<u64>,
+        current_slot: u64,
+        network: &ValidatorNetwork,
+    ) -> u64 {
+        let Some(previous_slot) = previous_slot else {
+            return 1;
+        };
+        let micros_per_slot = u128::from(Self::get_micros_per_slot(network));
+        let tick_micros = u128::from(Self::TICK_RATE_MICROS);
+        let previous_tick = u128::from(previous_slot) * micros_per_slot / tick_micros;
+        let current_tick = u128::from(current_slot) * micros_per_slot / tick_micros;
+        current_tick.saturating_sub(previous_tick).min(u128::from(u64::MAX)) as u64
     }
 }
 

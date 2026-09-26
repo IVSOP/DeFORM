@@ -10,7 +10,7 @@ use bevy::{ecs::message::MessageReader, prelude::*, sprite::Anchor, window::Moni
 use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_egui_notify::EguiToastsPlugin;
 use deform_core::{
-    DeformClient, DeformUserLogic, Pubkey,
+    DeformClient, DeformError, DeformUserLogic, Pubkey,
     accounts::lobby::{
         Lobby, LobbyMetadata, LobbyState, Network, PlayerStatus, ValidatorNetwork, Web2Server,
         not_started::LobbyNotStarted,
@@ -91,7 +91,6 @@ pub enum AppState {
 pub struct NetworkPreset {
     pub name: &'static str,
     pub rpc_url: &'static str,
-    pub er_rpc_url: &'static str,
 }
 
 /// The QUIC server address a `Network::Web2` lobby plays on.
@@ -124,17 +123,14 @@ pub const NETWORK_PRESETS: &[NetworkPreset] = &[
     NetworkPreset {
         name: "Localhost",
         rpc_url: "http://127.0.0.1:8899",
-        er_rpc_url: "http://127.0.0.1:7799",
     },
     NetworkPreset {
         name: "Devnet",
         rpc_url: "https://api.devnet.solana.com",
-        er_rpc_url: "https://devnet.magicblock.app",
     },
     NetworkPreset {
         name: "Mainnet",
         rpc_url: "https://api.mainnet-beta.solana.com",
-        er_rpc_url: "https://mainnet.magicblock.app",
     },
 ];
 
@@ -181,6 +177,7 @@ pub fn run_game(wallet: Option<PathBuf>, offline: bool) {
                 .chain()
                 .run_if(in_state(AppState::InGame)),
         )
+        .add_systems(OnExit(AppState::InGame), leave_game)
         .add_systems(Update, on_app_exit);
     if offline {
         app.add_systems(Startup, start_offline_on_launch.after(setup));
@@ -625,8 +622,19 @@ pub fn update_inputs(
 }
 
 pub fn send_inputs(client: ResMut<MultiplayerClient>, inputs: Single<&SoccerInputs>) -> Result<()> {
+    if matches!(client.0.read_state()?.lobby.state, LobbyState::Finished(_)) {
+        return Ok(());
+    }
     let inputs: SoccerInputs = inputs.clone();
-    client.0.set_inputs(inputs)?;
+    if let Err(error) = client.0.set_inputs(inputs) {
+        // The backend can publish its final state and close the channel after
+        // the check above. Recheck completion before reporting a failed send.
+        if !matches!(error, DeformError::ChannelClosed)
+            || !matches!(client.0.read_state()?.lobby.state, LobbyState::Finished(_))
+        {
+            return Err(error.into());
+        }
+    }
     Ok(())
 }
 
@@ -645,7 +653,7 @@ pub fn update_state(
 
     let ongoing = match lobby.state {
         LobbyState::NotStarted(_) => return Ok(()),
-        LobbyState::Finished(_) => Err(anyhow!("Lobby has finished!!"))?,
+        LobbyState::Finished(finished) => finished.0,
         LobbyState::Ongoing(ongoing) => ongoing,
     };
 
@@ -728,5 +736,184 @@ pub fn on_app_exit(
         if let Some(token) = &cancellation_token {
             token.0.cancel();
         }
+    }
+}
+
+pub fn leave_game(
+    mut commands: Commands,
+    client: Option<Res<MultiplayerClient>>,
+    cancellation_token: Option<Res<BackendCancellationToken>>,
+) {
+    if let Some(client) = client {
+        client.0.shutdown();
+    }
+    if let Some(token) = cancellation_token {
+        token.0.cancel();
+    }
+    commands.remove_resource::<MultiplayerClient>();
+    commands.remove_resource::<BackendCancellationToken>();
+    commands.remove_resource::<LocalPlayer>();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use bevy::{ecs::system::RunSystemOnce, state::app::StatesPlugin};
+    use deform_core::{
+        ChannelInputs, DeformSharedBackendState, TickInfo,
+        accounts::lobby::{LobbyFinished, ongoing::LobbyOngoing},
+    };
+    use tokio::sync::mpsc;
+
+    use super::*;
+
+    fn match_app() -> (App, mpsc::UnboundedReceiver<ChannelInputs<SoccerGame>>) {
+        let creator = Pubkey::new_from_array([1; 32]);
+        let game_state = SoccerGameState {
+            creator,
+            ball_pos: Vec2::new(100.0, 200.0),
+            players: HashMap::from([(
+                creator,
+                PlayerState {
+                    pos: Vec2::new(-300.0, PLAYER_RADIUS),
+                    score: WIN_SCORE,
+                    ..default()
+                },
+            )]),
+            ..default()
+        };
+        let lobby = Lobby {
+            metadata: LobbyMetadata {
+                id: 0,
+                creator,
+                network: Network::Web2(Web2Server::Localhost),
+                bump: 0,
+            },
+            state: LobbyState::Ongoing(LobbyOngoing {
+                slot: Some(100),
+                tick: 100,
+                tick_info: TickInfo {
+                    game_state,
+                    inputs: BTreeMap::from([(creator, SoccerInputs::default())]),
+                },
+                user_logic: SoccerGame,
+            }),
+        };
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let cancellation_token = CancellationToken::new();
+        let client = DeformClient::new(
+            sender,
+            Arc::new(Mutex::new(
+                DeformSharedBackendState::new_from_lobby(lobby).unwrap(),
+            )),
+            cancellation_token.clone(),
+        );
+        let mut app = App::new();
+        app.add_plugins(StatesPlugin)
+            .init_state::<AppState>()
+            .insert_resource(MultiplayerClient(client))
+            .insert_resource(BackendCancellationToken(cancellation_token))
+            .insert_resource(LocalPlayer(creator))
+            .init_resource::<BotEnabled>()
+            .init_resource::<ButtonInput<KeyCode>>()
+            .init_resource::<NetStats>()
+            .add_systems(
+                Update,
+                (update_inputs, send_inputs)
+                    .chain()
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(PostUpdate, update_state.run_if(in_state(AppState::InGame)))
+            .add_systems(OnExit(AppState::InGame), leave_game);
+        let player = app
+            .world_mut()
+            .spawn((
+                Player(creator),
+                SoccerInputs::default(),
+                Transform::default(),
+                Sprite::default(),
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Ball, BallRotation(0.0), Transform::default()));
+        app.insert_resource(PlayerEntities(HashMap::from([(creator, player)])));
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::InGame);
+        (app, receiver)
+    }
+
+    fn finish_match(app: &mut App) {
+        let client = &app.world().resource::<MultiplayerClient>().0;
+        let mut shared = client.read_state().unwrap();
+        let LobbyState::Ongoing(ongoing) = &shared.lobby.state else {
+            panic!("test match should be ongoing");
+        };
+        shared.lobby.state = LobbyState::Finished(LobbyFinished(ongoing.clone()));
+    }
+
+    #[test]
+    fn finished_match_keeps_rendering_after_the_input_channel_closes() {
+        let (mut app, mut receiver) = match_app();
+        app.update();
+        assert!(receiver.try_recv().is_ok());
+
+        finish_match(&mut app);
+        drop(receiver);
+        // Run both input and scene systems repeatedly, as the real app does
+        // while displaying the final score after the backend has exited.
+        app.update();
+        app.update();
+        let world = app.world_mut();
+        let ball = world
+            .query_filtered::<&Transform, With<Ball>>()
+            .single(world)
+            .unwrap();
+        assert_eq!(ball.translation.truncate(), Vec2::new(100.0, 200.0));
+        assert!(matches!(
+            world
+                .resource::<MultiplayerClient>()
+                .0
+                .read_state()
+                .unwrap()
+                .lobby
+                .state,
+            LobbyState::Finished(_)
+        ));
+    }
+
+    #[test]
+    fn unexpected_channel_closure_is_still_an_error_during_a_match() {
+        let (mut app, receiver) = match_app();
+        drop(receiver);
+        let result: Result<()> = app.world_mut().run_system_once(send_inputs).unwrap();
+        let error = result.unwrap_err();
+        assert!(matches!(
+            error.downcast_ref::<DeformError>(),
+            Some(DeformError::ChannelClosed)
+        ));
+    }
+
+    #[test]
+    fn returning_to_the_menu_shuts_down_and_removes_the_backend() {
+        let (mut app, receiver) = match_app();
+        app.update();
+        finish_match(&mut app);
+        drop(receiver);
+        app.update();
+        let cancellation_token = app.world().resource::<BackendCancellationToken>().0.clone();
+        app.world_mut()
+            .resource_mut::<NextState<AppState>>()
+            .set(AppState::MainMenu);
+        app.update();
+        assert!(cancellation_token.is_cancelled());
+        assert_eq!(
+            *app.world().resource::<State<AppState>>().get(),
+            AppState::MainMenu
+        );
+        assert!(!app.world().contains_resource::<MultiplayerClient>());
+        assert!(!app.world().contains_resource::<BackendCancellationToken>());
+        assert!(!app.world().contains_resource::<LocalPlayer>());
     }
 }

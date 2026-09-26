@@ -43,13 +43,15 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
 
     let current_slot = Clock::get()?.slot;
 
-    let slot_delta = match ongoing.slot {
-        Some(slot) => current_slot - slot,
-        None => 1,
-    };
+    let num_ticks = UserLogic::ticks_since_slot(ongoing.slot, current_slot, network);
+    if num_ticks == 0 {
+        // Another crank call before the next game tick must not advance time or
+        // discard the fractional elapsed time represented by the previous slot.
+        return Ok(());
+    }
     ongoing.slot = Some(current_slot);
 
-    if slot_delta > 0 {
+    if num_ticks > 0 {
         if ctx.remaining_accounts.len() != ongoing.tick_info.inputs.len() {
             Err(ProgramError::NotEnoughAccountKeys)?;
         }
@@ -69,14 +71,6 @@ pub fn handler<'info>(ctx: Context<'info, TickAccounts<'info>>, id: u64) -> Resu
 
             inputs_infos.insert(*player, inputs_info);
         }
-
-        // Elapsed real time is `slot_delta * micros_per_slot`; run one game tick per
-        // `TICK_RATE_MICROS` of it so the on-chain sim keeps pace with the slot clock
-        // (e.g. a 50ms devnet slot = 3 ticks at 60Hz). Always at least one tick.
-        let micros_per_slot = UserLogic::get_micros_per_slot(network);
-        let num_ticks = (slot_delta * micros_per_slot
-            / <UserLogic as DeformUserLogic>::TICK_RATE_MICROS)
-            .max(1);
 
         // Run the simulation, threading the owned `LobbyOngoing` through each tick.
         // Once `advance_tick` returns `Finished`, the `let ... else` breaks so we never

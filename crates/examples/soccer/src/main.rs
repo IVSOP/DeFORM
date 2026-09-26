@@ -31,6 +31,8 @@ use solana_sdk::{
 };
 use tracing::info;
 
+mod account_cleanup;
+
 #[cfg(feature = "client")]
 pub mod client;
 #[cfg(feature = "client")]
@@ -66,7 +68,39 @@ enum CliCommand {
     #[command(about = "Fetch all lobby accounts from the chain and print as JSON")]
     FetchLobbies,
     #[command(about = "Print the address of every account owned by the game program")]
-    FetchAccounts,
+    FetchAccounts {
+        /// Include delegated lobby/inputs accounts and print their status and validator.
+        #[arg(long)]
+        include_delegated: bool,
+    },
+    #[command(about = "Undelegate and close soccer accounts, refunding rent to the admin")]
+    ClearAccounts {
+        /// List accounts and delegation status without sending transactions.
+        #[arg(long)]
+        dry_run: bool,
+        /// Close only this account. If delegated, its whole lobby is undelegated first.
+        #[arg(long)]
+        account: Option<Pubkey>,
+        /// Select all accounts belonging to one lobby.
+        #[arg(long, conflicts_with = "account")]
+        lobby_id: Option<u64>,
+        #[arg(
+            long,
+            default_value = "../../../anchor_program/PRIVATE_DO_NOT_PUBLISH_THIS/admin.json",
+            env = "KEYPAIR_PATH"
+        )]
+        admin: PathBuf,
+        /// Override ER routing (the endpoint identity must match the delegation record).
+        #[arg(long)]
+        er_rpc_url: Option<String>,
+        /// Recover disposable devnet accounts using their local validator key.
+        /// Discards ER state; signs commit/undelegate/close directly on devnet.
+        #[arg(long, conflicts_with = "er_rpc_url")]
+        validator_keypair: Option<PathBuf>,
+        /// Maximum wait for base-chain undelegation, per lobby.
+        #[arg(long, default_value_t = 120)]
+        timeout_secs: u64,
+    },
     #[command(about = "Write the final scores of a lobby on-chain and close its accounts")]
     CloseLobby {
         #[arg(long)]
@@ -129,7 +163,33 @@ fn main() -> anyhow::Result<()> {
         #[cfg(feature = "client")]
         CliCommand::Run { wallet, offline } => crate::client::run_game(wallet, offline),
         CliCommand::FetchLobbies => fetch_lobbies(&rpc_url)?,
-        CliCommand::FetchAccounts => fetch_accounts(&rpc_url)?,
+        CliCommand::FetchAccounts { include_delegated } => {
+            if include_delegated {
+                account_cleanup::list(&rpc_url)?;
+            } else {
+                fetch_accounts(&rpc_url)?;
+            }
+        }
+        CliCommand::ClearAccounts {
+            dry_run,
+            account,
+            lobby_id,
+            admin,
+            er_rpc_url,
+            validator_keypair,
+            timeout_secs,
+        } => {
+            account_cleanup::clear(
+                &rpc_url,
+                dry_run,
+                account,
+                lobby_id,
+                &admin,
+                er_rpc_url.as_deref(),
+                validator_keypair.as_deref(),
+                timeout_secs,
+            )?;
+        }
         CliCommand::CloseLobby { id, admin } => close_lobby(id, &admin, &rpc_url)?,
         CliCommand::ForceClose { account, admin } => force_close(&account, &admin, &rpc_url)?,
         #[cfg(feature = "server")]

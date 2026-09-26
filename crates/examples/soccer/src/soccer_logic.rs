@@ -43,7 +43,7 @@ pub const FPS: f32 = 20.0;
 pub const KICKOFF_TICKS: u64 = 60; // 3 seconds at 20Hz
 pub const GOAL_TICKS: u64 = 40; // 2 seconds at 20Hz
 
-// the ephemeral validators run at 20Hz
+// Game tick duration, independent of the ephemeral validator's slot duration.
 #[cfg(feature = "20hz")]
 pub const TICK_RATE_MICROS: u64 = 50000;
 #[cfg(feature = "60hz")]

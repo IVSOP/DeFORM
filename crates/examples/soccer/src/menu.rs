@@ -9,7 +9,7 @@ use deform_core::{
     accounts::{
         DeformAccount,
         inputs::InputsAccount,
-        lobby::{Lobby, LobbyFinished, LobbyState, Network},
+        lobby::{Lobby, LobbyFinished, LobbyState, Network, ValidatorNetwork},
     },
     game_program_client::{GameProgramClient, ReadyArgs},
 };
@@ -379,8 +379,12 @@ pub fn egui_in_menu(
                     if matches!(menu.network, Network::FullyOnChain(_))
                         && ui.button("Init Crank").clicked()
                     {
-                        match menu.lobby_data.as_ref() {
-                            Some(lobby) => {
+                        match menu
+                            .lobby_data
+                            .as_ref()
+                            .map(|lobby| (lobby, &lobby.metadata.network))
+                        {
+                            Some((lobby, Network::FullyOnChain(validator_network))) => {
                                 let players: Vec<Pubkey> = match &lobby.state {
                                     LobbyState::NotStarted(not_started) => {
                                         not_started.player_status.keys().copied().collect()
@@ -416,16 +420,19 @@ pub fn egui_in_menu(
                                     i64::MAX,
                                 ) {
                                     Ok(ix) => {
+                                        // Start pins delegation to the lobby's validator;
+                                        // scheduling must use that same region as gameplay.
                                         let er_rpc = RpcClient::new(
-                                            NETWORK_PRESETS[menu.selected_preset_idx]
-                                                .er_rpc_url
-                                                .to_string(),
+                                            validator_network.er_endpoints().rpc.to_string(),
                                         );
                                         match send_and_confirm_tx(
                                             &er_rpc,
                                             ix,
                                             keypair,
-                                            menu.selected_preset_idx == 0,
+                                            matches!(
+                                                validator_network,
+                                                ValidatorNetwork::Localhost(_)
+                                            ),
                                         ) {
                                             Ok(_) => {
                                                 toasts.0.info("Crank scheduled!");
@@ -439,6 +446,9 @@ pub fn egui_in_menu(
                                         toasts.0.error(format!("Init crank failed: {e}"));
                                     }
                                 }
+                            }
+                            Some(_) => {
+                                toasts.0.error("The loaded lobby is not fully on-chain.");
                             }
                             None => {
                                 toasts.0.error("Read a lobby first to init the crank.");
@@ -546,14 +556,21 @@ pub fn egui_in_game(
     mut bot: ResMut<BotEnabled>,
     client: Res<MultiplayerClient>,
     net_stats: Res<NetStats>,
+    mut next_state: ResMut<NextState<AppState>>,
+    mut menu: ResMut<MenuState>,
 ) -> Result {
     let lobby = client.0.read_state()?.lobby.clone();
     let creator = lobby.metadata.creator;
 
-    let (creator_score, right_player_score) = match &lobby.state {
-        LobbyState::Finished(_) => Err(anyhow!("Lobby has already finished!"))?,
-        LobbyState::NotStarted(_) => (0, 0),
-        LobbyState::Ongoing(ongoing) => {
+    let finished = matches!(lobby.state, LobbyState::Finished(_));
+    let ongoing = match &lobby.state {
+        LobbyState::NotStarted(_) => None,
+        LobbyState::Ongoing(ongoing) => Some(ongoing),
+        LobbyState::Finished(finished) => Some(&finished.0),
+    };
+    let (creator_score, right_player_score) = match ongoing {
+        None => (0, 0),
+        Some(ongoing) => {
             let creator_score = ongoing
                 .tick_info
                 .game_state
@@ -584,11 +601,21 @@ pub fn egui_in_game(
     };
 
     egui::Window::new("Score").show(contexts.ctx_mut()?, |ui| {
-        ui.checkbox(&mut bot.0, "bot");
+        if !finished {
+            ui.checkbox(&mut bot.0, "bot");
+        }
         ui.separator();
         ui.label(format!("{} - {}", creator_score, right_player_score));
         ui.separator();
         ui.label(format!("Ping: {:.0} ms", net_stats.ping_ms));
+        if finished {
+            ui.separator();
+            ui.label("Match finished");
+            if ui.button("Back to menu").clicked() {
+                menu.lobby_data = Some(lobby.clone());
+                next_state.set(AppState::MainMenu);
+            }
+        }
     });
     Ok(())
 }
