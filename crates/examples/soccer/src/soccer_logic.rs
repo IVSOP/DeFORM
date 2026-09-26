@@ -714,7 +714,10 @@ mod server_logic {
 }
 
 // ─── Bot AI ─────────────────────────────────────────────────────
-use std::cell::RefCell;
+use std::{
+    sync::{LazyLock, Mutex},
+    time::{Duration, Instant},
+};
 
 #[cfg(feature = "foc")]
 pub use server_logic::SoccerFocLogic;
@@ -724,12 +727,15 @@ pub use server_logic::{NoAuth, SoccerQuicLogic};
 const BOT_DT: f32 = 1.0 / FPS;
 const ACTION_HOLD_MIN: u32 = 2;
 const ACTION_HOLD_MAX: u32 = 5;
+// Use elapsed time, not input calls: the client can run much faster than the game ticks.
+const BOT_DIRECTION_CHANGE_INTERVAL: Duration = Duration::from_millis(250);
 
 struct SmartBotState {
     rng: fastrand::Rng,
     cached_inputs: SoccerInputs,
     hold_remaining: u32,
     target_offset: f32,
+    last_horizontal_change: Option<Instant>,
 }
 
 impl SmartBotState {
@@ -739,32 +745,49 @@ impl SmartBotState {
             cached_inputs: SoccerInputs::default(),
             hold_remaining: 0,
             target_offset: 0.0,
+            last_horizontal_change: None,
         }
+    }
+
+    fn limit_horizontal(&mut self, requested: i8, now: Instant) -> i8 {
+        let current = self.cached_inputs.horizontal;
+        if requested == current {
+            return current;
+        }
+        if self
+            .last_horizontal_change
+            .is_some_and(|last| now.duration_since(last) < BOT_DIRECTION_CHANGE_INTERVAL)
+        {
+            return current;
+        }
+        // Stopping also counts, so passing through neutral cannot bypass the limit.
+        self.last_horizontal_change = Some(now);
+        requested
     }
 }
 
-thread_local! {
-    static BOT_STATE: RefCell<SmartBotState> = RefCell::new(SmartBotState::new());
-}
+// The offline Tokio task can migrate between workers; its input history must follow it.
+static BOT_STATE: LazyLock<Mutex<HashMap<Pubkey, SmartBotState>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn soccer_bot(
     state: &SoccerGameState,
     bot: &Pubkey,
     _prev_inputs: &SoccerInputs,
 ) -> SoccerInputs {
-    BOT_STATE.with(|cell| {
-        let mut s = cell.borrow_mut();
+    let mut states = BOT_STATE.lock().unwrap_or_else(|err| err.into_inner());
+    let s = states.entry(*bot).or_insert_with(SmartBotState::new);
 
-        if s.hold_remaining > 0 {
-            s.hold_remaining -= 1;
-            return s.cached_inputs.clone();
-        }
+    if s.hold_remaining > 0 {
+        s.hold_remaining -= 1;
+        return s.cached_inputs.clone();
+    }
 
-        let inputs = compute_bot_inputs(&mut s, state, bot);
-        s.cached_inputs = inputs.clone();
-        s.hold_remaining = s.rng.u32(ACTION_HOLD_MIN..=ACTION_HOLD_MAX);
-        inputs
-    })
+    let mut inputs = compute_bot_inputs(s, state, bot);
+    inputs.horizontal = s.limit_horizontal(inputs.horizontal, Instant::now());
+    s.cached_inputs = inputs.clone();
+    s.hold_remaining = s.rng.u32(ACTION_HOLD_MIN..=ACTION_HOLD_MAX);
+    inputs
 }
 
 fn compute_bot_inputs(
