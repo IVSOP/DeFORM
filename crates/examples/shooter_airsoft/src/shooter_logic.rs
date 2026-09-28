@@ -228,7 +228,7 @@ pub struct Shot {
 )]
 #[smooth(decay = 0.8, max_offset = 10.0, min_offset_sq = 0.0004)]
 pub struct ShooterGameState {
-    #[smooth(map)]
+    #[smooth]
     #[serde(serialize_with = "deform_core::pubkey_map::serialize")]
     pub players: HashMap<Pubkey, PlayerState>,
     // Events are discrete: interpolating impact positions smears decals off walls.

@@ -184,12 +184,12 @@ pub struct Projectile {
 )]
 #[smooth(decay = 0.8, max_offset = 10.0, min_offset_sq = 0.0004)]
 pub struct ShooterGameState {
-    #[smooth(map)]
+    #[smooth]
     #[serde(serialize_with = "deform_core::pubkey_map::serialize")]
     pub players: HashMap<Pubkey, PlayerState>,
     /// Keyed by a monotonically increasing id, so per-entry smoothing survives
     /// spawns/despawns (a Vec would re-index and smear projectiles together).
-    #[smooth(map)]
+    #[smooth]
     pub projectiles: HashMap<u32, Projectile>,
     pub next_projectile_id: u32,
 }

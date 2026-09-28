@@ -58,7 +58,7 @@ pub struct PongGameState {
     #[wincode(with = "PodVec2")]
     pub ball_vel: Vec2,
     pub creator: Pubkey,
-    #[smooth(map)]
+    #[smooth]
     #[serde(serialize_with = "deform_core::pubkey_map::serialize")]
     pub players: HashMap<Pubkey, PlayerState>,
 }
