@@ -75,7 +75,7 @@ pub fn handler<'info>(
             continue;
         }
 
-        inputs_account.inputs.insert(*tick, inputs.clone());
+        inputs_account.inputs.entry(*tick).or_insert(inputs.clone());
     }
 
     inputs_account.last_op = LastOperation::SetInputs;
